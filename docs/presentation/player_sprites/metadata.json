@@ -1,0 +1,44 @@
+{
+  "source": "PowerSlave_EX_-_CO-OP_Edition/mods/john.kpf",
+  "origin": "PC Exhumed player sprite rip by Dunkelschwamm for The Spriters Resource",
+  "master_assets": {
+    "john.png": {
+      "dimensions": [1024, 315],
+      "format": "RGBA",
+      "unique_colors": 181,
+      "size_bytes": 155010
+    },
+    "john_sprite.txt": {
+      "sprite_count": 40,
+      "size_bytes": 1694
+    },
+    "john_anim.txt": {
+      "animations": [
+        "john_idle",
+        "john_walk",
+        "john_shoot",
+        "john_death"
+      ],
+      "rotations_per_frame": 8,
+      "size_bytes": 17079
+    }
+  },
+  "catalogs_and_comparisons": {
+    "sprite_catalog_overview.png": "Complete visual grid of all 40 frames with IDs and dimensions (980x755 px)",
+    "players_1_to_8_idle_comparison.png": "South front idle pose comparison for 8 player slots",
+    "players_1_to_8_back_comparison.png": "North back idle pose comparison for 8 player slots",
+    "players_1_to_8_side_comparison.png": "East profile idle pose comparison for 8 player slots",
+    "players_1_to_8_walk_comparison.png": "Walk cycle stride comparison for 8 player slots",
+    "players_1_to_8_shoot_comparison.png": "Firing muzzle flash comparison for 8 player slots"
+  },
+  "experimental_color_variants": {
+    "demo_john_p1.png": "P1 Host - Original Khaki / Camo",
+    "demo_john_p2.png": "P2 Client 1 - Cobalt Blue",
+    "demo_john_p3.png": "P3 Client 2 - Emerald Green",
+    "demo_john_p4.png": "P4 Client 3 - Amber Gold",
+    "demo_john_p5.png": "P5 Client 4 - Crimson Red",
+    "demo_john_p6.png": "P6 Client 5 - Amethyst Purple",
+    "demo_john_p7.png": "P7 Client 6 - Flame Orange",
+    "demo_john_p8.png": "P8 Client 7 - Charcoal Slate"
+  }
+}

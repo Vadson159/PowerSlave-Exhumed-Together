@@ -1,0 +1,25 @@
+--- peer.c
++++ QA/peer.c
+@@ -1,3 +1,7 @@
++#include "enet/enet.h"
++extern void qa_packet(const char*,const ENetPacket*,const ENetPeer*,int);
++extern void qa_socket(const ENetBuffer*,size_t,int);
++extern int qa_flush_enabled(void);
+ /** 
+  @file  peer.c
+  @brief ENet peer management functions
+@@ -104,7 +108,7 @@
+     @retval < 0 on failure
+ */
+ int
+-enet_peer_send (ENetPeer * peer, enet_uint8 channelID, ENetPacket * packet)
++qa_real_peer_send (ENetPeer * peer, enet_uint8 channelID, ENetPacket * packet)
+ {
+    ENetChannel * channel;
+    ENetProtocol command;
+@@ -1025,3 +1029,5 @@
+ }
+ 
+ /** @} */
++
++int enet_peer_send(ENetPeer* p,enet_uint8 c,ENetPacket* b) { int r=qa_real_peer_send(p,c,b); qa_packet("queued",b,p,r); if(r==0 && b->dataLength==45 && b->data[6]==0x10 && qa_flush_enabled()) { qa_packet("flush",b,p,r); enet_host_flush(p->host); } return r; }

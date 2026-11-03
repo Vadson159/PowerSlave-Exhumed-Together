@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PowerSlave Exhumed Together — Native Second-Instance Client Configuration Template",
+  "role": "CLIENT",
+  "process": {
+    "target_executable": "experiments/m0/game/anubis_Shipping_Steam_x64.exe",
+    "expected_sha256": "b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d",
+    "cwd": "experiments/m1/profiles/client",
+    "basepath": "experiments/m0/game",
+    "userpath": "experiments/m1/profiles/client",
+    "cli_arguments": [
+      "-basepath",
+      "experiments/m0/game",
+      "-userpath",
+      "experiments/m1/profiles/client",
+      "-window",
+      "-width",
+      "960",
+      "-height",
+      "540",
+      "-skipmovies",
+      "-stdout"
+    ],
+    "environment_overrides": {
+      "APPDATA": "experiments/m1/profiles/client/roaming",
+      "LOCALAPPDATA": "experiments/m1/profiles/client/local",
+      "TEMP": "experiments/m1/profiles/client/temp",
+      "TMP": "experiments/m1/profiles/client/temp",
+      "USERPROFILE": "experiments/m1/profiles/client/user",
+      "DISABLE_VK_LAYER_VALVE_steam_fossilize_1": "1",
+      "DISABLE_VK_LAYER_VALVE_steam_overlay_1": "1"
+    }
+  },
+  "network": {
+    "host_address": "127.0.0.1",
+    "host_port": 28745,
+    "participant_id": "native_p2_client",
+    "display_name": "Player_2",
+    "join_token": "M12A_Loopback",
+    "wire_protocol_version": "0x0110",
+    "unreliable_channel": 1,
+    "reliable_channel": 0
+  },
+  "dll": {
+    "injected_dll": "experiments/m1/native_client/build/Release/pse_native_client.dll",
+    "expected_mode": "PSE_M12B_NATIVE_CLIENT"
+  },
+  "logging": {
+    "native_journal": "experiments/m1/profiles/client/client_native.jsonl",
+    "kex_stdout": "experiments/m1/profiles/client/stdout.txt",
+    "kex_stderr": "experiments/m1/profiles/client/stderr.txt"
+  }
+}

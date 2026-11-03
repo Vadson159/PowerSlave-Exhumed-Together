@@ -1,0 +1,14 @@
+{
+  "timestamp_utc": "2026-11-03T16:25:48.982836+00:00",
+  "executable": "S:\\_Vibe_Coding\\PowerSlave_Exhumed_Together\\PowerSlave_Exhumed_Together_mod\\tools\\network-visual-proxy-readiness\\build\\Release\\test_visual_proxy_readiness.exe",
+  "executable_sha256": "c9832239236eae3e35d90b28cb063cd6c8f7d838f2939505adc9e10d213a83c0",
+  "exit_code": 0,
+  "stdout": "=================================================================\nPowerSlave Exhumed Together - Network Visual Proxy Readiness QA\nTarget: DOC-58B Preparation (Host P1 Snapshot -> Client B Proxy)\n=================================================================\n\n[PASS] Test 1: First valid Host P1 snapshot - ABSENT -> SPAWN_PENDING -> ACTIVE transition successful\n[PASS] Test 2: Duplicate snapshot - Rejected duplicate sequence without modifying active transform\n[PASS] Test 3: Out-of-order snapshot - Out-of-order sequence dropped monotonically\n[PASS] Test 4: Wrong epoch - Snapshot with mismatched mapEpoch rejected by Guard\n[PASS] Test 5: Wrong connection generation - Mismatched connectionGeneration rejected\n[PASS] Test 6: Wrong slot - Non-zero slots filtered out, preventing local puppet proxy duplication\n[PASS] Test 7: Snapshot before MapReady - Snapshot received before MapReady rejected by Guard\n[PASS] Test 8: Disconnect while active - ACTIVE -> REMOVE_PENDING -> ABSENT completed safely on disconnect\n[PASS] Test 9: Stale queued DTO after disconnect - Post-disconnect DTO dropped without resurrecting proxy\n[PASS] Test 10: Map invalidation - Map invalidation triggers immediate REMOVE_PENDING -> ABSENT\n[PASS] Test 11: Shutdown with pending removal - forceShutdown synchronously cleaned up pending removal\n[PASS] Test 12: Repeated spawn request - Multiple incoming snapshots resulted in exactly one native spawn\n[PASS] Test 13: Double remove attempt - Second remove attempt was a safe no-op on null actor\n[PASS] Test 14: Actor generation mismatch - Entity generation change detected, scheduled old proxy removal\n[PASS] Test 15: Invalid transform values - NaN and Infinity transform payloads cleanly rejected\n[PASS] Test 16: Worker/Simulation Thread ownership - Direct worker thread mutation rejected by affinity guard\n[DEFERRED] Test 17: Live KEX Dynamic Sector Traversal (DOC-58A Dependency) - Requires live KEX LinkSector integration and sector boundary traversal from DOC-58A\n\n=================================================================\nTEST SUITE EXECUTION SUMMARY\n=================================================================\nTotal Checks: 17\nPASS: 16 | FAIL: 0 | DEFERRED: 1\n",
+  "stderr": "",
+  "summary": {
+    "total_scenarios": 17,
+    "pass_count": 16,
+    "fail_count": 0,
+    "deferred_count": 1
+  }
+}

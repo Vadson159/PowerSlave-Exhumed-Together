@@ -1,0 +1,178 @@
+{
+  "audit_metadata": {
+    "target": "Wire Protocol v1.10 MsgPlayerSnapshot & Snapshot Subsystem Audit",
+    "timestamp_utc": "2026-11-02T22:15:00Z",
+    "auditor": "Gemini 3.8 Flash High (Senior Multiplayer Protocol Engineer / C++ Network QA Engineer)",
+    "compiler": "MSVC 19.51.36252 (VS 2026 BuildTools v18.8.2) x64",
+    "compiler_flags": "/std:c++20 /O2 /W4 /EHsc",
+    "test_binary": "PowerSlave_Exhumed_Together_mod/tools/world-snapshot-protocol-audit/test_snapshot_wire.exe",
+    "test_binary_sha256": "5277883C04C4491D6D559044B4CC855AD9013E45ED07887F550BE9893A0290FF",
+    "protocol_header_sha256": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+    "dto_header_sha256": "0AA73469F0E6841926352E1EF5994275F81113D118F335312A526653CAE18CA3",
+    "worker_source_sha256": "890CA463340D06E4EB492A529BB1648D5DF193BF86D573A2CBF08163CC0797F9",
+    "test_source_sha256": "B44C36468C0F3D55A6FAD0ED9E76D549F04AEA41E3BF68FE9ADE3358895419C8"
+  },
+  "summary": {
+    "total_tests": 14,
+    "passed": 14,
+    "failed": 0,
+    "spec_only_tests": 3,
+    "production_tests": 11
+  },
+  "tests": [
+    {
+      "test": "T01_PlayerStateSnapshot_ExactSize",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "PlayerStateSnapshot serializes to exactly 65 bytes (disproving 61 bytes statement)",
+      "actual_outcome": "Serialized size: exactly 65 bytes",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:48-77",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Measures serialized wire byte stream, not in-memory sizeof() with struct padding (which is 72 bytes)"
+    },
+    {
+      "test": "T02_PacketSize_Count_0",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "24 wire bytes (11 MsgHeader + 13 MsgPlayerSnapshot header + 0*65)",
+      "actual_outcome": "Wire bytes: 24 bytes",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:80-103",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Zero players snapshot"
+    },
+    {
+      "test": "T02_PacketSize_Count_1",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "89 wire bytes (24 + 1*65)",
+      "actual_outcome": "Wire bytes: 89 bytes",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:80-103",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Single player snapshot (format currently sent by enet_worker.cpp:609)"
+    },
+    {
+      "test": "T02_PacketSize_Count_2",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "154 wire bytes (24 + 2*65, disproving 146 bytes statement in DOC-54)",
+      "actual_outcome": "Wire bytes: 154 bytes",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:80-103",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Two players MVP target (Host P1 + Client P2)"
+    },
+    {
+      "test": "T02_PacketSize_Count_8",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "544 wire bytes (24 + 8*65, disproving 512 bytes statement in DOC-54)",
+      "actual_outcome": "Wire bytes: 544 bytes",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:80-103",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Full capacity 8 players"
+    },
+    {
+      "test": "T03_RoundTrip_2Players",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "Complete bidirectional serialization round-trip preservation of all kinematic, health, button, and angle fields",
+      "actual_outcome": "Passed: byte-perfect field preservation for both players",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:106-157",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Memory buffer serialization, no socket transmission"
+    },
+    {
+      "test": "T04_TruncatedPacketRejection",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "deserialize() returns false on 1-byte truncation and header-only packet without crash or memory leak",
+      "actual_outcome": "Passed: cleanly returns false in all truncated conditions",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:160-192",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Tests ByteReader bounds check"
+    },
+    {
+      "test": "T05_OversizedPlayerCountRejection",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "deserialize() rejects packet when count > MAX_PLAYERS (count = 9)",
+      "actual_outcome": "Passed: cleanly rejected without allocating vectors",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:195-230",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Tests line 581 of net_protocol.h"
+    },
+    {
+      "test": "T06_NaN_Infinity_Handling",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "ByteWriter sanitizes NaN/Inf to 0.0f on send; ByteReader strictly rejects raw wire NaN/Inf on recv",
+      "actual_outcome": "Passed: writeFloat sanitizes to 0.0f; readFloat returns false for raw wire NaN/Inf",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:233-282",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "IEEE 754 quiet NaN (0x7FC00000) and +Inf (0x7F800000) injected"
+    },
+    {
+      "test": "T07_TrailingBytesBehavior",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "deserialize() consumes expected length and succeeds, leaving trailing bytes unconsumed in ByteReader",
+      "actual_outcome": "Passed: deserialized 89 bytes payload successfully, reader.remaining() == 4",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:285-312",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Confirms deserializer does not require EOF / strict remaining() == 0 unless checked by caller"
+    },
+    {
+      "test": "T08_HexDumpGeneration",
+      "binary_source_hash": "8272AA3EF7BCD9E555E8A7B6BC12A1FE320B378DC34C8EDBE6B38891E3BBAC0F",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "Generate authentic hex streams for 1, 2, and 8 players",
+      "actual_outcome": "Passed: valid hex samples dumped to stdout",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:315-341",
+      "classification": "VERIFIED SOURCE / OFFLINE TESTED",
+      "limitations": "Generated from net_protocol.h encodePacket()"
+    },
+    {
+      "test": "T09_SPEC_StaleSequencePolicy",
+      "binary_source_hash": "B44C36468C0F3D55A6FAD0ED9E76D549F04AEA41E3BF68FE9ADE3358895419C8",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "Monotonic check rejects incomingSeq <= lastAcceptedSeq, accepts incomingSeq > lastAcceptedSeq",
+      "actual_outcome": "Passed: stale and duplicate rejected, advance accepted",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:344-367",
+      "classification": "SPEC ONLY",
+      "limitations": "Policy specification for future client interpolator/adapter; not yet integrated into native KEX DLL"
+    },
+    {
+      "test": "T10_SPEC_MapEpochGatePolicy",
+      "binary_source_hash": "B44C36468C0F3D55A6FAD0ED9E76D549F04AEA41E3BF68FE9ADE3358895419C8",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "Packets with mapEpoch != currentClientEpoch are strictly rejected",
+      "actual_outcome": "Passed: epoch mismatch dropped, matching epoch passed",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:370-391",
+      "classification": "SPEC ONLY",
+      "limitations": "Policy specification for future client receiver; not yet present in enet_worker.cpp:847"
+    },
+    {
+      "test": "T11_SPEC_ConnectionGenerationPolicy",
+      "binary_source_hash": "B44C36468C0F3D55A6FAD0ED9E76D549F04AEA41E3BF68FE9ADE3358895419C8",
+      "exact_command": ".\\PowerSlave_Exhumed_Together_mod\\tools\\world-snapshot-protocol-audit\\test_snapshot_wire.exe",
+      "expected_outcome": "Old connectionGeneration packets dropped upon peer reconnect",
+      "actual_outcome": "Passed: gen 1 dropped when active peer gen is 2",
+      "exit_code": 0,
+      "evidence_path": "tools/world-snapshot-protocol-audit/test_snapshot_wire.cpp:394-413",
+      "classification": "SPEC ONLY",
+      "limitations": "Policy specification; confirms connectionGeneration and entityGeneration must be decoupled"
+    }
+  ]
+}

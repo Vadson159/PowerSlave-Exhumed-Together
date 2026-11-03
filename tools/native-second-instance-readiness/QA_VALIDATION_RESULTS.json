@@ -1,0 +1,277 @@
+{
+  "metadata": {
+    "suite_name": "PowerSlave Exhumed Together \u2014 Dual-Instance Acceptance QA",
+    "runner": "run_offline_qa.py",
+    "start_time": "2026-11-02T11:22:01.402795+00:00",
+    "end_time": "2026-11-02T11:22:01.910944+00:00",
+    "overall_status": "PASS",
+    "target_milestone": "Native Second-Instance Game Process B Client Readiness",
+    "author": "Senior QA Automation Engineer & Network Integration Validation Engineer"
+  },
+  "environment_precheck": {
+    "workspace": "S:\\_Vibe_Coding\\PowerSlave_Exhumed_Together\\PowerSlave_Exhumed_Together_mod",
+    "host_port": 28745,
+    "checks": {
+      "game_executable": {
+        "path": "S:\\_Vibe_Coding\\PowerSlave_Exhumed_Together\\PowerSlave_Exhumed_Together_mod\\experiments\\m0\\game\\anubis_Shipping_Steam_x64.exe",
+        "exists": true,
+        "expected_sha256": "b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d",
+        "actual_sha256": "b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d",
+        "status": "PASS"
+      },
+      "sdl2_dll": {
+        "path": "S:\\_Vibe_Coding\\PowerSlave_Exhumed_Together\\PowerSlave_Exhumed_Together_mod\\experiments\\m0\\game\\SDL2.dll",
+        "exists": true,
+        "expected_sha256": "f65b50d693484d5d5a2bb8df1cf520628dd744e99e9a937bb936839b990943a0",
+        "actual_sha256": "f65b50d693484d5d5a2bb8df1cf520628dd744e99e9a937bb936839b990943a0",
+        "status": "PASS"
+      },
+      "active_processes": {
+        "monitored_names": [
+          "anubis_Shipping_Steam_x64.exe",
+          "m12a_test_client.exe",
+          "pse_host.exe"
+        ],
+        "active_found": [],
+        "clean": true,
+        "note": "Zero running processes confirms no zombie block; concurrent execution remains RUNTIME PENDING.",
+        "status": "PASS"
+      },
+      "host_port_availability": {
+        "port": 28745,
+        "protocol": "UDP",
+        "available": true,
+        "detail": "Port available",
+        "status": "PASS"
+      },
+      "profile_separation": {
+        "host_profile": "S:\\_Vibe_Coding\\PowerSlave_Exhumed_Together\\PowerSlave_Exhumed_Together_mod\\experiments\\m1\\profiles\\host",
+        "client_profile": "S:\\_Vibe_Coding\\PowerSlave_Exhumed_Together\\PowerSlave_Exhumed_Together_mod\\experiments\\m1\\profiles\\client",
+        "mutually_disjoint": true,
+        "strictly_in_workspace": true,
+        "not_nested": true,
+        "status": "PASS"
+      },
+      "protected_steam_storage": {
+        "protected_saves_path": "C:\\Users\\vadso\\Saved Games\\Nightdive Studios\\Powerslave EX",
+        "protected_saves_exists": true,
+        "protected_userdata_path": "C:\\Program Files (x86)\\Steam\\userdata",
+        "protected_userdata_exists": true,
+        "isolation_rule": "Host and Client MUST use explicit -userpath and redirected USERPROFILE",
+        "status": "PASS"
+      },
+      "steam_appid_file": {
+        "path": "S:\\_Vibe_Coding\\PowerSlave_Exhumed_Together\\PowerSlave_Exhumed_Together_mod\\experiments\\m0\\game\\steam_appid.txt",
+        "exists": true,
+        "content": "1678430",
+        "expected": "1678430",
+        "cwd_rule": "steam_appid.txt must be placed in the process CWD when launching each instance",
+        "status": "PASS"
+      },
+      "environment_isolation_rules": {
+        "vulkan_overlay_suppression": [
+          "DISABLE_VK_LAYER_VALVE_steam_fossilize_1=1",
+          "DISABLE_VK_LAYER_VALVE_steam_overlay_1=1"
+        ],
+        "path_redirections": [
+          "APPDATA",
+          "LOCALAPPDATA",
+          "TEMP",
+          "TMP",
+          "USERPROFILE"
+        ],
+        "cli_switches": [
+          "-basepath",
+          "-userpath",
+          "-window",
+          "-width",
+          "960",
+          "-height",
+          "540",
+          "-skipmovies",
+          "-stdout"
+        ],
+        "status": "PASS"
+      },
+      "runtime_limitations_status": {
+        "win32_named_mutex": "Absent from PE imports (negative evidence only)",
+        "other_single_instance_ipc": "Named shared memory, window class search or pipes are UNKNOWN",
+        "steam_concurrent_account": "UNKNOWN under single Steam account on 1 PC; requires live KEX runtime verification",
+        "status": "RUNTIME PENDING"
+      }
+    },
+    "verdict": "PASS"
+  },
+  "test_scenarios": [
+    {
+      "scenario": "scenario_01_valid_hold_release_neutral",
+      "passed": true,
+      "verdict": "PASS",
+      "expected_verdict": "PASS",
+      "failure_reasons": [],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_02_uncommanded_movement",
+      "passed": true,
+      "verdict": "FAIL",
+      "expected_verdict": "FAIL",
+      "failure_reasons": [
+        "Uncommanded P2 displacement: 100.000 units"
+      ],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_03_undelivered_commands",
+      "passed": true,
+      "verdict": "INCONCLUSIVE",
+      "expected_verdict": "INCONCLUSIVE",
+      "failure_reasons": [],
+      "inconclusive_reasons": [
+        "Zero client commands accepted by host",
+        "Release phase missing from client stream",
+        "P2 movement could not be causally correlated with command stream",
+        "Host network_native_update records missing"
+      ]
+    },
+    {
+      "scenario": "scenario_04_dropped_release_sticky_walk",
+      "passed": true,
+      "verdict": "FAIL",
+      "expected_verdict": "FAIL",
+      "failure_reasons": [
+        "P2 sticky walk: forward motion active after client release without timeout recovery"
+      ],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_05_dropped_release_neutral_recovery",
+      "passed": true,
+      "verdict": "PASS",
+      "expected_verdict": "PASS",
+      "failure_reasons": [],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_06_duplicate_sequence",
+      "passed": true,
+      "verdict": "PASS",
+      "expected_verdict": "PASS",
+      "failure_reasons": [],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_07_stale_generation",
+      "passed": true,
+      "verdict": "PASS",
+      "expected_verdict": "PASS",
+      "failure_reasons": [],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_08_wrong_slot",
+      "passed": true,
+      "verdict": "PASS",
+      "expected_verdict": "PASS",
+      "failure_reasons": [],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_09_pathological_uint32_max",
+      "passed": true,
+      "verdict": "PASS",
+      "expected_verdict": "PASS",
+      "failure_reasons": [],
+      "inconclusive_reasons": []
+    },
+    {
+      "scenario": "scenario_10_thread_affinity_violation",
+      "passed": true,
+      "verdict": "FAIL",
+      "expected_verdict": "FAIL",
+      "failure_reasons": [
+        "KEX executed outside primary simulation thread (2 foreign calls)"
+      ],
+      "inconclusive_reasons": [
+        "Release phase missing from client stream",
+        "P2 movement could not be causally correlated with command stream"
+      ]
+    },
+    {
+      "scenario": "scenario_11_p1_state_mutation",
+      "passed": true,
+      "verdict": "FAIL",
+      "expected_verdict": "FAIL",
+      "failure_reasons": [
+        "Host P1 memory modified by P2 update (2 times)"
+      ],
+      "inconclusive_reasons": [
+        "Release phase missing from client stream",
+        "P2 movement could not be causally correlated with command stream"
+      ]
+    },
+    {
+      "scenario": "scenario_12_lingering_worker_on_exit",
+      "passed": true,
+      "verdict": "FAIL",
+      "expected_verdict": "FAIL",
+      "failure_reasons": [
+        "Lingering worker thread or unjoined socket on exit"
+      ],
+      "inconclusive_reasons": [
+        "Host network_native_update records missing"
+      ]
+    },
+    {
+      "scenario": "scenario_13_missing_telemetry_or_manifest",
+      "passed": true,
+      "verdict": "INCONCLUSIVE",
+      "expected_verdict": "INCONCLUSIVE",
+      "failure_reasons": [],
+      "inconclusive_reasons": [
+        "Process PID metadata missing",
+        "Host build integrity marker (dll_prepared) missing",
+        "No command streams found to correlate",
+        "Host network_native_update records missing",
+        "Shutdown quiescence marks absent from host journal"
+      ]
+    },
+    {
+      "scenario": "scenario_14_unconfirmed_shutdown_order",
+      "passed": true,
+      "verdict": "INCONCLUSIVE",
+      "expected_verdict": "INCONCLUSIVE",
+      "failure_reasons": [],
+      "inconclusive_reasons": [
+        "Host network_native_update records missing",
+        "Shutdown quiescence marks absent from host journal"
+      ]
+    },
+    {
+      "scenario": "negative_duplicate_accepted",
+      "passed": true,
+      "verdict": "FAIL"
+    },
+    {
+      "scenario": "negative_wrong_slot_accepted",
+      "passed": true,
+      "verdict": "FAIL"
+    },
+    {
+      "scenario": "negative_sequence_jump_accepted",
+      "passed": true,
+      "verdict": "FAIL"
+    },
+    {
+      "scenario": "m12a_historical_evidence",
+      "passed": true,
+      "verdict": "INCONCLUSIVE"
+    }
+  ],
+  "summary": {
+    "precheck_passed": true,
+    "scenarios_total": 18,
+    "scenarios_passed": 18,
+    "all_assertions_met": true
+  }
+}

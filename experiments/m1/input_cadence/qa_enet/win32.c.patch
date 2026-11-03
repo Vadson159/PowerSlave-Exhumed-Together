@@ -1,0 +1,25 @@
+--- win32.c
++++ QA/win32.c
+@@ -1,3 +1,7 @@
++#include "enet/enet.h"
++extern void qa_packet(const char*,const ENetPacket*,const ENetPeer*,int);
++extern void qa_socket(const ENetBuffer*,size_t,int);
++extern int qa_flush_enabled(void);
+ /** 
+  @file  win32.c
+  @brief ENet Win32 system specific functions
+@@ -320,7 +324,7 @@
+ }
+ 
+ int
+-enet_socket_send (ENetSocket socket,
++qa_real_socket_send (ENetSocket socket,
+                   const ENetAddress * address,
+                   const ENetBuffer * buffers,
+                   size_t bufferCount)
+@@ -452,3 +456,5 @@
+ 
+ #endif
+ 
++
++int enet_socket_send(ENetSocket s,const ENetAddress* a,const ENetBuffer* b,size_t n) { int r=qa_real_socket_send(s,a,b,n);qa_socket(b,n,r);return r;}

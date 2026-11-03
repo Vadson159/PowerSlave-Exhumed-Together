@@ -1,0 +1,145 @@
+{
+  "targetHost": "127.0.0.1",
+  "targetPort": 28715,
+  "participantId": "m12a_test_p2",
+  "totalDurationMs": 1610.9,
+  "verifiablePassed": true,
+  "passCount": 15,
+  "failCount": 0,
+  "deferredCount": 4,
+  "results": [
+    {
+      "id": "NET-01",
+      "name": "ENet transport connection",
+      "status": "PASS",
+      "elapsedMs": 5.6583,
+      "detail": "Socket connected to 127.0.0.1:28715"
+    },
+    {
+      "id": "NET-02",
+      "name": "Wire Protocol v1.10 Handshake",
+      "status": "PASS",
+      "elapsedMs": 5.6583,
+      "detail": "MsgHello -> MsgWelcome exchange successful (version=0x0110)"
+    },
+    {
+      "id": "NET-03",
+      "name": "Slot assignment & validation",
+      "status": "PASS",
+      "elapsedMs": 0,
+      "detail": "Assigned slot P2 (id=1), map=KARNAK_SANCTUARY, sessionId=619488, reconnectKey=0x21b22467f33cae0"
+    },
+    {
+      "id": "NET-04",
+      "name": "Initial connectionGeneration check",
+      "status": "PASS",
+      "elapsedMs": 0,
+      "detail": "gen=1 as required for new session"
+    },
+    {
+      "id": "NET-06",
+      "name": "Forward movement stream (Hold W) [Local Dispatch]",
+      "status": "PASS",
+      "elapsedMs": 541.443,
+      "detail": "Dispatched 30 commands with moveForward=1.0f at 60Hz into local ENet queue (proves local transmission; does not prove lossy UDP delivery or KEX motion)"
+    },
+    {
+      "id": "NET-07",
+      "name": "Explicit W-release packet [Local Dispatch]",
+      "status": "PASS",
+      "elapsedMs": 1.0715,
+      "detail": "Explicit transition moveForward=1.0f -> 0.0f dispatched into local ENet queue"
+    },
+    {
+      "id": "NET-08",
+      "name": "Neutral input stream [Local Dispatch]",
+      "status": "PASS",
+      "elapsedMs": 268.659,
+      "detail": "Dispatched 16 neutral commands into local ENet queue"
+    },
+    {
+      "id": "NET-05",
+      "name": "Input sequence monotonicity",
+      "status": "PASS",
+      "elapsedMs": 0,
+      "detail": "Strictly increasing sequence numbers 1..46 (zero gaps, zero reordering)"
+    },
+    {
+      "id": "NET-09",
+      "name": "Clean session disconnect",
+      "status": "PASS",
+      "elapsedMs": 1.6656,
+      "detail": "Dispatched LEAVE_USER_QUIT and destroyed peer cleanly"
+    },
+    {
+      "id": "NET-10",
+      "name": "Reconnect handshake",
+      "status": "PASS",
+      "elapsedMs": 5.0875,
+      "detail": "Reconnection authenticated using cryptographic key=0x1229772792238916946"
+    },
+    {
+      "id": "NET-11",
+      "name": "Reconnection slot consistency",
+      "status": "PASS",
+      "elapsedMs": 0,
+      "detail": "Slot preserved across reconnect: P3 == P3"
+    },
+    {
+      "id": "NET-12",
+      "name": "Generational bump on reconnect",
+      "status": "PASS",
+      "elapsedMs": 0,
+      "detail": "connectionGeneration incremented: gen 1 -> 2"
+    },
+    {
+      "id": "NET-13",
+      "name": "Prevention of stale session state reuse",
+      "status": "PASS",
+      "elapsedMs": 0,
+      "detail": "All 16 commands in reconnected session used new gen=2; zero commands carried stale gen=1"
+    },
+    {
+      "id": "NET-14",
+      "name": "Anti-hijack defense gate",
+      "status": "PASS",
+      "elapsedMs": 5.2342,
+      "detail": "Forged reconnectKey rejected by host: code 8 (Session Hijack Attempt / Invalid)"
+    },
+    {
+      "id": "NET-15",
+      "name": "Robustness & socket stability",
+      "status": "PASS",
+      "elapsedMs": 0,
+      "detail": "Completed all automated scenarios with zero unhandled exceptions, zero socket hangs, and zero crashes"
+    },
+    {
+      "id": "KEX-01",
+      "name": "Native P2 Puppet Actor instantiation",
+      "status": "DEFERRED",
+      "elapsedMs": 0,
+      "detail": "Requires native KEX Factory::SpawnActor (type 0) executed on host simulation thread. Deferred to Sol Max M1.2a."
+    },
+    {
+      "id": "KEX-02",
+      "name": "Native P2 physics displacement in world",
+      "status": "DEFERRED",
+      "elapsedMs": 0,
+      "detail": "Packet transmission does not equal engine displacement; verified native movement requires KEX physics tick. Deferred to Sol Max M1.2a."
+    },
+    {
+      "id": "KEX-03",
+      "name": "Native P1 state isolation & non-interference",
+      "status": "DEFERRED",
+      "elapsedMs": 0,
+      "detail": "Requires live host GameInstance P1 vs P2 memory comparison. Deferred to Sol Max M1.2a."
+    },
+    {
+      "id": "KEX-04",
+      "name": "Safe native engine StateExit and process shutdown",
+      "status": "DEFERRED",
+      "elapsedMs": 0,
+      "detail": "Requires observing host KEX platform shutdown sequence. Deferred to Sol Max M1.2a."
+    }
+  ]
+}

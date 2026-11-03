@@ -1,0 +1,33 @@
+--- protocol.c
++++ QA/protocol.c
+@@ -1,3 +1,7 @@
++#include "enet/enet.h"
++extern void qa_packet(const char*,const ENetPacket*,const ENetPeer*,int);
++extern void qa_socket(const ENetBuffer*,size_t,int);
++extern int qa_flush_enabled(void);
+ /** 
+  @file  protocol.c
+  @brief ENet protocol functions
+@@ -1526,6 +1530,7 @@
+ 
+              if (peer -> packetThrottleCounter > peer -> packetThrottle)
+              {
++                qa_packet("throttle_drop",outgoingCommand -> packet,peer,0);
+                 enet_uint16 reliableSequenceNumber = outgoingCommand -> reliableSequenceNumber,
+                             unreliableSequenceNumber = outgoingCommand -> unreliableSequenceNumber;
+                 for (;;)
+@@ -1791,7 +1796,7 @@
+     @ingroup host
+ */
+ int
+-enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
++qa_real_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
+ {
+     enet_uint32 waitCondition;
+ 
+@@ -1917,3 +1922,5 @@
+     return 0; 
+ }
+ 
++
++int enet_host_service(ENetHost* h,ENetEvent* e,enet_uint32 t) { int r=qa_real_host_service(h,e,t); if(r>0 && e && e->type==ENET_EVENT_TYPE_RECEIVE) qa_packet("host_event",e->packet,e->peer,r); return r; }

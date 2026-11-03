@@ -1,0 +1,107 @@
+{
+  "scenarios": [
+    {
+      "id": "ADV-01",
+      "name": "Failed Spawn",
+      "classification": "TRUE_DETECTION",
+      "expected": "ABSENT state, null pointer, safe retry on next monotonic snapshot",
+      "actual": "Spawn failure handled cleanly, reverted to ABSENT, subsequent snapshot successfully spawned",
+      "details": "Native factory null return does not poison state or leave dangling pointer."
+    },
+    {
+      "id": "ADV-02",
+      "name": "Failed Remove",
+      "classification": "FAIL",
+      "expected": "Ownership retained or error state flagged if native remove fails",
+      "actual": "Premature transition to ABSENT and pointer discarded (m_nativeActorPtr=null) despite removeVisualActor() returning false",
+      "details": "DEFECT in visual_proxy_state_machine.hpp:252-257. If native remove fails, state machine loses reference to alive KEX actor without cleanup proof."
+    },
+    {
+      "id": "ADV-03",
+      "name": "Shutdown During Pending Spawn",
+      "classification": "TRUE_DETECTION",
+      "expected": "Pending spawn canceled, ABSENT state, 0 native spawns",
+      "actual": "Canceled cleanly, executePendingSpawn returned false, 0 spawns",
+      "details": "forceShutdown canceled pending spawn before native factory was touched."
+    },
+    {
+      "id": "ADV-04",
+      "name": "Shutdown During Pending Remove",
+      "classification": "TRUE_DETECTION",
+      "expected": "Single remove, no double removal, pointer zeroed",
+      "actual": "Removed exactly once via forceShutdown, subsequent executePendingRemove returned false",
+      "details": "Shutdown cleanly finalized pending removal without duplicate call."
+    },
+    {
+      "id": "ADV-05",
+      "name": "Recycled Actor Pointer / ABA",
+      "classification": "TRUE_DETECTION",
+      "expected": "Delayed packet from prior entity/connection rejected despite recycled pointer address",
+      "actual": "Snapshot rejected with IdentityMismatch, new actor at recycled address preserved",
+      "details": "C++ wrapper filters by connectionGen and entityGen. NOTE: Native KEX pointers have no generation tags; native protection relies strictly on C++ wrapper."
+    },
+    {
+      "id": "ADV-06",
+      "name": "Stale Snapshot After Reconnect",
+      "classification": "TRUE_DETECTION",
+      "expected": "Stale connectionGeneration rejected by Guard",
+      "actual": "Rejected with IdentityMismatch, proxy remained ABSENT",
+      "details": "Connection generation mismatch prevents resurrecting or updating proxy."
+    },
+    {
+      "id": "ADV-07",
+      "name": "Epoch Invalidation",
+      "classification": "TRUE_DETECTION",
+      "expected": "Old mapEpoch rejected by Guard",
+      "actual": "Rejected with IdentityMismatch, proxy remained ABSENT",
+      "details": "Epoch guard prevents snapshots of unloaded level from activating proxy."
+    },
+    {
+      "id": "ADV-08",
+      "name": "Wrong Slot / Local Player Protection",
+      "classification": "TRUE_DETECTION",
+      "expected": "Slot 1 strictly rejected, slot 0 accepted, exactly 1 remote proxy spawned",
+      "actual": "Slot 1 rejected with WrongSlot, only slot 0 spawned, 0 local duplicates",
+      "details": "Local player (Slot 1) protected from phantom proxy duplication."
+    },
+    {
+      "id": "ADV-09",
+      "name": "Unsafe Thread (Thread Affinity)",
+      "classification": "TRUE_DETECTION",
+      "expected": "All operations from foreign thread rejected or throw affinity exception",
+      "actual": "Foreign TID blocked on handleSnapshot, executePendingSpawn, executePendingRemove, forceShutdown",
+      "details": "Worker thread strictly blocked from touching proxy state machine. NOTE: throwing std::runtime_error in production KEX is fatal; must fail closed gracefully."
+    },
+    {
+      "id": "ADV-10",
+      "name": "Transform After Removal",
+      "classification": "TRUE_DETECTION",
+      "expected": "No updateVisualTransform calls after actor removal",
+      "actual": "Transforms count frozen at remove, null actor never updated",
+      "details": "Removed actor cannot receive delayed transform updates."
+    },
+    {
+      "id": "ADV-11",
+      "name": "Invalid Native Sector (Constant 259 Fallacy)",
+      "classification": "FALSE_PASS",
+      "expected": "State machine rejects or requires destination sector validation",
+      "actual": "State machine blindly spawned actor in Sector 259 despite coordinates belonging to Sector 176",
+      "details": "CRITICAL FINDING: Hardcoding Sector 259 is an invalid assumption. In real KEX, actor in wrong sector list is culled or corrupts portal rendering. DOC-58B CANNOT assume sector 259 without native sector query."
+    },
+    {
+      "id": "ADV-12",
+      "name": "Real Source Contract Mismatch",
+      "classification": "TRUE_DETECTION",
+      "expected": "Verify real protocol limitations: no sectorId on wire, zero velocity, entityGen=1, distinct MapReady vs gameplay",
+      "actual": "All 4 contract discrepancies verified directly against source code (net_protocol.h, bootstrap.cpp, client.cpp)",
+      "details": "DOC-58B must handle client-side sector derivation and cannot rely on wire velocity/entityGen increments."
+    }
+  ],
+  "summary": {
+    "total": 12,
+    "true_detection": 10,
+    "false_pass": 1,
+    "fail": 1,
+    "deferred": 0
+  }
+}

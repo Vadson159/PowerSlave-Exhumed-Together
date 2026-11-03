@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.24)
+project(pse_actor_ownership_58b2 LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+# Frozen DOC56 chain only for pse_core headers/library (unchanged).
+add_subdirectory(../native_map_ready integration)
+# Regression: accepted DOC58B contract and DOC58B.1 characterization, compiled from their unchanged sources.
+add_executable(proxy58b_baseline ../native_network_visual_proxy_58b/tests/proxy58b_contract.cpp)
+add_executable(lifecycle58b1_baseline ../native_proxy_lifecycle_58b1/lifecycle_contract.cpp)
+foreach(t proxy58b_baseline lifecycle58b1_baseline)
+  target_include_directories(${t} PRIVATE ../native_network_visual_proxy_58b/src)
+endforeach()
+# DOC58B.2 isolated patch.
+add_executable(lifecycle58b2_contract tests/lifecycle58b2_contract.cpp)
+target_include_directories(lifecycle58b2_contract PRIVATE src ../native_network_visual_proxy_58b/src)
+foreach(t proxy58b_baseline lifecycle58b1_baseline lifecycle58b2_contract)
+  target_compile_definitions(${t} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(${t} PRIVATE /W4 /WX /permissive- /EHsc /utf-8)
+  target_link_libraries(${t} PRIVATE pse_core)
+endforeach()

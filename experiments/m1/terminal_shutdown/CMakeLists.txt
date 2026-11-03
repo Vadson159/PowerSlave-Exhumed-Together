@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.24)
+project(pse_terminal_diagnostics LANGUAGES CXX)
+add_executable(terminal_snapshot snapshot.cpp)
+target_compile_features(terminal_snapshot PRIVATE cxx_std_20)
+target_compile_definitions(terminal_snapshot PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(terminal_snapshot PRIVATE /W4 /WX /EHsc /permissive-)
+target_link_libraries(terminal_snapshot PRIVATE dbghelp advapi32)
+set_property(TARGET terminal_snapshot PROPERTY MSVC_RUNTIME_LIBRARY MultiThreaded)

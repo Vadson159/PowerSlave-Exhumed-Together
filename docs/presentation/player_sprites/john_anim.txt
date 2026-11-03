@@ -1,0 +1,857 @@
+// John (PC Exhumed player), sprites ripped by Dunkelschwamm for The Spriters Resource
+
+john_idle
+{
+    frame
+    {
+        delay 30
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 20, -21, -100, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 21, -35, -100, 1 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 22, -39, -99, 1 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 23, -26, -100, 1 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 24, -29, -99, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 23, -27, -100, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 22, -23, -99, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 21, -24, -100, 0 }
+            }
+        }
+    }
+}
+
+john_walk
+{
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 0, -24, -100, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 4, -33, -98, 1 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 8, -59, -95, 1 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 12, -53, -92, 1 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 16, -18, -95, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 12, -33, -92, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 8, -30, -95, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 4, -18, -98, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 1, -26, -101, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 5, -33, -100, 1 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 9, -59, -97, 1 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 13, -51, -94, 1 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 17, -18, -97, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 13, -18, -94, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 9, -17, -97, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 5, -20, -100, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 2, -17, -98, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 6, -49, -97, 1 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 10, -63, -92, 1 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 14, -53, -90, 1 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 18, -20, -94, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 14, -31, -90, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 10, -30, -92, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 6, -25, -97, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 3, -20, -100, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 7, -39, -100, 1 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 11, -49, -100, 1 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 15, -56, -97, 1 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 19, -18, -96, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 15, -12, -97, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 11, -18, -100, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 7, -16, -100, 0 }
+            }
+        }
+    }
+}
+
+john_shoot
+{
+    frame
+    {
+        delay 5
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 25, -14, -101, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 27, -29, -96, 1 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 29, -34, -97, 1 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 31, -18, -99, 1 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 24, -29, -99, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 31, -26, -99, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 29, -25, -97, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 27, -26, -96, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 5
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 26, -14, -100, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 28, -30, -97, 1 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 30, -31, -98, 1 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 32, -19, -99, 1 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 24, -29, -99, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 32, -25, -99, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 30, -28, -98, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 28, -26, -97, 0 }
+            }
+        }
+    }
+}
+
+john_death
+{
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 33, -24, -97, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 34, -30, -104, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 35, -51, -100, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 36, -48, -111, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 37, -39, -96, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 7
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 38, -62, -75, 0 }
+            }
+        }
+    }
+    frame
+    {
+        delay 65535
+        rotation_N
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+        rotation_NE
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+        rotation_E
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+        rotation_ES
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+        rotation_S
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+        rotation_SW
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+        rotation_W
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+        rotation_WN
+        {
+            sprites
+            {
+                { "player/john", 39, -52, -31, 0 }
+            }
+        }
+    }
+}

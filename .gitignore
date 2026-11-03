@@ -1,0 +1,57 @@
+# S0.2: git только для исходников. Evidence, профили, копии игры и сборки — вне git.
+# Тяжёлые каталоги (на любой глубине)
+docs/evidence/
+docs/doc57_work/
+experiments/kpf_extracted/
+**/game/
+**/profile/
+**/profiles/
+**/build/
+**/build_*/
+**/Release/
+**/Debug/
+**/x64/
+**/CMakeFiles/
+**/_deps/
+**/vcpkg_installed/
+**/logs/
+**/runs/
+**/run_*/
+**/scratch/
+**/ghidra_runtime/
+**/__pycache__/
+/b[0-9]*/
+# Короткие каталоги сборки b58*, b581, b582 — корень мода
+# Бинарные и сгенерированные файлы
+*.exe
+*.dll
+*.pdb
+*.obj
+*.o
+*.lib
+*.exp
+*.ilk
+*.pyc
+*.class
+*.pack
+*.kpf
+*.zip
+*.7z
+*.pcap
+*.pcapng
+*.dmp
+*.log
+*.jsonl
+*.csv
+# Служебное
+*.tlog
+*.recipe
+.vs/
+Thumbs.db
+# Сгенерированные данные и выводы стендов
+tools/m12b-input-cadence-qa/data/
+tools/multiclient-test-runner/output/
+docs/research/runtime/
+docs/research/ghidra_projects/
+# Вендорный ENet имеет собственный .git — не вкладывать (версия записана в docs/S0.2 отчёте)
+tools/enet-prototype/third_party/enet/

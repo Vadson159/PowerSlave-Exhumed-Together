@@ -1,0 +1,17 @@
+[
+  {
+    "original": "tools\\enet-prototype\\third_party\\enet\\peer.c",
+    "original_sha256": "d7512fb5bc06680aa24c4beaf07219c74b59af4d2b2f61b49a7f6daaf3a166bf",
+    "qa_sha256": "c7fc93fa2d6767f14d758c4fd24e89d5bd6d59ab0b8096969f66e9fa4234a74f"
+  },
+  {
+    "original": "tools\\enet-prototype\\third_party\\enet\\protocol.c",
+    "original_sha256": "88cbb116b07ea6f004884516d2b54d5bfa5d340be6efb5e2d7275c628ddd5442",
+    "qa_sha256": "829b887979f44d5671d601ca63626a9283c7714d7bd18dac1c42a4050ca68ec2"
+  },
+  {
+    "original": "tools\\enet-prototype\\third_party\\enet\\win32.c",
+    "original_sha256": "5d8a05646da053b3f85d2e29c80c012ab61df1a62dde057cd4015a357f75a504",
+    "qa_sha256": "31b3bcb4b3d35ff1acebf485541e304ec692126e78bddda0de42814d896d8f8a"
+  }
+]

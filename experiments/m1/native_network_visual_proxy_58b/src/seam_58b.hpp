@@ -1,0 +1,85 @@
+// DOC58B DLL side of the native visual-proxy seam. The Frida adapter (adapter58b.js, a bounded copy of
+// the DOC58A controller/adapter) registers callbacks; this DLL only passes DTO copies and opaque handles.
+// Every call is made from the client's attested simulation-thread StateTick detour.
+#pragma once
+#include <windows.h>
+#include <atomic>
+#include <cstdint>
+#include "visual_proxy_58b.hpp"
+
+namespace p58 {
+using pse::proxy::doc58b::ProxyCommand;
+using pse::proxy::doc58b::ProxyHandle;
+constexpr std::uint32_t Abi=0x58b00001u;
+#pragma pack(push,8)
+struct SeamTable {
+    std::uint32_t abi,size;
+    void (*tickEnter)(std::uint64_t tick);
+    std::int32_t (*worldReady)(std::uint64_t tick);
+    std::int32_t (*spawn)(const ProxyCommand*,std::uint64_t* handle);
+    std::int32_t (*update)(std::uint64_t handle,const ProxyCommand*);
+    std::int32_t (*remove)(std::uint64_t handle);
+    std::int32_t (*retirement)(std::uint64_t handle);
+    void (*tickLeave)(std::uint64_t tick,std::uint32_t flags);
+    void (*worldExit)(std::uint32_t reason);
+};
+#pragma pack(pop)
+static_assert(sizeof(SeamTable)==72 && offsetof(SeamTable,tickEnter)==8 && offsetof(SeamTable,worldExit)==64);
+enum Status : std::uint32_t { None=0,Attached=1,Registering=2,Detached=3,Faulted=4,ExitDetached=5 };
+// worldReady flags reported by the adapter; each is its own witness.
+enum Ready : std::int32_t { StableWorld=1,LocalTicked=2,AdapterHealthy=4,AdapterRequestsRemove=8 };
+
+// SEH boundary. A native fault surfacing through a callback becomes UNKNOWN (0) and the seam is never called again.
+inline std::int32_t sehI(std::int32_t(*f)(std::uint64_t),std::uint64_t a,bool& fault) { __try { return f(a); } __except(EXCEPTION_EXECUTE_HANDLER) { fault=true;return 0; } }
+inline std::int32_t sehSpawn(std::int32_t(*f)(const ProxyCommand*,std::uint64_t*),const ProxyCommand* c,std::uint64_t* h,bool& fault) { __try { return f(c,h); } __except(EXCEPTION_EXECUTE_HANDLER) { fault=true;return 0; } }
+inline std::int32_t sehUpdate(std::int32_t(*f)(std::uint64_t,const ProxyCommand*),std::uint64_t h,const ProxyCommand* c,bool& fault) { __try { return f(h,c); } __except(EXCEPTION_EXECUTE_HANDLER) { fault=true;return 0; } }
+inline void sehTick(void(*f)(std::uint64_t),std::uint64_t t,bool& fault) { __try { f(t); } __except(EXCEPTION_EXECUTE_HANDLER) { fault=true; } }
+inline void sehLeave(void(*f)(std::uint64_t,std::uint32_t),std::uint64_t t,std::uint32_t v,bool& fault) { __try { f(t,v); } __except(EXCEPTION_EXECUTE_HANDLER) { fault=true; } }
+inline void sehExit(void(*f)(std::uint32_t),std::uint32_t v,bool& fault) { __try { f(v); } __except(EXCEPTION_EXECUTE_HANDLER) { fault=true; } }
+
+class Seam final : public pse::proxy::doc58b::INativeVisualProxySeam {
+public:
+    // Frida thread: one registration before Permit; published with release ordering.
+    std::uint32_t registerTable(const SeamTable* t) {
+        if(!t || t->abi!=Abi || t->size!=sizeof(SeamTable) || !t->tickEnter || !t->worldReady || !t->spawn || !t->update || !t->remove || !t->retirement || !t->tickLeave || !t->worldExit) return ERROR_INVALID_PARAMETER;
+        std::uint32_t expected=None;
+        if(!m_status.compare_exchange_strong(expected,Registering,std::memory_order_acq_rel)) return ERROR_ALREADY_INITIALIZED;
+        m_table=*t;m_status.store(Attached,std::memory_order_release);
+        return ERROR_SUCCESS;
+    }
+    bool attached() const { return m_status.load(std::memory_order_acquire)==Attached; }
+    std::uint32_t status() const { return m_status.load(std::memory_order_acquire); }
+    std::uint64_t faults() const { return m_faults; }
+    // Simulation thread only.
+    void detach(std::uint32_t s) { m_status.store(s,std::memory_order_release); }
+    void tickEnter(std::uint64_t t) { if(attached()) { bool f{};sehTick(m_table.tickEnter,t,f);fault(f); } }
+    std::int32_t worldReady(std::uint64_t t) { if(!attached()) return 0;bool f{};const auto r=sehI(reinterpret_cast<std::int32_t(*)(std::uint64_t)>(m_table.worldReady),t,f);fault(f);return f ? 0 : r; }
+    void tickLeave(std::uint64_t t,std::uint32_t v) { if(attached()) { bool f{};sehLeave(m_table.tickLeave,t,v,f);fault(f); } }
+    void worldExit(std::uint32_t reason) { if(attached()) { bool f{};sehExit(m_table.worldExit,reason,f);fault(f); } }
+    pse::proxy::doc58b::SpawnOutcome spawn(const ProxyCommand& c,ProxyHandle& out) noexcept override {
+        out=0;if(!attached()) return pse::proxy::doc58b::SpawnOutcome::Deferred; // no adapter: no native call possible
+        bool f{};std::uint64_t h{};const auto r=sehSpawn(m_table.spawn,&c,&h,f);fault(f);
+        out=h;return f ? pse::proxy::doc58b::SpawnOutcome::Unknown : static_cast<pse::proxy::doc58b::SpawnOutcome>(r);
+    }
+    pse::proxy::doc58b::UpdateOutcome update(ProxyHandle h,const ProxyCommand& c) noexcept override {
+        if(!attached()) return pse::proxy::doc58b::UpdateOutcome::Unknown;
+        bool f{};const auto r=sehUpdate(m_table.update,h,&c,f);fault(f);
+        return f ? pse::proxy::doc58b::UpdateOutcome::Unknown : static_cast<pse::proxy::doc58b::UpdateOutcome>(r);
+    }
+    pse::proxy::doc58b::RemoveOutcome remove(ProxyHandle h) noexcept override {
+        if(!attached()) return pse::proxy::doc58b::RemoveOutcome::Unknown;
+        bool f{};const auto r=sehI(m_table.remove,h,f);fault(f);
+        return f ? pse::proxy::doc58b::RemoveOutcome::Unknown : static_cast<pse::proxy::doc58b::RemoveOutcome>(r);
+    }
+    pse::proxy::doc58b::RetirementStatus retirement(ProxyHandle h) noexcept override {
+        if(!attached()) return pse::proxy::doc58b::RetirementStatus::Unknown;
+        bool f{};const auto r=sehI(m_table.retirement,h,f);fault(f);
+        return f ? pse::proxy::doc58b::RetirementStatus::Unknown : static_cast<pse::proxy::doc58b::RetirementStatus>(r);
+    }
+private:
+    void fault(bool f) { if(f) { ++m_faults;m_status.store(Faulted,std::memory_order_release); } }
+    SeamTable m_table{};
+    std::atomic<std::uint32_t> m_status{None};
+    std::uint64_t m_faults{};
+};
+} // namespace p58

@@ -1,0 +1,121 @@
+texture "sprites/player/john.png"
+
+// sheet r0c0
+sprite 0 0 0 42 100
+
+// sheet r0c1
+sprite 1 43 0 44 101
+
+// sheet r0c2
+sprite 2 88 0 43 98
+
+// sheet r0c3
+sprite 3 132 0 45 100
+
+// sheet r0c4
+sprite 4 178 0 52 98
+
+// sheet r0c5
+sprite 5 231 0 54 100
+
+// sheet r0c6
+sprite 6 286 0 75 97
+
+// sheet r0c7
+sprite 7 362 0 56 100
+
+// sheet r1c0
+sprite 8 419 0 90 95
+
+// sheet r1c1
+sprite 9 510 0 77 97
+
+// sheet r1c2
+sprite 10 588 0 94 92
+
+// sheet r1c3
+sprite 11 683 0 68 100
+
+// sheet r1c4
+sprite 12 752 0 87 92
+
+// sheet r1c5
+sprite 13 840 0 70 94
+
+// sheet r1c6
+sprite 14 911 0 85 90
+
+// sheet r1c7
+sprite 15 0 102 69 97
+
+// sheet r2c0
+sprite 16 70 102 42 95
+
+// sheet r2c1
+sprite 17 113 102 41 97
+
+// sheet r2c2
+sprite 18 155 102 46 94
+
+// sheet r2c3
+sprite 19 202 102 43 96
+
+// sheet r16c0
+sprite 20 246 102 44 100
+
+// sheet r16c2
+sprite 21 291 102 60 100
+
+// sheet r17c0
+sprite 22 352 102 63 99
+
+// sheet r17c3
+sprite 23 416 102 54 100
+
+// sheet r17c6
+sprite 24 471 102 59 99
+
+// sheet r5c0
+sprite 25 531 102 43 101
+
+// sheet r5c1
+sprite 26 575 102 42 100
+
+// sheet r5c2
+sprite 27 618 102 56 96
+
+// sheet r5c3
+sprite 28 675 102 57 97
+
+// sheet r5c6
+sprite 29 733 102 60 97
+
+// sheet r5c7
+sprite 30 794 102 60 98
+
+// sheet r6c0
+sprite 31 855 102 45 99
+
+// sheet r6c1
+sprite 32 901 102 45 99
+
+// sheet r18c0
+sprite 33 947 102 47 97
+
+// sheet r18c1
+sprite 34 0 204 60 104
+
+// sheet r18c2
+sprite 35 61 204 89 100
+
+// sheet r18c3
+sprite 36 151 204 101 111
+
+// sheet r18c4
+sprite 37 253 204 109 96
+
+// sheet r18c5
+sprite 38 363 204 108 75
+
+// sheet r18c6
+sprite 39 472 204 98 31

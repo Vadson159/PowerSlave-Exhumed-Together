@@ -1,0 +1,11 @@
+[
+  "../native_visual_proxy_movement/common.js",
+  "../native_visual_proxy_movement/inventory_snapshot.js",
+  "../native_visual_proxy_movement/camera_math.js",
+  "../native_visual_proxy_movement/cross_sector.js",
+  "../native_visual_proxy_movement/one_actor.js",
+  "../native_visual_proxy_movement/controller.js",
+  "../native_visual_proxy_movement/movement_native.js",
+  "net_mapping58b.js",
+  "adapter58b.js"
+]
