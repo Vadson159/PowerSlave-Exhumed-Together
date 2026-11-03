@@ -2,7 +2,7 @@
 
 ## S0.2 — git для исходников (2026-11-03) — REVIEW
 
-[Отчёт](59_S0_2_GIT_SOURCES.md). `git init` в корне мода, `.gitignore` (evidence, `game/`, `profile/`, сборки `build*/b5*`, логи, `*.dll/*.exe/*.jsonl/*.csv`, вендорный ENet со своим `.git`), первый коммит: 691 файл, ≈3,9 МиБ. В индексе нет DLL/EXE и evidence. Runtime не выполнялся; игра, DLL, evidence, референсы не менялись. Открыто: ENet-submodule и бэкап evidence — решение пользователя; сборка из чистого клона не проверялась (S0.3). Исполнитель — Sonnet 5.5 medium.
+[Отчёт](59_S0_2_GIT_SOURCES.md). `git init` в корне мода, `.gitignore` (evidence, `game/`, `profile/`, сборки `build*/b5*`, логи, `*.dll/*.exe/*.jsonl/*.csv`, вендорный ENet со своим `.git`), первый коммит: 692 файла, ≈3,9 МиБ. В индексе нет DLL/EXE и evidence. Runtime не выполнялся; игра, DLL, evidence, референсы не менялись. Открыто: ENet-submodule и бэкап evidence — решение пользователя; сборка из чистого клона не проверялась (S0.3). Исполнитель — Sonnet 5.5 medium.
 
 ## S0.1 — актуализация правил и точки входа (2026-11-03) — PASS (проверено)
 

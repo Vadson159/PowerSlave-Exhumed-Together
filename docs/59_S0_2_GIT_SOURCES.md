@@ -6,7 +6,7 @@
 
 - `git init -b main` в корне мода (`PowerSlave_Exhumed_Together_mod`). Репозиторий — только внутри этой папки; референсы выше (`S:\_Vibe_Coding\PowerSlave_Exhumed_Together`) и установка игры не тронуты. `core.autocrlf=false` (локально).
 - Добавлен [`.gitignore`](../.gitignore) (SHA-256 `c5f2995d…`): исключает evidence, копии игры, профили, сборки, логи и сгенерированные данные.
-- Первый коммит: 691 файл, ≈3,9 МиБ в объектах (`git count-objects`). Состав: `docs/` 114 (отчёты, ROADMAP, PROGRESS, `docs/research/`, `docs/presentation/`), `experiments/` 364, `tools/` 210, `AGENTS.md`, `.gitignore`.
+- Первый коммит: 692 файла, ≈3,9 МиБ в объектах (`git count-objects`). Состав: `docs/` 115 (отчёты, ROADMAP, PROGRESS, `docs/research/`, `docs/presentation/`), `experiments/` 364, `tools/` 210, `AGENTS.md`, `.gitignore`.
 
 ## Что вне git (правила `.gitignore`)
 
@@ -35,6 +35,6 @@
 ```bash
 cd PowerSlave_Exhumed_Together_mod
 git log --stat -1 | tail -3
-git ls-files | wc -l          # 691
+git ls-files | wc -l          # 692
 git status --short --ignored  # ignored = evidence/game/profile/build
 ```
