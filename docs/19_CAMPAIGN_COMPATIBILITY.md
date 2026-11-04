@@ -177,6 +177,8 @@ In `FUN_1401bea70`:
 
 ## 4. Steam Achievements Compatibility Audit (All 20 Achievements)
 
+> **2026-11-04:** заменено спецификацией S6.1 — [DOC-63](63_S6_1_ACHIEVEMENT_SPEC.md) (§6 — поправки к этой таблице: кукол 31, хорошая концовка по квест-предметам, названия артефактов, правила участия).
+
 All 20 achievements defined in `E018_ACHIEVEMENT_DEFINITIONS.json` were audited for multiplayer integrity under the **Shared Achievement Progress** mandate:
 
 | Ordinal | Key (`string_id`) | Description & Condition | Co-Op Hazard / Challenge | Host Authority & Distribution Rule |
