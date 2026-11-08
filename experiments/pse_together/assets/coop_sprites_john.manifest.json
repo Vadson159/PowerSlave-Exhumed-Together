@@ -1,0 +1,90 @@
+{
+  "schema": "pse-p8-john-shared-v1",
+  "package": "experiments/pse_together/assets/coop_sprites_john.kpf",
+  "sha256": "714d6401e219966d091a36ac4c66005fda4cb731e73ec153873138253ae56493",
+  "character": "pse_john",
+  "scale": 1.5,
+  "proxy_origin_drop": 59,
+  "slots": [
+    {
+      "slot": 0,
+      "character": "pse_john"
+    },
+    {
+      "slot": 1,
+      "character": "pse_john"
+    },
+    {
+      "slot": 2,
+      "character": "pse_john"
+    },
+    {
+      "slot": 3,
+      "character": "pse_john"
+    },
+    {
+      "slot": 4,
+      "character": "pse_john"
+    },
+    {
+      "slot": 5,
+      "character": "pse_john"
+    },
+    {
+      "slot": 6,
+      "character": "pse_john"
+    },
+    {
+      "slot": 7,
+      "character": "pse_john"
+    }
+  ],
+  "check": {
+    "texture": "sprites/player/pse_john.png",
+    "pixels_unchanged": true,
+    "rectangles": 40,
+    "frames": 14
+  },
+  "members": [
+    {
+      "path": "PSE_TOGETHER_SPRITES_CREDITS.txt",
+      "sha256": "ae3b3cc181ea85ebc45275ea91a8b28d332dd2e3dfcefb4018825a6e1d96cdad",
+      "size": 369
+    },
+    {
+      "path": "sprites/player/pse_john.png",
+      "sha256": "67ce2ffce9b0bf740eefde55872f7068d9bad25449f4beb67e434108f4f0d267",
+      "size": 155010
+    },
+    {
+      "path": "sprites/player/pse_john_anim.txt",
+      "sha256": "c26f153699c13dd929b779fc7c89cd20d8b572b8fd3a2eaa55367a9268a54ab3",
+      "size": 16686
+    },
+    {
+      "path": "sprites/player/pse_john_proxy_anim.txt",
+      "sha256": "0507ccc116b97bdc70486763df2a4d45b7ee5556e8d838905ab0b57d2ec08e83",
+      "size": 16662
+    },
+    {
+      "path": "sprites/player/pse_john_sprite.txt",
+      "sha256": "01482e380b04ff5d23c9e8f55eb65c6335e96d0447e7024d26ba9d71fc1e8152",
+      "size": 1577
+    }
+  ],
+  "source": [
+    {
+      "path": "docs/presentation/player_sprites/john.png",
+      "sha256": "67ce2ffce9b0bf740eefde55872f7068d9bad25449f4beb67e434108f4f0d267"
+    },
+    {
+      "path": "docs/presentation/player_sprites/john_anim.txt",
+      "sha256": "b828710b763d871392a18b35bcdb1a282072af548d89c2ec6b79b255897812ba"
+    },
+    {
+      "path": "docs/presentation/player_sprites/john_sprite.txt",
+      "sha256": "7b0ddfeb09cc175a2c6948a881c48dbc96e9b89e18b33466cfc0afeeff67db33"
+    }
+  ],
+  "runtime_verified": false
+}

@@ -1,0 +1,2189 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PowerSlave_Exhumed_Together_Roadmap_Tracker.xlsx</title>
+  <style>
+    :root {
+      --bg-app: #0d1117;
+      --bg-panel: #161b22;
+      --bg-table: #0f141c;
+      --bg-row-alt: #131822;
+      --bg-hover: #1f2937;
+      --border-grid: #262f3f;
+      --border-dark: #30363d;
+      --header-gray: #1b222d;
+      --text-main: #e2e8f0;
+      --text-muted: #8b9cb0;
+      --text-dim: #64748b;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --color-pass: #10b981;
+      --color-review: #f59e0b;
+      --color-progress: #0284c7;
+      --color-ready: #22c55e;
+      --color-todo: #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-family);
+      background: var(--bg-app);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      font-size: 13px;
+    }
+
+    /* TOP APPLICATION BAR */
+    .app-topbar {
+      background: #111827;
+      border-bottom: 1px solid #1f2937;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      height: 48px;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .file-icon {
+      width: 24px;
+      height: 24px;
+      background: #059669;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 13px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+    .file-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .source-badge {
+      font-size: 11px;
+      background: #1e293b;
+      color: #38bdf8;
+      border: 1px solid #0284c7;
+      border-radius: 12px;
+      padding: 2px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .source-dot {
+      width: 8px;
+      height: 8px;
+      background: #22c55e;
+      border-radius: 50%;
+      box-shadow: 0 0 6px #22c55e;
+      animation: pulse 2s infinite;
+    }
+    .source-dot.offline {
+      background: #f59e0b;
+      box-shadow: 0 0 6px #f59e0b;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.5; }
+      50% { opacity: 1; }
+      100% { opacity: 0.5; }
+    }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn {
+      background: #1e293b;
+      color: #cbd5e1;
+      border: 1px solid #334155;
+      padding: 5px 12px;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn:hover {
+      background: #334155;
+      color: white;
+      border-color: #475569;
+    }
+    .btn-primary {
+      background: #047857;
+      color: white;
+      border-color: #059669;
+    }
+    .btn-primary:hover {
+      background: #059669;
+    }
+    .btn-highlight {
+      background: #1e3a8a;
+      color: #bfdbfe;
+      border-color: #2563eb;
+    }
+    .btn-highlight:hover {
+      background: #2563eb;
+      color: white;
+    }
+
+    /* WORKSPACE BODY */
+    .workspace-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* TAB CONTENTS */
+    .tab-content {
+      display: none;
+      flex: 1;
+      overflow: auto;
+      background: var(--bg-table);
+    }
+    .tab-content.active {
+      display: block;
+    }
+
+    /* SPREADSHEET TABLE CONTAINER */
+    .sheet-wrapper {
+      min-width: 100%;
+      display: inline-block;
+      padding-bottom: 24px;
+    }
+    table.spreadsheet {
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 12px;
+      width: 100%;
+      color: #f1f5f9;
+    }
+
+    /* EXCEL HEADERS (A, B, C...) */
+    th.col-header {
+      background: var(--header-gray);
+      color: #8b9cb0;
+      font-weight: 600;
+      text-align: center;
+      padding: 5px 4px;
+      border: 1px solid var(--border-grid);
+      font-size: 11px;
+      user-select: none;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    th.row-header {
+      background: var(--header-gray);
+      color: #8b9cb0;
+      font-weight: 600;
+      text-align: center;
+      width: 38px;
+      min-width: 38px;
+      max-width: 38px;
+      border: 1px solid var(--border-grid);
+      font-size: 11px;
+      user-select: none;
+      position: sticky;
+      left: 0;
+      z-index: 5;
+    }
+    th.corner-cell {
+      background: #151a23;
+      border: 1px solid var(--border-grid);
+      position: sticky;
+      top: 0;
+      left: 0;
+      z-index: 20;
+    }
+
+    /* CELLS */
+    td.sheet-cell {
+      border: 1px solid var(--border-grid);
+      padding: 6px 8px;
+      vertical-align: middle;
+      background: var(--bg-table);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    tr.sheet-row:nth-child(even) td.sheet-cell {
+      background: var(--bg-row-alt);
+    }
+    tr.sheet-row:hover td.sheet-cell {
+      background: var(--bg-hover) !important;
+    }
+
+    /* BANNER ROWS (1, 2, 3) */
+    .banner-row-1 {
+      background: #132238 !important;
+      color: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: 0.5px;
+      padding: 9px 12px !important;
+      border: 1px solid #1e3a5f !important;
+    }
+    .banner-row-2 {
+      background: #18253a !important;
+      color: #94a3b8;
+      font-style: italic;
+      font-size: 12px;
+      text-align: center;
+      padding: 5px 8px !important;
+      border: 1px solid #1e293b !important;
+    }
+    .banner-row-3 {
+      background: #1e293b !important;
+      color: #cbd5e1;
+      font-size: 11px;
+      text-align: center;
+      padding: 6px 8px !important;
+      border: 1px solid #273549 !important;
+    }
+
+    /* COLUMN TITLE ROW (ROW 4) */
+    tr.col-titles-row td {
+      background: #242c3b !important;
+      color: #e2e8f0;
+      font-weight: 700;
+      text-align: center;
+      border: 1px solid #334155 !important;
+      padding: 8px 6px;
+      font-size: 12px;
+      user-select: none;
+    }
+
+    /* STATUS PILLS */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-align: center;
+      line-height: 1.2;
+      border: 1px solid transparent;
+      user-select: none;
+    }
+    .pill-pass {
+      background: #064e3b;
+      color: #a7f3d0;
+      border-color: #059669;
+    }
+    .pill-done {
+      background: #134e4a;
+      color: #99f6e4;
+      border-color: #0d9488;
+    }
+    .pill-review {
+      background: #78350f;
+      color: #fde68a;
+      border-color: #d97706;
+    }
+    .pill-partial {
+      background: #713f12;
+      color: #fef08a;
+      border-color: #ca8a04;
+    }
+    .pill-progress {
+      background: #0c4a6e;
+      color: #bae6fd;
+      border-color: #0284c7;
+    }
+    .pill-todo {
+      background: #1e293b;
+      color: #94a3b8;
+      border-color: #475569;
+    }
+    .pill-blocked {
+      background: #881337;
+      color: #fecdd3;
+      border-color: #e11d48;
+    }
+
+    /* MODE BADGES (A, B, C) */
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 12px;
+      border: 1px solid transparent;
+    }
+    .mode-A {
+      background: #064e3b;
+      color: #6ee7b7;
+      border-color: #059669;
+    }
+    .mode-B {
+      background: #1e3a8a;
+      color: #93c5fd;
+      border-color: #3b82f6;
+    }
+    .mode-V {
+      background: #831843;
+      color: #fbcfe8;
+      border-color: #db2777;
+    }
+
+    /* MODEL BADGES */
+    .model-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-right: 4px;
+      border: 1px solid transparent;
+    }
+    .model-opus {
+      background: #3b0764;
+      color: #e9d5ff;
+      border-color: #9333ea;
+    }
+    .model-sol {
+      background: #172554;
+      color: #bfdbfe;
+      border-color: #3b82f6;
+    }
+    .model-sonnet {
+      background: #083344;
+      color: #a5f3fc;
+      border-color: #06b6d4;
+    }
+    .model-gemini {
+      background: #431407;
+      color: #fed7aa;
+      border-color: #f97316;
+    }
+    .model-user {
+      background: #1f2937;
+      color: #f3f4f6;
+      border-color: #6b7280;
+    }
+
+    /* READINESS BADGE (COLUMN J) */
+    .readiness-ready {
+      background: #14532d;
+      color: #86efac;
+      border: 1px solid #22c55e;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+      animation: glow 2s infinite alternate;
+    }
+    @keyframes glow {
+      from { box-shadow: 0 0 4px rgba(34, 197, 94, 0.2); }
+      to { box-shadow: 0 0 10px rgba(34, 197, 94, 0.6); }
+    }
+    .readiness-pass {
+      color: #6ee7b7;
+      font-weight: 600;
+    }
+    .readiness-review {
+      color: #fcd34d;
+      font-weight: 600;
+    }
+    .readiness-progress {
+      color: #7dd3fc;
+      font-weight: 600;
+    }
+    .readiness-waiting {
+      color: #94a3b8;
+      font-size: 11px;
+    }
+
+    /* MINI PROGRESS BAR (COLUMN I) */
+    .progress-bar-container {
+      width: 100%;
+      height: 14px;
+      background: #1e293b;
+      border-radius: 3px;
+      overflow: hidden;
+      border: 1px solid #334155;
+      position: relative;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #059669, #10b981);
+      transition: width 0.3s ease;
+    }
+    .progress-bar-text {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      font-size: 10px;
+      font-weight: 700;
+      color: #f8fafc;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* SUMMARY ROW (ROW 31: ИТОГО) */
+    tr.summary-row td {
+      background: #1e293b !important;
+      border: 1px solid #475569 !important;
+      border-top: 2px solid #0284c7 !important;
+      font-weight: 700;
+      color: #f8fafc;
+      padding: 8px 6px;
+    }
+
+    /* BOTTOM DOCK TABS */
+    .sheet-tabs-bar {
+      height: 38px;
+      background: #111827;
+      border-top: 1px solid #1f2937;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      gap: 4px;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .sheet-tab {
+      padding: 8px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #94a3b8;
+      cursor: pointer;
+      border-top-left-radius: 4px;
+      border-top-right-radius: 4px;
+      border-bottom: 2px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .sheet-tab:hover {
+      background: #1f2937;
+      color: #f1f5f9;
+    }
+    .sheet-tab.active {
+      background: #1e293b;
+      color: #38bdf8;
+      border-bottom: 2px solid #38bdf8;
+    }
+    .sheet-tab .badge {
+      background: #334155;
+      color: #cbd5e1;
+      padding: 1px 5px;
+      border-radius: 10px;
+      font-size: 10px;
+    }
+
+    /* DASHBOARD VIEW STYLING */
+    .dashboard-container {
+      padding: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: #161f2e;
+      border: 1px solid #273549;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .kpi-title {
+      font-size: 12px;
+      color: #8b9cb0;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .kpi-value {
+      font-size: 26px;
+      font-weight: 700;
+      color: #f8fafc;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .kpi-sub {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 4px;
+    }
+
+    /* ACTION CARDS ("КОМУ ЧТО ДАВАТЬ ДАЛЕЕ") */
+    .section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .action-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .action-card {
+      background: #182234;
+      border: 1px solid #263852;
+      border-left: 4px solid #10b981;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .action-card.blocking {
+      border-left-color: #f59e0b;
+    }
+    .action-card.decision {
+      border-left-color: #3b82f6;
+    }
+    .action-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .action-pkg-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .action-reason {
+      font-size: 12px;
+      color: #cbd5e1;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .action-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+    .action-footer {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    /* MODAL DRAWER */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(2px);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active {
+      display: flex;
+    }
+    .modal-box {
+      background: #161f2e;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 720px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+    .modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid #273549;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      color: #94a3b8;
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .modal-close:hover { color: white; }
+    .modal-body {
+      padding: 18px;
+      overflow-y: auto;
+      flex: 1;
+      line-height: 1.5;
+    }
+    .modal-prompt-box {
+      background: #0f141c;
+      border: 1px solid #252d3d;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #e2e8f0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 12px 0;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .modal-footer {
+      padding: 12px 18px;
+      border-top: 1px solid #273549;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    /* TOAST NOTIFICATION */
+    .toast {
+      position: fixed;
+      bottom: 50px;
+      right: 24px;
+      background: #047857;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 200;
+      font-weight: 600;
+      font-size: 13px;
+      display: none;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HIDDEN FILE INPUTS FOR DIRECT BROWSER READING -->
+  <input type="file" id="folder-input" webkitdirectory directory multiple style="display:none;" onchange="handleFolderSelect(this.files)">
+  <input type="file" id="files-input" multiple accept=".md" style="display:none;" onchange="handleFilesSelect(this.files)">
+
+  <!-- TOP APPLICATION BAR -->
+  <header class="app-topbar">
+    <div class="topbar-left">
+      <div class="file-icon">X</div>
+      <div class="file-title">
+        PowerSlave_Exhumed_Together_Roadmap_Tracker.xlsx
+      </div>
+      <div class="source-badge" id="source-status-badge" onclick="showSourceModal()" title="Нажмите, чтобы настроить источник данных (папка docs или локальный сервер)">
+        <span class="source-dot" id="source-dot"></span>
+        <span id="source-status-text">docs/: CURRENT_STATE | ROADMAP | PROGRESS | EVIDENCE_INDEX</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="last-updated-text" style="font-size:11px; color:#64748b; margin-right:8px;">Обновлено: ...</span>
+      <button class="btn btn-primary" id="btn-reload" onclick="reloadData()">
+        🔄 Обновить из файлов
+      </button>
+      <button class="btn" onclick="promptFolderPick()" title="Выбрать папку docs на диске для прямого чтения без сервера">
+        📁 Выбрать папку docs
+      </button>
+      <button class="btn btn-highlight" onclick="switchTab('tab-dashboard')">
+        🎯 Кому что давать далее
+      </button>
+    </div>
+  </header>
+
+  <!-- WORKSPACE BODY WITH TABS -->
+  <main class="workspace-body">
+
+    <!-- TAB 1: ПАКЕТЫ (MAIN SPREADSHEET AS IN SCREENSHOT 2) -->
+    <section id="tab-packages" class="tab-content active">
+      <div class="sheet-wrapper">
+        <table class="spreadsheet" id="packages-table">
+          <thead>
+            <!-- Excel Column Letters Row -->
+            <tr>
+              <th class="corner-cell"></th>
+              <th class="col-header" style="width: 50px;">A</th>
+              <th class="col-header" style="width: 230px;">B</th>
+              <th class="col-header" style="width: 75px;">C</th>
+              <th class="col-header" style="width: 170px;">D</th>
+              <th class="col-header" style="width: 130px;">E</th>
+              <th class="col-header" style="width: 120px;">F</th>
+              <th class="col-header" style="width: 55px;">G</th>
+              <th class="col-header" style="width: 65px;">H</th>
+              <th class="col-header" style="width: 110px;">I</th>
+              <th class="col-header" style="width: 140px;">J</th>
+              <th class="col-header" style="width: 170px;">K</th>
+              <th class="col-header" style="width: 170px;">L</th>
+              <th class="col-header" style="width: 140px;">M</th>
+              <th class="col-header" style="width: 280px;">N</th>
+              <th class="col-header" style="width: 320px;">O</th>
+            </tr>
+
+            <!-- Row 1: Merged Banner -->
+            <tr>
+              <th class="row-header">1</th>
+              <td colspan="15" class="banner-row-1">
+                ПАКЕТЫ РАЗРАБОТКИ (П1–П26) — ИНТЕРАКТИВНОЕ УПРАВЛЕНИЕ СТАТУСАМИ И ПРОГРЕССОМ
+              </td>
+            </tr>
+
+            <!-- Row 2: Sub-Banner -->
+            <tr>
+              <th class="row-header">2</th>
+              <td colspan="15" class="banner-row-2">
+                Меняйте статус в колонке F («Статус») через выпадающий список → прогресс, шкалы, разблокировка зависимых пакетов и Дашборд обновляются автоматически
+              </td>
+            </tr>
+
+            <!-- Row 3: Instructions -->
+            <tr>
+              <th class="row-header">3</th>
+              <td colspan="15" class="banner-row-3">
+                ИНТЕРАКТИВНЫЙ РЕЖИМ: Кликните на любую ячейку F (Статус) или G (Режим), чтобы выбрать значение из списка. Статус DONE (80%) в режиме Б сразу открывает зависимые пакеты; статус REVIEW (70%) в режиме В удерживает их до PASS.
+              </td>
+            </tr>
+
+            <!-- Row 4: Column Titles -->
+            <tr class="col-titles-row">
+              <th class="row-header">4</th>
+              <td style="width: 50px;">Пакет</td>
+              <td style="width: 230px;">Краткое название</td>
+              <td style="width: 75px;">Сегмент</td>
+              <td style="width: 170px;">Задачи в пакете</td>
+              <td style="width: 130px;">Дорожка (S1)</td>
+              <td style="width: 120px;">Статус (Пакет)</td>
+              <td style="width: 55px;">Режим</td>
+              <td style="width: 65px;">Прогресс</td>
+              <td style="width: 110px;">Шкала прогресса</td>
+              <td style="width: 140px;">Готовность к старту (Авто)</td>
+              <td style="width: 170px;">Исполнитель</td>
+              <td style="width: 170px;">Проверяющий</td>
+              <td style="width: 140px;">После (Зависимости)</td>
+              <td style="width: 280px;">Пакетная проверка / Детали режима</td>
+              <td style="width: 320px;">Примечание и критика</td>
+            </tr>
+          </thead>
+          <tbody id="packages-tbody">
+            <!-- Rendered dynamically from 4 files -->
+          </tbody>
+          <tfoot id="packages-tfoot">
+            <!-- Row 31: Summary (ИТОГО) -->
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 2: ДАШБОРД (WHAT TO DO NEXT & EXECUTIVES) -->
+    <section id="tab-dashboard" class="tab-content">
+      <div class="dashboard-container">
+
+        <!-- KPI CARDS -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-title">Общий прогресс</div>
+            <div class="kpi-value" id="kpi-overall">≈20%</div>
+            <div class="kpi-sub">Оценка по объёму (ROADMAP §7)</div>
+          </div>
+          <div class="kpi-card" style="border-top: 3px solid #22c55e;">
+            <div class="kpi-title">Готовы к старту прямо сейчас</div>
+            <div class="kpi-value" id="kpi-ready" style="color:#86efac;">2</div>
+            <div class="kpi-sub">Все зависимости выполнены</div>
+          </div>
+          <div class="kpi-card" style="border-top: 3px solid #f59e0b;">
+            <div class="kpi-title">В блокирующем ревью</div>
+            <div class="kpi-value" id="kpi-review" style="color:#fde68a;">3</div>
+            <div class="kpi-sub">Режим В: удерживают зависящие пакеты</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Выполнено пакетов</div>
+            <div class="kpi-value" id="kpi-completed">3 / 26</div>
+            <div class="kpi-sub" id="kpi-completed-sub">П1, П2, П20 приняты</div>
+          </div>
+        </div>
+
+        <!-- ACTIONS QUEUE: КОМУ ЧТО ДАВАТЬ ДАЛЕЕ -->
+        <div class="section-title">
+          <span>🎯 Рекомендуемые следующие шаги (Кому что давать)</span>
+        </div>
+        <div class="action-cards-grid" id="action-cards-grid">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- TOP CURRENT STATE CALLOUTS -->
+        <div class="section-title">
+          <span>📢 Сводка текущего состояния (CURRENT_STATE.md)</span>
+        </div>
+        <div id="top-alerts-container" style="display:flex; flex-direction:column; gap:8px; margin-bottom:28px;">
+          <!-- Alerts rendered dynamically -->
+        </div>
+
+        <!-- TWO COLUMNS: WHAT WORKS vs OPEN HAZARDS -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:28px;">
+          <div style="background:#131c28; border:1px solid #223246; border-radius:8px; padding:16px;">
+            <div style="font-weight:700; color:#34d399; margin-bottom:10px; font-size:14px;">
+              ✅ Что работает (в узких границах)
+            </div>
+            <ul id="what-works-list" style="padding-left:18px; line-height:1.6; color:#cbd5e1; font-size:12px;"></ul>
+          </div>
+          <div style="background:#1f1924; border:1px solid #3d243a; border-radius:8px; padding:16px;">
+            <div style="font-weight:700; color:#f87171; margin-bottom:10px; font-size:14px;">
+              ⚠️ Открытые блокеры и риски
+            </div>
+            <ul id="open-hazards-list" style="padding-left:18px; line-height:1.6; color:#cbd5e1; font-size:12px;"></ul>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 3: ЗАДАЧИ (S0.1 - S9.4) -->
+    <section id="tab-tasks" class="tab-content">
+      <div style="padding: 20px; max-width: 1400px; margin: 0 auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <div style="font-size:16px; font-weight:700;">Все задачи разработки (S0–S9) из ROADMAP §4.2</div>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="task-search-input" placeholder="Поиск по задачам..." oninput="filterTasks()" style="background:#1e293b; border:1px solid #334155; color:white; padding:6px 12px; border-radius:4px; font-size:12px; width:220px;">
+          </div>
+        </div>
+        <table class="spreadsheet" style="width:100%;">
+          <thead>
+            <tr class="col-titles-row">
+              <td style="width:70px;">ID</td>
+              <td style="width:60px;">Сегмент</td>
+              <td>Описание задачи</td>
+              <td style="width:90px;">Пакет</td>
+              <td style="width:160px;">Опора</td>
+              <td style="width:140px;">Статус</td>
+            </tr>
+          </thead>
+          <tbody id="tasks-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 4: РЕШЕНИЯ И ВЕХИ -->
+    <section id="tab-decisions" class="tab-content">
+      <div style="padding: 24px; max-width: 1300px; margin: 0 auto;">
+        <div class="section-title">⚖️ Решения пользователя (ROADMAP §6)</div>
+        <table class="spreadsheet" style="width:100%; margin-bottom:32px;">
+          <thead>
+            <tr class="col-titles-row">
+              <td style="width:60px;">ID</td>
+              <td>Суть решения</td>
+              <td style="width:340px;">Когда / Условие</td>
+              <td style="width:120px;">Статус</td>
+            </tr>
+          </thead>
+          <tbody id="decisions-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+
+        <div class="section-title">📊 Оценка готовности по вехам (ROADMAP §7)</div>
+        <table class="spreadsheet" style="width:100%; margin-bottom:32px;">
+          <thead>
+            <tr class="col-titles-row">
+              <td>Веха разработки</td>
+              <td style="width:200px;">Оценка готовности</td>
+            </tr>
+          </thead>
+          <tbody id="milestones-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+
+        <div class="section-title">🔒 Замороженные эталонные артефакты (CURRENT_STATE.md)</div>
+        <table class="spreadsheet" style="width:100%;">
+          <thead>
+            <tr class="col-titles-row">
+              <td style="width:240px;">Что</td>
+              <td>Путь к файлу</td>
+              <td style="width:320px;">SHA-256</td>
+            </tr>
+          </thead>
+          <tbody id="artifacts-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 5: СПРАВОЧНИКИ И ГЕНЕРАТОР -->
+    <section id="tab-guide" class="tab-content">
+      <div style="padding: 24px; max-width: 1200px; margin: 0 auto;">
+        <div class="section-title">🤖 Роли моделей (ROADMAP §3)</div>
+        <table class="spreadsheet" style="width:100%; margin-bottom:32px;">
+          <thead>
+            <tr class="col-titles-row">
+              <td style="width:140px;">Модель</td>
+              <td>Основная роль</td>
+              <td style="width:380px;">Уровни рассуждения (high / extra / max)</td>
+            </tr>
+          </thead>
+          <tbody id="roles-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+
+        <div class="section-title">🛡️ Режимы приёмки (ROADMAP §3)</div>
+        <table class="spreadsheet" style="width:100%; margin-bottom:32px;">
+          <thead>
+            <tr class="col-titles-row">
+              <td style="width:240px;">Режим</td>
+              <td>Как принимается</td>
+              <td>Когда применяется</td>
+            </tr>
+          </thead>
+          <tbody id="modes-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+
+        <div class="section-title">📝 Интерактивный генератор заданий для моделей</div>
+        <div style="background:#161f2e; border:1px solid #334155; border-radius:8px; padding:16px;">
+          <div style="display:flex; gap:16px; margin-bottom:12px; align-items:center;">
+            <label style="font-weight:600; font-size:12px;">Выберите пакет:</label>
+            <select id="builder-pkg-select" onchange="updateBuilderPrompt()" style="background:#1e293b; color:white; border:1px solid #475569; padding:5px 10px; border-radius:4px;">
+              <!-- Populated dynamically -->
+            </select>
+            <label style="font-weight:600; font-size:12px;">Роль:</label>
+            <select id="builder-role-select" onchange="updateBuilderPrompt()" style="background:#1e293b; color:white; border:1px solid #475569; padding:5px 10px; border-radius:4px;">
+              <option value="assignee">Исполнитель и проверяющий (Реализация к PASS)</option>
+              <option value="reviewer">Исполнитель и проверяющий (Приёмка к PASS)</option>
+            </select>
+            <button class="btn btn-primary" onclick="copyBuilderPrompt()">📋 Скопировать задание (Цель: PASS)</button>
+          </div>
+          <div class="modal-prompt-box" id="builder-prompt-text" style="max-height:300px;"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- BOTTOM SPREADSHEET TABS BAR -->
+  <footer class="sheet-tabs-bar">
+    <div class="sheet-tab" onclick="switchTab('tab-dashboard')" id="tab-btn-dashboard">
+      <span>📊 Дашборд</span>
+    </div>
+    <div class="sheet-tab active" onclick="switchTab('tab-packages')" id="tab-btn-packages">
+      <span>📑 Пакеты</span>
+      <span class="badge">26</span>
+    </div>
+    <div class="sheet-tab" onclick="switchTab('tab-tasks')" id="tab-btn-tasks">
+      <span>📋 Задачи</span>
+      <span class="badge" id="tasks-badge-count">44</span>
+    </div>
+    <div class="sheet-tab" onclick="switchTab('tab-decisions')" id="tab-btn-decisions">
+      <span>⚖️ Решения и Вехи</span>
+    </div>
+    <div class="sheet-tab" onclick="switchTab('tab-guide')" id="tab-btn-guide">
+      <span>📖 Справочники</span>
+    </div>
+  </footer>
+
+  <!-- MODAL: SOURCE SELECTOR & HELP -->
+  <div class="modal-overlay" id="source-modal-overlay" onclick="closeSourceModal(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title">📁 Источник данных для обновления</div>
+        <button class="modal-close" onclick="closeSourceModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:14px; font-size:13px; color:#cbd5e1;">
+          Интерфейс читает статус строго из 4 файлов: <b>CURRENT_STATE.md</b>, <b>ROADMAP.md</b>, <b>PROGRESS.md</b>, <b>EVIDENCE_INDEX.md</b>.
+        </p>
+
+        <div style="background:#0f141c; border:1px solid #273549; border-radius:6px; padding:14px; margin-bottom:12px;">
+          <div style="font-weight:700; color:#38bdf8; margin-bottom:6px;">Способ 1: Прямой выбор папки docs (Без сервера)</div>
+          <p style="font-size:12px; color:#94a3b8; margin-bottom:10px;">
+            Браузер получит доступ к папке <code>docs</code> и будет перечитывать 4 файла прямо с диска по нажатию кнопки «Обновить из файлов».
+          </p>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary" onclick="promptFolderPick()">📁 Выбрать папку docs на диске</button>
+            <button class="btn" onclick="document.getElementById('files-input').click()">📄 Выбрать 4 файла вручную</button>
+          </div>
+        </div>
+
+        <div style="background:#0f141c; border:1px solid #273549; border-radius:6px; padding:14px;">
+          <div style="font-weight:700; color:#34d399; margin-bottom:6px;">Способ 2: Запуск локального сервера (Фоновое автообновление)</div>
+          <p style="font-size:12px; color:#94a3b8; margin-bottom:6px;">
+            Запустите <code>run_tracker.bat</code> или <code>python run_tracker.py</code> в корне репозитория. Сервер на <code>http://localhost:8080</code> обновляет страницу на лету каждые 5 секунд при любых изменениях файлов.
+          </p>
+          <div style="font-size:11px; color:#64748b; font-family:monospace;">
+            URL: http://localhost:8080
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeSourceModal()">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PACKAGE DETAILS & PROMPT COPIER -->
+  <div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-title">Детали пакета</div>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="modal-details-content"></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; margin-bottom:8px;">
+          <div style="font-weight:700; color:#38bdf8;">📋 Готовое задание для модели (Главная задача: достичь PASS):</div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-primary" id="btn-modal-role-assignee" onclick="setModalRole('assignee')">Задание: Реализация (к PASS)</button>
+            <button class="btn" id="btn-modal-role-reviewer" onclick="setModalRole('reviewer')">Задание: Приёмка (к PASS)</button>
+          </div>
+        </div>
+        <div class="modal-prompt-box" id="modal-prompt-box"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal()">Закрыть</button>
+        <button class="btn btn-primary" onclick="copyModalPrompt()">📋 Скопировать задание (Цель: PASS)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div class="toast" id="toast">Уведомление</div>
+
+  <!-- EMBEDDED INITIAL DATA (UPDATED BY PYTHON BUILD SCRIPT) -->
+  <script>
+    window.__INITIAL_DATA__ = null;
+  </script>
+
+  <!-- CLIENT-SIDE ENGINE -->
+  <script>
+    let appData = null;
+    let simulatedStatuses = {};
+    let savedDirectoryHandle = null;
+
+    const PACKAGE_CATALOG = {
+      'П1': { name: 'Адаптер прокси в DLL', seg: 'S0', track: 'Основной путь', crit: true, details: 'S0.4: перенос управления прокси из JS в C++ DLL; single-proxy bounded lifecycle, retirement', notes: 'PASS (bounded). Неблокирующие замечания N1–N4 переданы в П3/П4.' },
+      'П2': { name: 'Двухмашинный стенд', seg: 'S0', track: 'Независимый', crit: false, details: 'S0.5: переиспользуемый двухпроцессный стенд (tools/two-process-harness)', notes: 'PASS. Воспроизведение DOC-58B run 02 без расхождений, 12/12 unit tests PASS.' },
+      'П3': { name: 'Реконнект и смена карт', seg: 'S1', track: 'Основной путь', crit: true, details: 'S1.1, S1.2: реконнект и повторный Spawn поверх ENGINE_RETIRED, teardown-witness, смена карты', notes: 'Критический путь! Все зависимости выполнены (П1 PASS). Готов к старту в режиме Б.' },
+      'П4': { name: 'Спавн, порталы, сглаживание', seg: 'S1', track: 'Основной путь', crit: true, details: 'S1.3, S1.4, S1.5: anchor spawn, corridor portal, jitter-буфер, фоновый тик клиента', notes: 'REVIEW / PARTIAL. Замечания run01: support guard исправлен; spawn и порталы в игре не приняты.' },
+      'П5': { name: 'Полный тест на двух ПК', seg: 'S1', track: 'Основной путь', crit: true, details: 'S1.6: первый тест на двух ПК по LAN/Radmin с DLL', notes: 'Ждёт: П3, D6 (партнёр и время), D5 (загрузчик) или стенд REA на втором ПК.' },
+      'П6': { name: 'ADR: авторитет и мир клиента', seg: 'S2 / S3', track: 'Основной путь', crit: true, details: 'S2.1, S3.1: ADR-1 (авторитет игрока) и ADR-2 (модель мира клиента W1, порядок спавна 25/25)', notes: 'REVIEW (режим В). Ждёт оппонентов Sol extra и Gemini max, затем решений пользователя D2 и D3.' },
+      'П7': { name: 'Свой игрок/пешка от хоста', seg: 'S2', track: 'Основной путь', crit: true, details: 'S2.2, S2.3: здоровье, патроны, оружие, ключи с хоста; локальный урон подавлен', notes: 'Ждёт: П3 и решений по П6 (D2, D3).' },
+      'П8': { name: 'Спрайты игроков и переходы', seg: 'S2', track: 'Параллельная дорожка', crit: false, details: 'S2.4: спрайты игроков от 3-го лица с перекраской по слотам вместо мумии, анимации', notes: 'Параллельная дорожка. Зависимость (П1) выполнена! Готов к старту в режиме Б.' },
+      'П9': { name: 'Проба общего мира (1 тип врага)', seg: 'S3', track: 'Основной путь', crit: true, details: 'S3.2: проба общего мира: 1 тип врага на одной карте; на клиенте AI выключен, данные с хоста', notes: 'Главный архитектурный риск! Ждёт: завершения П6 и решений пользователя (D3).' },
+      'П10': { name: 'Все типы врагов и боссы', seg: 'S3', track: 'Основной путь', crit: true, details: 'S3.3: поведение, особые атаки, арены, все типы врагов и боссы', notes: 'Ждёт: пробы П9.' },
+      'П11': { name: 'Снаряды, эффекты и звук', seg: 'S3', track: 'Основной путь', crit: true, details: 'S3.4: визуал на клиенте, авторитет на хосте; подавление gameplay-действий анимаций на клиенте', notes: 'Ждёт: пробы П9.' },
+      'П12': { name: 'Двери, лифты, выключатели', seg: 'S3', track: 'Основной путь', crit: true, details: 'S3.5: двери, лифты, движущиеся полы и потолки, переключатели', notes: 'Ждёт: пробы П9.' },
+      'П13': { name: 'Подключение протокола мира', seg: 'S3', track: 'Основной путь', crit: true, details: 'S3.6: подключение wire-протокола репликации мира из прототипа (DOC-29) к нативному адаптеру', notes: 'Ждёт: пробы П9.' },
+      'П14': { name: 'Host AI и подбор на хосте', seg: 'S4', track: 'Параллельная дорожка', crit: false, details: 'S4.1, S4.2: AI селектор ближайшего игрока (BLK-01/02), раздельный подбор (BLK-03/04), Ankh dedup (BLK-05)', notes: 'REVIEW / PARTIAL. DLL-кандидат offline 26/26, smoke 13/13. Ждёт независимой приёмки Opus high.' },
+      'П15': { name: 'Ключи, скрипты, выход, кат-сцены', seg: 'S4', track: 'Параллельная дорожка', crit: false, details: 'S4.3, S4.4, S4.6: реестр ключей (BLK-06), скрипты (BLK-07/08), синхронный выход (BLK-09), кат-сцены (BLK-10)', notes: 'Ждёт: закрытия и приёмки П14.' },
+      'П16': { name: 'Возрождение на E и счёт команды', seg: 'S4', track: 'Параллельная дорожка', crit: false, details: 'S4.5: возрождение на E, гибель всей команды, оружие после возрождения (BLK-11)', notes: 'Ждёт: П7.' },
+      'П17': { name: 'Барьер переходов карт и инвентарь', seg: 'S5', track: 'Основной путь', crit: true, details: 'S5.1, S5.3: общий барьер смены карты, экран путешествия, перенос инвентарей, запрет cheat map', notes: 'Ждёт: П3, П10, П12.' },
+      'П18': { name: 'Кооп-сохранение на хосте', seg: 'S5', track: 'Основной путь', crit: true, details: 'S5.2: кооп-сохранение на хосте (sidecar), продолжение кампании, вход на смене карты', notes: 'Ждёт: П17.' },
+      'П19': { name: 'Сквозной тест всей кампании в EX!', seg: 'S4 / S5', track: 'Основной путь', crit: true, details: 'S4.7, S5.4: пройти вдвоём всю кампанию (≈25 карт в DOC-19); регрессионная матрица карт', notes: 'Ждёт: П15, П16, П18.' },
+      'П20': { name: 'Спецификация UI/достижений', seg: 'S6', track: 'Параллельная дорожка', crit: false, details: 'S6.1: спецификация 20 Steam-достижений, static 50/50, правила PR-1..PR-3 (D8)', notes: 'PASS (режим А). Правила участия PR-1…PR-3 утверждены пользователем (D8).' },
+      'П21': { name: 'Лог событий и выдачи в Steam', seg: 'S6', track: 'Основной путь', crit: true, details: 'S6.2, S6.3: лог событий (A0) на хосте, связь слот↔Steam, выдача без заднего числа', notes: 'Ждёт: П17, П20 и решения пользователя D4 (Steam API).' },
+      'П22': { name: 'Масштабирование до 8 игроков', seg: 'S7', track: 'Основной путь', crit: true, details: 'S7.1, S7.2: P3..P8 на хосте, 7 прокси на клиенте, слоты 2-7, нагрузочный стенд', notes: 'Ждёт: П17.' },
+      'П23': { name: 'Меню, лобби-поддержка, чат, карта', seg: 'S8', track: 'Параллельная дорожка', crit: false, details: 'S8.1, S8.2, S8.3: создание/подключение в меню, имена, чат, союзники на автокарте', notes: 'Ждёт: П7.' },
+      'П24': { name: 'Загрузчик без Frida и продакшн EXE', seg: 'S9', track: 'Параллельная дорожка', crit: false, details: 'S9.1, S9.2: загрузчик без Frida (proxy DLL или launcher), проверка SHA EXE', notes: 'Ждёт: П1 и решения пользователя D5 по типу загрузчика.' },
+      'П25': { name: 'Упаковка, логи, конфиг, документация', seg: 'S9', track: 'Параллельная дорожка', crit: false, details: 'S9.3: логи, краш-дампы, конфиг, инструкция на RU/EN, набор для друзей', notes: 'Ждёт: П24.' },
+      'П26': { name: 'Полевые тесты с друзьями и аудит', seg: 'S9', track: 'Основной путь', crit: true, details: 'S9.4: полевые тесты с реальными игроками и финальный аудит всей системы', notes: 'Финальный пакет: ждёт завершения всех остальных пакетов.' }
+    };
+
+    function setSourceStatus(type, label) {
+      const dot = document.getElementById('source-dot');
+      const text = document.getElementById('source-status-text');
+      if (type === 'server') {
+        dot.className = 'source-dot';
+        text.innerText = label || 'Подключено к серверу (http://localhost:8080)';
+      } else if (type === 'folder') {
+        dot.className = 'source-dot';
+        text.innerText = label || 'Чтение из папки docs/';
+      } else {
+        dot.className = 'source-dot offline';
+        text.innerText = label || 'Встроенный снимок (нажмите для выбора папки docs)';
+      }
+    }
+
+    function showSourceModal() {
+      document.getElementById('source-modal-overlay').classList.add('active');
+    }
+    function closeSourceModal() {
+      document.getElementById('source-modal-overlay').classList.remove('active');
+    }
+
+    // Tab navigation
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.sheet-tab').forEach(el => el.classList.remove('active'));
+
+      const target = document.getElementById(tabId);
+      if (target) target.classList.add('active');
+
+      const btnId = 'tab-btn-' + tabId.replace('tab-', '');
+      const btn = document.getElementById(btnId);
+      if (btn) btn.classList.add('active');
+    }
+
+    // Helper: format model badges
+    function renderModelBadges(text) {
+      if (!text || text === '—') return '<span style="color:#64748b">—</span>';
+      return text.split('+').map(part => {
+        let p = part.trim();
+        let cls = 'model-user';
+        if (p.includes('Opus')) cls = 'model-opus';
+        else if (p.includes('Sol')) cls = 'model-sol';
+        else if (p.includes('Sonnet')) cls = 'model-sonnet';
+        else if (p.includes('Gemini')) cls = 'model-gemini';
+        return `<span class="model-badge ${cls}">${escapeHtml(p)}</span>`;
+      }).join(' ');
+    }
+
+    // Helper: format status pill
+    function renderStatusPill(status, pkgId) {
+      let cls = 'pill-todo';
+      if (status === 'PASS') cls = 'pill-pass';
+      else if (status === 'DONE') cls = 'pill-done';
+      else if (status === 'REVIEW / PARTIAL') cls = 'pill-partial';
+      else if (status === 'REVIEW') cls = 'pill-review';
+      else if (status === 'IN PROGRESS') cls = 'pill-progress';
+      else if (status === 'BLOCKED') cls = 'pill-blocked';
+
+      return `
+        <select onchange="onStatusChange('${pkgId}', this.value)" style="background:transparent; border:none; outline:none; cursor:pointer;" class="pill ${cls}">
+          <option value="PASS" ${status === 'PASS' ? 'selected' : ''}>PASS</option>
+          <option value="REVIEW" ${status === 'REVIEW' ? 'selected' : ''}>REVIEW</option>
+          <option value="REVIEW / PARTIAL" ${status === 'REVIEW / PARTIAL' ? 'selected' : ''}>REVIEW / PARTIAL</option>
+          <option value="IN PROGRESS" ${status === 'IN PROGRESS' ? 'selected' : ''}>IN PROGRESS</option>
+          <option value="DONE" ${status === 'DONE' ? 'selected' : ''}>DONE</option>
+          <option value="TODO" ${status === 'TODO' ? 'selected' : ''}>TODO</option>
+        </select>
+      `;
+    }
+
+    function onStatusChange(pkgId, newStatus) {
+      simulatedStatuses[pkgId] = newStatus;
+      recalculateAndRender();
+      showToast(`Статус ${pkgId} изменён на ${newStatus}. Зависимости пересчитаны!`);
+    }
+
+    function resetSimulation() {
+      simulatedStatuses = {};
+      recalculateAndRender();
+      showToast('Сброшено к исходным данным из файлов.');
+    }
+
+    // Re-computes readiness, progress, and dependents based on current/simulated statuses
+    function recalculateAndRender() {
+      if (!appData) return;
+
+      const completedPkgs = new Set(['S0.3']);
+      const acceptedDecisions = new Set(['D1', 'D7', 'D8']);
+
+      appData.packages.forEach(p => {
+        const curStatus = simulatedStatuses[p.col_a_id] || p.col_f_status;
+        if (curStatus === 'PASS' || (p.col_g_mode === 'Б' && curStatus === 'DONE')) {
+          completedPkgs.add(p.col_a_id);
+        }
+      });
+
+      let readyCount = 0;
+      let completedCount = 0;
+      let reviewCount = 0;
+
+      appData.packages.forEach(p => {
+        const curStatus = simulatedStatuses[p.col_a_id] || p.col_f_status;
+        p._active_status = curStatus;
+
+        if (curStatus === 'PASS') {
+          p._readiness = 'Завершён (PASS)';
+          p._readiness_state = 'pass';
+          p._progress = 100;
+          completedCount++;
+        } else if (curStatus === 'DONE') {
+          p._readiness = 'Завершён (DONE)';
+          p._readiness_state = 'done';
+          p._progress = 80;
+        } else if (curStatus.includes('REVIEW')) {
+          p._readiness = 'В ревью';
+          p._readiness_state = 'review';
+          p._progress = 70;
+          reviewCount++;
+        } else if (curStatus === 'IN PROGRESS') {
+          p._readiness = 'В работе';
+          p._readiness_state = 'in_progress';
+          p._progress = 20;
+        } else {
+          p._progress = 0;
+          let missing = [];
+          (p.col_m_pkg_deps || []).forEach(dep => {
+            if (!completedPkgs.has(dep)) missing.push(dep);
+          });
+          (p.col_m_dec_deps || []).forEach(dep => {
+            if (!acceptedDecisions.has(dep)) missing.push(dep);
+          });
+
+          if (missing.length === 0) {
+            p._readiness = 'ГОТОВ К СТАРТУ';
+            p._readiness_state = 'ready';
+            readyCount++;
+          } else {
+            p._readiness = `Ждёт: ${missing.join(', ')}`;
+            p._readiness_state = 'waiting';
+          }
+        }
+      });
+
+      renderPackagesTable();
+      renderDashboard(readyCount, completedCount, reviewCount);
+      renderTasksTable();
+      renderDecisionsTable();
+      renderMilestonesTable();
+      renderArtifactsTable();
+      renderGuides();
+    }
+
+    function renderPackagesTable() {
+      const tbody = document.getElementById('packages-tbody');
+      tbody.innerHTML = '';
+
+      appData.packages.forEach((pkg, index) => {
+        const rowNum = index + 5;
+        const tr = document.createElement('tr');
+        tr.className = 'sheet-row';
+
+        const status = pkg._active_status || pkg.col_f_status;
+        const readiness = pkg._readiness || pkg.col_j_readiness;
+        const readinessState = pkg._readiness_state || pkg.col_j_readiness_state;
+        const progress = pkg._progress !== undefined ? pkg._progress : pkg.col_h_progress;
+
+        let readinessHtml = `<span class="readiness-${readinessState}">${escapeHtml(readiness)}</span>`;
+        if (readinessState === 'ready') {
+          readinessHtml = `
+            <span class="readiness-ready" onclick="openPackageModal('${pkg.col_a_id}')" style="cursor:pointer;" title="Нажмите, чтобы открыть и скопировать задание">
+              ⚡ ГОТОВ К СТАРТУ
+            </span>
+          `;
+        }
+
+        let modeCls = 'mode-B';
+        if (pkg.col_g_mode === 'А') modeCls = 'mode-A';
+        else if (pkg.col_g_mode === 'В') modeCls = 'mode-V';
+
+        const barFill = `
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" style="width: ${progress}%;"></div>
+            <div class="progress-bar-text">${progress}%</div>
+          </div>
+        `;
+
+        tr.innerHTML = `
+          <th class="row-header">${rowNum}</th>
+          <td class="sheet-cell" style="font-weight:700; text-align:center; color:#38bdf8; cursor:pointer;" onclick="openPackageModal('${pkg.col_a_id}')">${pkg.col_a_id}</td>
+          <td class="sheet-cell" style="font-weight:600; cursor:pointer;" onclick="openPackageModal('${pkg.col_a_id}')" title="Кликните для деталей">${escapeHtml(pkg.col_b_name)}</td>
+          <td class="sheet-cell" style="text-align:center;"><span style="background:#1e293b; padding:2px 6px; border-radius:3px; font-weight:600;">${escapeHtml(pkg.col_c_seg)}</span></td>
+          <td class="sheet-cell" title="${escapeHtml(pkg.col_d_tasks)}">${escapeHtml(pkg.col_d_tasks)}</td>
+          <td class="sheet-cell" style="font-size:11px; color:#cbd5e1;">${escapeHtml(pkg.col_e_track)}</td>
+          <td class="sheet-cell" style="text-align:center;">${renderStatusPill(status, pkg.col_a_id)}</td>
+          <td class="sheet-cell" style="text-align:center;"><span class="mode-badge ${modeCls}">${pkg.col_g_mode}</span></td>
+          <td class="sheet-cell" style="text-align:right; font-weight:600;">${progress}%</td>
+          <td class="sheet-cell">${barFill}</td>
+          <td class="sheet-cell">${readinessHtml}</td>
+          <td class="sheet-cell">${renderModelBadges(pkg.col_k_assignee)}</td>
+          <td class="sheet-cell">${renderModelBadges(pkg.col_l_reviewer)}</td>
+          <td class="sheet-cell" style="font-size:11px;" title="${escapeHtml(pkg.col_m_deps)}">${escapeHtml(pkg.col_m_deps)}</td>
+          <td class="sheet-cell" style="font-size:11px; color:#cbd5e1;" title="${escapeHtml(pkg.col_n_details)}">${escapeHtml(pkg.col_n_details)}</td>
+          <td class="sheet-cell" style="font-size:11px; color:#94a3b8;" title="${escapeHtml(pkg.col_o_notes)}">${escapeHtml(pkg.col_o_notes)}</td>
+        `;
+
+        tbody.appendChild(tr);
+      });
+
+      const tfoot = document.getElementById('packages-tfoot');
+      const total = appData.packages.length;
+      const completed = appData.packages.filter(p => (p._active_status || p.col_f_status) === 'PASS').length;
+      const ready = appData.packages.filter(p => (p._readiness_state || p.col_j_readiness_state) === 'ready').length;
+
+      tfoot.innerHTML = `
+        <tr class="summary-row">
+          <th class="row-header">31</th>
+          <td style="text-align:center;">ИТОГО</td>
+          <td>Всего пакетов: ${total} (Б: 11, А: 5, В: 10)</td>
+          <td style="text-align:center;">S0–S9</td>
+          <td>${appData.summary.total_tasks || 44} пакетные задачи</td>
+          <td>Критический путь: 17</td>
+          <td style="text-align:center;">Выполнено: ${completed} / ${total}</td>
+          <td style="text-align:center;">В: 10</td>
+          <td style="text-align:right;">≈20%</td>
+          <td>
+            <div class="progress-bar-container">
+              <div class="progress-bar-fill" style="width: 20%;"></div>
+              <div class="progress-bar-text">20%</div>
+            </div>
+          </td>
+          <td style="color:#86efac; font-weight:700;">Готовы к старту: ${ready}</td>
+          <td colspan="5" style="font-size:11px; color:#94a3b8; font-weight:normal;">
+            При смене статуса в колонке F все показатели и зависимости обновляются автоматически.
+            ${Object.keys(simulatedStatuses).length > 0 ? '<button class="btn btn-highlight" onclick="resetSimulation()" style="padding:2px 8px; font-size:11px; margin-left:8px;">Сбросить симуляцию к файлам</button>' : ''}
+          </td>
+        </tr>
+      `;
+    }
+
+    function renderDashboard(readyCount, completedCount, reviewCount) {
+      document.getElementById('kpi-ready').innerText = readyCount;
+      document.getElementById('kpi-review').innerText = reviewCount;
+      document.getElementById('kpi-completed').innerText = `${completedCount} / 26`;
+
+      const grid = document.getElementById('action-cards-grid');
+      grid.innerHTML = '';
+
+      if (appData.recommended_actions) {
+        appData.recommended_actions.forEach(action => {
+          const card = document.createElement('div');
+          let cls = 'action-card';
+          if (action.priority === 'BLOCKING') cls += ' blocking';
+          else if (action.priority === 'DECISION') cls += ' decision';
+
+          card.className = cls;
+          card.innerHTML = `
+            <div>
+              <div class="action-header">
+                <span class="action-pkg-title">${action.package_id}: ${escapeHtml(action.package_name)}</span>
+                <span class="pill pill-${action.priority === 'BLOCKING' ? 'review' : (action.priority === 'HIGH' ? 'pass' : 'progress')}">${escapeHtml(action.badge)}</span>
+              </div>
+              <div class="action-reason">${escapeHtml(action.reason)}</div>
+              <div class="action-meta">
+                <span>Исполнитель: ${renderModelBadges(action.assignee)}</span>
+                ${action.reviewer && action.reviewer !== '—' ? `<span>Проверяющий: ${renderModelBadges(action.reviewer)}</span>` : ''}
+                ${action.mode && action.mode !== '—' ? `<span>Режим: <b>${action.mode}</b></span>` : ''}
+              </div>
+            </div>
+            <div class="action-footer">
+              <button class="btn btn-primary" onclick="copyText('${escapeJs(action.prompt)}')">
+                📋 Скопировать задание (Цель: PASS)
+              </button>
+            </div>
+          `;
+          grid.appendChild(card);
+        });
+      }
+
+      const alertsBox = document.getElementById('top-alerts-container');
+      alertsBox.innerHTML = '';
+      if (appData.top_alerts) {
+        appData.top_alerts.forEach(alertText => {
+          const div = document.createElement('div');
+          div.style.cssText = 'background:#182234; border-left:3px solid #38bdf8; padding:8px 12px; font-size:12px; border-radius:4px; color:#cbd5e1;';
+          div.innerHTML = escapeHtml(alertText);
+          alertsBox.appendChild(div);
+        });
+      }
+
+      const worksList = document.getElementById('what-works-list');
+      worksList.innerHTML = '';
+      (appData.what_works || []).forEach(w => {
+        const li = document.createElement('li');
+        li.innerHTML = escapeHtml(w);
+        worksList.appendChild(li);
+      });
+
+      const hazardsList = document.getElementById('open-hazards-list');
+      hazardsList.innerHTML = '';
+      (appData.open_hazards || []).forEach(h => {
+        const li = document.createElement('li');
+        li.innerHTML = escapeHtml(h);
+        hazardsList.appendChild(li);
+      });
+    }
+
+    function renderTasksTable() {
+      const tbody = document.getElementById('tasks-tbody');
+      tbody.innerHTML = '';
+
+      (appData.tasks || []).forEach(t => {
+        const tr = document.createElement('tr');
+        tr.className = 'sheet-row task-row';
+        tr.setAttribute('data-search', (t.id + ' ' + t.desc + ' ' + t.package).toLowerCase());
+
+        let statusCls = 'pill-todo';
+        if (t.status === 'PASS') statusCls = 'pill-pass';
+        else if (t.status.includes('REVIEW')) statusCls = 'pill-review';
+
+        tr.innerHTML = `
+          <td class="sheet-cell" style="font-weight:700; color:#38bdf8;">${t.id}</td>
+          <td class="sheet-cell" style="text-align:center;">${t.seg}</td>
+          <td class="sheet-cell" style="white-space:normal; line-height:1.4;">${escapeHtml(t.desc)}</td>
+          <td class="sheet-cell" style="font-weight:600; text-align:center;">${escapeHtml(t.package)}</td>
+          <td class="sheet-cell" style="font-size:11px; color:#94a3b8;">${escapeHtml(t.ref)}</td>
+          <td class="sheet-cell"><span class="pill ${statusCls}">${escapeHtml(t.status)}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('tasks-badge-count').innerText = (appData.tasks || []).length;
+    }
+
+    function filterTasks() {
+      const q = document.getElementById('task-search-input').value.toLowerCase();
+      document.querySelectorAll('.task-row').forEach(row => {
+        const text = row.getAttribute('data-search');
+        row.style.display = text.includes(q) ? '' : 'none';
+      });
+    }
+
+    function renderDecisionsTable() {
+      const tbody = document.getElementById('decisions-tbody');
+      tbody.innerHTML = '';
+
+      (appData.decisions || []).forEach(d => {
+        const tr = document.createElement('tr');
+        tr.className = 'sheet-row';
+        tr.innerHTML = `
+          <td class="sheet-cell" style="font-weight:700; color:#38bdf8; text-align:center;">${d.id}</td>
+          <td class="sheet-cell" style="white-space:normal;">${escapeHtml(d.desc)}</td>
+          <td class="sheet-cell" style="font-size:11px; color:#cbd5e1;">${escapeHtml(d.when)}</td>
+          <td class="sheet-cell"><span class="pill ${d.accepted ? 'pill-pass' : 'pill-review'}">${d.accepted ? 'Принято' : 'Ожидает'}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderMilestonesTable() {
+      const tbody = document.getElementById('milestones-tbody');
+      tbody.innerHTML = '';
+
+      (appData.milestones || []).forEach(m => {
+        const tr = document.createElement('tr');
+        tr.className = 'sheet-row';
+        tr.innerHTML = `
+          <td class="sheet-cell" style="font-weight:600;">${escapeHtml(m.name)}</td>
+          <td class="sheet-cell" style="color:#38bdf8; font-weight:700;">${escapeHtml(m.ready)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderArtifactsTable() {
+      const tbody = document.getElementById('artifacts-tbody');
+      tbody.innerHTML = '';
+
+      (appData.artifacts || []).forEach(a => {
+        const tr = document.createElement('tr');
+        tr.className = 'sheet-row';
+        tr.innerHTML = `
+          <td class="sheet-cell" style="font-weight:600;">${escapeHtml(a.what)}</td>
+          <td class="sheet-cell" style="font-family:monospace; font-size:11px; color:#94a3b8;">${escapeHtml(a.path)}</td>
+          <td class="sheet-cell" style="font-family:monospace; font-size:11px; color:#38bdf8;">${escapeHtml(a.sha)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderGuides() {
+      const rbody = document.getElementById('roles-tbody');
+      rbody.innerHTML = '';
+      (appData.roles_guide || []).forEach(r => {
+        const tr = document.createElement('tr');
+        tr.className = 'sheet-row';
+        tr.innerHTML = `
+          <td class="sheet-cell" style="font-weight:700; color:#f8fafc;">${renderModelBadges(r.model)}</td>
+          <td class="sheet-cell" style="white-space:normal; font-size:12px;">${escapeHtml(r.role)}</td>
+          <td class="sheet-cell" style="white-space:normal; font-size:11px; color:#cbd5e1;">${escapeHtml(r.levels)}</td>
+        `;
+        rbody.appendChild(tr);
+      });
+
+      const mbody = document.getElementById('modes-tbody');
+      mbody.innerHTML = '';
+      (appData.modes_guide || []).forEach(m => {
+        const tr = document.createElement('tr');
+        tr.className = 'sheet-row';
+        tr.innerHTML = `
+          <td class="sheet-cell" style="font-weight:700; color:#38bdf8;">${escapeHtml(m.mode)}</td>
+          <td class="sheet-cell" style="white-space:normal; font-size:12px;">${escapeHtml(m.desc)}</td>
+          <td class="sheet-cell" style="white-space:normal; font-size:11px; color:#cbd5e1;">${escapeHtml(m.condition)}</td>
+        `;
+        mbody.appendChild(tr);
+      });
+
+      const sel = document.getElementById('builder-pkg-select');
+      sel.innerHTML = '';
+      appData.packages.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.col_a_id;
+        opt.innerText = `${p.col_a_id}: ${p.col_b_name} (Режим ${p.col_g_mode})`;
+        sel.appendChild(opt);
+      });
+
+      updateBuilderPrompt();
+    }
+
+    function updateBuilderPrompt() {
+      const pid = document.getElementById('builder-pkg-select').value;
+      const role = document.getElementById('builder-role-select').value;
+      const pkg = appData.packages.find(p => p.col_a_id === pid);
+      if (!pkg) return;
+
+      const prompt = role === 'reviewer' ? pkg.review_prompt_template : pkg.prompt_template;
+      document.getElementById('builder-prompt-text').innerText = prompt;
+    }
+
+    function copyBuilderPrompt() {
+      const text = document.getElementById('builder-prompt-text').innerText;
+      copyText(text);
+    }
+
+    function openPackageModal(pkgId) {
+      const pkg = appData.packages.find(p => p.col_a_id === pkgId);
+      if (!pkg) return;
+
+      document.getElementById('modal-title').innerText = `${pkg.col_a_id}: ${pkg.col_b_name}`;
+
+      let contentHtml = `
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px; font-size:12px;">
+          <div><b>Сегмент:</b> ${escapeHtml(pkg.col_c_seg)} (${escapeHtml(pkg.col_e_track)})</div>
+          <div><b>Режим приёмки:</b> Режим ${pkg.col_g_mode}</div>
+          <div><b>Исполнитель:</b> ${renderModelBadges(pkg.col_k_assignee)}</div>
+          <div><b>Проверяющий:</b> ${renderModelBadges(pkg.col_l_reviewer)}</div>
+          <div><b>Зависимости:</b> ${escapeHtml(pkg.col_m_deps)}</div>
+          <div><b>Текущий статус:</b> <span class="pill pill-${pkg.col_f_status === 'PASS' ? 'pass' : (pkg.col_f_status.includes('REVIEW') ? 'review' : 'todo')}">${pkg.col_f_status}</span></div>
+        </div>
+        <div style="background:#0f141c; border:1px solid #252d3d; border-radius:6px; padding:10px; margin-bottom:12px; font-size:12px;">
+          <b>Задачи пакета:</b> ${escapeHtml(pkg.col_d_tasks)}<br>
+          <b>Детали проверки:</b> ${escapeHtml(pkg.col_n_details)}<br>
+          <b>Примечания и критика:</b> ${escapeHtml(pkg.col_o_notes)}
+        </div>
+      `;
+
+      if (pkg.latest_progress) {
+        contentHtml += `
+          <div style="background:#182234; border:1px solid #273549; border-radius:6px; padding:10px; margin-bottom:12px; font-size:12px;">
+            <b style="color:#38bdf8;">Последняя запись из PROGRESS.md:</b><br>
+            <div style="font-weight:600; margin:4px 0;">${escapeHtml(pkg.latest_progress.header)}</div>
+            <div style="color:#cbd5e1; font-size:11px; white-space:pre-wrap; max-height:140px; overflow-y:auto;">${escapeHtml(pkg.latest_progress.body)}</div>
+          </div>
+        `;
+      }
+
+      if (pkg.evidence && pkg.evidence.links && pkg.evidence.links.length > 0) {
+        contentHtml += `
+          <div style="font-size:12px; margin-bottom:12px;">
+            <b>Файлы доказательств (EVIDENCE_INDEX.md):</b>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;">
+              ${pkg.evidence.links.map(l => `<span style="background:#1e293b; padding:2px 8px; border-radius:4px; font-size:11px; color:#38bdf8;">${escapeHtml(l.title)}</span>`).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      document.getElementById('modal-details-content').innerHTML = contentHtml;
+      currentModalPkg = pkg;
+      setModalRole('assignee');
+      document.getElementById('modal-overlay').classList.add('active');
+    }
+
+    let currentModalPkg = null;
+    let currentModalRole = 'assignee';
+
+    function setModalRole(role) {
+      currentModalRole = role;
+      const btnA = document.getElementById('btn-modal-role-assignee');
+      const btnR = document.getElementById('btn-modal-role-reviewer');
+      if (role === 'assignee') {
+        if (btnA) btnA.className = 'btn btn-primary';
+        if (btnR) btnR.className = 'btn';
+        if (currentModalPkg) {
+          document.getElementById('modal-prompt-box').innerText = currentModalPkg.prompt_template;
+        }
+      } else {
+        if (btnA) btnA.className = 'btn';
+        if (btnR) btnR.className = 'btn btn-primary';
+        if (currentModalPkg) {
+          document.getElementById('modal-prompt-box').innerText = currentModalPkg.review_prompt_template;
+        }
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('active');
+    }
+
+    function copyModalPrompt() {
+      const text = document.getElementById('modal-prompt-box').innerText;
+      copyText(text);
+    }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Промпт скопирован в буфер обмена!');
+      }).catch(err => {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('Промпт скопирован в буфер обмена!');
+      });
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 2800);
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function escapeJs(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+    }
+
+    // ==========================================
+    // CLIENT-SIDE MARKDOWN PARSER FOR 4 FILES
+    // ==========================================
+    function parseClientMarkdown(files) {
+      const roadmap = files['ROADMAP.md'] || '';
+      const currState = files['CURRENT_STATE.md'] || '';
+      const progress = files['PROGRESS.md'] || '';
+      const evidence = files['EVIDENCE_INDEX.md'] || '';
+
+      const parseCleanStatus = (raw) => {
+        const u = (raw || '').toUpperCase();
+        if (u.includes('PASS')) return 'PASS';
+        if (u.includes('REVIEW / PARTIAL') || u.includes('PARTIAL')) return 'REVIEW / PARTIAL';
+        if (u.includes('REVIEW')) return 'REVIEW';
+        if (u.includes('IN PROGRESS')) return 'IN PROGRESS';
+        if (u.includes('DONE')) return 'DONE';
+        if (u.includes('BLOCKED')) return 'BLOCKED';
+        return 'TODO';
+      };
+
+      const parseCleanMode = (raw) => {
+        if (raw.includes('А') || raw.includes('A')) return 'А';
+        if (raw.includes('Б') || raw.includes('B')) return 'Б';
+        if (raw.includes('В') || raw.includes('V')) return 'В';
+        return 'Б';
+      };
+
+      const parseDependencies = (str) => {
+        let pkgDeps = str.match(/П\d+/g) || [];
+        let decDeps = str.match(/D\d+/g) || [];
+        if (str.toLowerCase().includes('остальные')) {
+          pkgDeps = Array.from({length: 25}, (_, i) => `П${i + 1}`);
+        }
+        return { pkgDeps, decDeps };
+      };
+
+      // 1. Decisions
+      const decisions = [];
+      const acceptedDecisions = new Set();
+      const decSecMatch = roadmap.match(/## 6\. Решения пользователя\s*\n\s*.*?\n(\|.*?\n\|[-| :]+\n(?:\|.*?\n)+)/);
+      if (decSecMatch) {
+        const lines = decSecMatch[1].trim().split('\n').slice(2);
+        for (const line of lines) {
+          const cols = line.split('|').slice(1, -1).map(c => c.trim());
+          if (cols.length >= 3) {
+            const isAcc = cols[2].toLowerCase().includes('принят');
+            if (isAcc) acceptedDecisions.add(cols[0]);
+            decisions.push({ id: cols[0], desc: cols[1], when: cols[2], accepted: isAcc });
+          }
+        }
+      }
+
+      // 2. Raw Packages from Section 4.1
+      const rawPackages = [];
+      const completedPkgs = new Set(['S0.3']);
+      const pkgSec = roadmap.split('### 4.1 Пакеты')[1].split('### 4.2 Задачи по сегментам')[0];
+      const pkgRegex = /\|\s*(П\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|/g;
+      let match;
+      while ((match = pkgRegex.exec(pkgSec)) !== null) {
+        const [_, pid, tasks, assignee, modeRaw, reviewer, depsRaw, statusRaw] = match;
+        const status = parseCleanStatus(statusRaw);
+        const mode = parseCleanMode(modeRaw);
+        if (status === 'PASS' || (mode === 'Б' && status === 'DONE')) {
+          completedPkgs.add(pid);
+        }
+        rawPackages.push({ id: pid, tasks, assignee, modeRaw, mode, reviewer, depsRaw, statusRaw, status });
+      }
+
+      // 3. Progress
+      const pkgProgress = {};
+      const progSecs = progress.split(/\n(?=## )/);
+      for (const sec of progSecs.slice(1)) {
+        const lines = sec.trim().split('\n');
+        const hdr = lines[0].replace('## ', '').trim();
+        const m = hdr.match(/П(\d+)/);
+        if (m) {
+          const pid = `П${m[1]}`;
+          if (!pkgProgress[pid]) {
+            const body = lines.slice(1).join('\n').trim();
+            pkgProgress[pid] = { header: hdr, body: body.slice(0, 800) + (body.length > 800 ? '...' : '') };
+          }
+        }
+      }
+
+      // 4. Evidence
+      const pkgEvidence = {};
+      const evSecs = evidence.split(/\n(?=## )/);
+      for (const sec of evSecs.slice(1)) {
+        const lines = sec.trim().split('\n');
+        const hdr = lines[0].replace('## ', '').trim();
+        const m = hdr.match(/П(\d+)/);
+        if (m) {
+          const pid = `П${m[1]}`;
+          if (!pkgEvidence[pid]) {
+            const linkMatches = sec.matchAll(/\[(.*?)\]\((.*?)\)/g);
+            const links = [];
+            for (const lm of linkMatches) {
+              links.push({ title: lm[1], url: lm[2] });
+              if (links.length >= 12) break;
+            }
+            pkgEvidence[pid] = { header: hdr, links };
+          }
+        }
+      }
+
+      // 5. Build packages list
+      const packages = [];
+      for (const raw of rawPackages) {
+        const pid = raw.id;
+        const cat = PACKAGE_CATALOG[pid] || {};
+        const { pkgDeps, decDeps } = parseDependencies(raw.depsRaw);
+
+        let readiness = '';
+        let readinessState = 'waiting';
+        if (raw.status === 'PASS') {
+          readiness = 'Завершён (PASS)';
+          readinessState = 'pass';
+        } else if (raw.status === 'DONE') {
+          readiness = 'Завершён (DONE)';
+          readinessState = 'done';
+        } else if (raw.status.includes('REVIEW')) {
+          readiness = 'В ревью';
+          readinessState = 'review';
+        } else if (raw.status === 'IN PROGRESS') {
+          readiness = 'В работе';
+          readinessState = 'in_progress';
+        } else {
+          const missing = [];
+          for (const p of pkgDeps) if (!completedPkgs.has(p)) missing.push(p);
+          for (const d of decDeps) if (!acceptedDecisions.has(d)) missing.push(d);
+          if (missing.length === 0) {
+            readiness = 'ГОТОВ К СТАРТУ';
+            readinessState = 'ready';
+          } else {
+            readiness = `Ждёт: ${missing.join(', ')}`;
+            readinessState = 'waiting';
+          }
+        }
+
+        let progressPct = 0;
+        if (raw.status === 'PASS') progressPct = 100;
+        else if (raw.status === 'DONE') progressPct = 80;
+        else if (raw.status.includes('REVIEW')) progressPct = 70;
+        else if (raw.status === 'IN PROGRESS') progressPct = 20;
+
+        packages.push({
+          col_a_id: pid,
+          col_b_name: cat.name || `Пакет ${pid}`,
+          col_c_seg: cat.seg || 'S1',
+          col_d_tasks: raw.tasks,
+          col_e_track: cat.track || 'Основной путь',
+          col_f_status: raw.status,
+          col_f_status_raw: raw.statusRaw,
+          col_g_mode: raw.mode,
+          col_g_mode_raw: raw.modeRaw,
+          col_h_progress: progressPct,
+          col_i_scale: progressPct,
+          col_j_readiness: readiness,
+          col_j_readiness_state: readinessState,
+          col_k_assignee: raw.assignee,
+          col_l_reviewer: raw.reviewer,
+          col_m_deps: raw.depsRaw,
+          col_m_pkg_deps: pkgDeps,
+          col_m_dec_deps: decDeps,
+          col_n_details: cat.details || '',
+          col_o_notes: cat.notes || '',
+          is_critical: cat.crit || false,
+          prompt_template: `Роль: исполнитель и проверяющий пакета ${pid} (${cat.name || ''}) из docs/ROADMAP.md, режим ${raw.mode}.\nГлавная задача: достичь PASS.\n\nПрочитай перед работой:\n1. AGENTS.md\n2. docs/CURRENT_STATE.md\n3. Строку пакета ${pid} в ROADMAP §4.1, его задачи (${raw.tasks}) в §4.2 и документы из колонки «Опора».\n\nОбъём: только задачи пакета ${pid}. EXE SHA-256 b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d. Принятые исследования и runs не повторять.\nКритерии готовности («Готово, когда»): ${cat.details || ''}.\n\nПорядок сдачи и приёмки:\nВыполнить задачи пакета и провести полную валидацию/приёмку по режиму ${raw.mode} (ROADMAP §1, п. 4).\nПроверить evidence, CTest/offline проверки, неизменность 77 оригинальных файлов игры и exact restores хуков.\nОбновить статусы пакета и задач до PASS в docs/ROADMAP.md, docs/PROGRESS.md и docs/CURRENT_STATE.md.`,
+          review_prompt_template: `Роль: исполнитель и проверяющий пакета ${pid} (${cat.name || ''}) из docs/ROADMAP.md, режим ${raw.mode}.\nГлавная задача: достичь PASS.\n\nПрочитай перед работой:\n1. AGENTS.md\n2. docs/CURRENT_STATE.md\n3. Строку пакета ${pid} в ROADMAP §4.1, отчёт исполнителя и evidence в docs/evidence/.\n\nПредмет проверки и доработки:\nПровести независимую верификацию результатов ${pid}: валидация evidence, CTest/offline проверок, логов прогонов, неизменности 77 оригинальных файлов игры и exact restores хуков. При необходимости внести исправления.\n\nПорядок сдачи:\nОформить результат приёмки (при режиме В — отчёт DOC в docs/), обновить статусы в ROADMAP, PROGRESS и EVIDENCE_INDEX.\nПеревести пакет в итоговый статус PASS.`,
+          latest_progress: pkgProgress[pid] || null,
+          evidence: pkgEvidence[pid] || null
+        });
+      }
+
+      // 6. Tasks S0.1 - S9.4
+      const tasks = [];
+      const tasksSec = roadmap.split('### 4.2 Задачи по сегментам')[1].split('## 5. Критический путь')[0];
+      const taskPattern = /^\s*\|\s*(S\d+\.\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|/gm;
+      let tmatch;
+      while ((tmatch = taskPattern.exec(tasksSec)) !== null) {
+        const [_, tid, desc, pkg, ref, status] = tmatch;
+        tasks.push({
+          id: tid.trim(),
+          seg: tid.trim().split('.')[0],
+          desc: desc.trim(),
+          package: pkg.trim(),
+          ref: ref.trim(),
+          status: parseCleanStatus(status)
+        });
+      }
+
+      // 7. Milestones
+      const milestones = [];
+      const readSec = roadmap.split('## 7. Оценка готовности (INFERRED)')[1].split('## Приложение A')[0];
+      const mLines = readSec.split('\n');
+      for (const line of mLines) {
+        const m = line.match(/^\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/);
+        if (m && !m[1].includes('Веха') && !m[1].includes('---')) {
+          milestones.push({ name: m[1].trim(), ready: m[2].trim() });
+        }
+      }
+
+      // 8. Artifacts
+      const artifacts = [];
+      const artSec = currState.split('## Замороженные артефакты')[1].split('## Открыто')[0];
+      for (const line of artSec.split('\n')) {
+        const m = line.match(/^\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/);
+        if (m && !m[1].includes('Что') && !m[1].includes('---')) {
+          artifacts.push({ what: m[1].trim(), path: m[2].trim(), sha: m[3].trim() });
+        }
+      }
+
+      // 9. Alerts and bullets
+      const top_alerts = currState.split('\n').filter(l => l.startsWith('> ')).map(l => l.slice(2).trim());
+      const extractBullets = (sName, nName) => {
+        try {
+          const part = currState.split(`## ${sName}`)[1].split(`## ${nName}`)[0];
+          return part.split('\n').filter(l => l.trim().startsWith('- ')).map(l => l.trim().slice(2));
+        } catch (e) { return []; }
+      };
+
+      const what_works = extractBullets('Что работает (в узких границах)', 'Замороженные артефакты');
+      const open_hazards = extractBullets('Открыто', 'Следующие шаги');
+      const next_steps = extractBullets('Следующие шаги', 'Как запускать');
+
+      // 10. Actions Queue
+      const recommended_actions = [];
+      packages.filter(p => p.col_j_readiness_state === 'ready').forEach(p => {
+        recommended_actions.push({
+          priority: 'HIGH',
+          badge: 'ГОТОВ К СТАРТУ',
+          package_id: p.col_a_id,
+          package_name: p.col_b_name,
+          assignee: p.col_k_assignee,
+          reviewer: p.col_l_reviewer,
+          mode: p.col_g_mode,
+          prompt: p.prompt_template,
+          reason: `Все зависимости (${p.col_m_deps}) выполнены! Можно запускать прямо сейчас.`
+        });
+      });
+
+      packages.filter(p => p.col_f_status.includes('REVIEW')).forEach(p => {
+        recommended_actions.push({
+          priority: 'BLOCKING',
+          badge: 'ТРЕБУЕТСЯ РЕВЬЮ',
+          package_id: p.col_a_id,
+          package_name: p.col_b_name,
+          assignee: p.col_k_assignee,
+          reviewer: p.col_l_reviewer,
+          mode: p.col_g_mode,
+          prompt: p.review_prompt_template,
+          reason: `Пакет ${p.col_a_id} (${p.col_f_status}) требует проверки: ${p.col_l_reviewer}.`
+        });
+      });
+
+      decisions.filter(d => !d.accepted && ['D2', 'D3', 'D4', 'D5', 'D6'].includes(d.id)).forEach(d => {
+        recommended_actions.push({
+          priority: 'DECISION',
+          badge: `РЕШЕНИЕ ${d.id}`,
+          package_id: d.id,
+          package_name: d.desc,
+          assignee: 'Пользователь',
+          reviewer: '—',
+          mode: '—',
+          prompt: `Принять решение по ${d.id}: ${d.desc}. Условие: ${d.when}.`,
+          reason: `Требуется решение пользователя: ${d.when}.`
+        });
+      });
+
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const dateStr = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+      return {
+        parsed_at: dateStr,
+        summary: {
+          total_packages: packages.length,
+          completed_count: packages.filter(p => p.col_f_status === 'PASS').length,
+          ready_count: packages.filter(p => p.col_j_readiness_state === 'ready').length,
+          review_count: packages.filter(p => p.col_f_status.includes('REVIEW')).length,
+          total_tasks: tasks.length
+        },
+        packages,
+        tasks,
+        decisions,
+        milestones,
+        artifacts,
+        top_alerts,
+        what_works,
+        open_hazards,
+        next_steps,
+        recommended_actions,
+        roles_guide: [
+          { model: 'Opus', role: 'ADR, прогоны в игре через REA MCP (Frida), главный рецензент и блокирующая приёмка', levels: 'max — ADR и gates с риском lifetime/UAF; extra — обычные нативные gates; high — ревью' },
+          { model: 'GPT 6.1 Sol', role: 'Нативный реверс, детуры, хуки и C++ в DLL (вёл M0 и нативную часть M1)', levels: 'max — новая подсистема с неизвестным ABI/lifetime; extra — расширение отработанных шаблонов; high — точечные правки' },
+          { model: 'Sonnet', role: 'Объёмная работа по готовым шаблонам: консолидация, offline-тесты, AngelScript, UI, упаковка, документация', levels: 'high — код; medium — документы и индексы' },
+          { model: 'Gemini', role: 'Прототипы и тестовые стенды (ENet-прототип, QA-клиенты), чтение больших объёмов, ассеты, второе мнение', levels: 'high — стенды, тесты, ассеты; max — второе мнение по протоколу и архитектуре' }
+        ],
+        modes_guide: [
+          { mode: 'А — самоприёмка', desc: 'Исполнитель сам прогоняет машинные проверки (сборка, тесты, хеши, воспроизведение) и ставит PASS', condition: 'Результат проверяется машинно, изменения обратимы (git), память и lifetime не затронуты' },
+          { mode: 'Б — самоприёмка с неблокирующей проверкой', desc: 'Исполнитель ставит DONE, следующие пакеты стартуют сразу; другая модель проверяет пачкой', condition: 'Нативный код Opus или Sol по принятым шаблонам; ошибка тихая, но обратима' },
+          { mode: 'В — блокирующая проверка', desc: 'Исполнитель ставит REVIEW; зависимые пакеты ждут, пока другая модель не поставит PASS', condition: 'Архитектурные решения (ADR); проба мира; внешние эффекты (Steam, оригинал); новая нативная логика от Sonnet/Gemini' }
+        ]
+      };
+    }
+
+    // ==========================================
+    // DATA LOADING PIPELINE (SERVER + OFFLINE)
+    // ==========================================
+    async function reloadData() {
+      // 1. If we have a saved directory handle, read directly from it
+      if (savedDirectoryHandle) {
+        try {
+          await loadFromDirectoryHandle(savedDirectoryHandle);
+          return;
+        } catch (e) {
+          console.warn('Saved directory handle failed', e);
+        }
+      }
+
+      // 2. Try HTTP endpoints (local Python server)
+      const endpoints = [
+        '/api/data',
+        'http://127.0.0.1:8080/api/data',
+        'http://localhost:8080/api/data'
+      ];
+
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep, { cache: 'no-store' });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.packages && data.packages.length > 0) {
+              appData = data;
+              setSourceStatus('server', `Подключено: ${ep}`);
+              document.getElementById('last-updated-text').innerText = `Обновлено: ${data.parsed_at}`;
+              recalculateAndRender();
+              showToast('Данные успешно перечитаны с сервера!');
+              return;
+            }
+          }
+        } catch (e) {
+          // continue to next endpoint
+        }
+      }
+
+      // 3. If on file:/// and server not found, prompt for directory or files
+      if (window.showDirectoryPicker) {
+        try {
+          const dirHandle = await window.showDirectoryPicker({ id: 'pse_docs_dir', mode: 'read' });
+          savedDirectoryHandle = dirHandle;
+          await loadFromDirectoryHandle(dirHandle);
+          return;
+        } catch (e) {
+          if (e.name === 'AbortError') {
+            showToast('Выбор папки отменён.');
+            return;
+          }
+          console.warn('showDirectoryPicker error', e);
+        }
+      }
+
+      // 4. Fallback modal
+      showSourceModal();
+    }
+
+    async function promptFolderPick() {
+      closeSourceModal();
+      if (window.showDirectoryPicker) {
+        try {
+          const dirHandle = await window.showDirectoryPicker({ id: 'pse_docs_dir', mode: 'read' });
+          savedDirectoryHandle = dirHandle;
+          await loadFromDirectoryHandle(dirHandle);
+          return;
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+        }
+      }
+      document.getElementById('folder-input').click();
+    }
+
+    async function loadFromDirectoryHandle(dirHandle) {
+      const requiredFiles = ['CURRENT_STATE.md', 'ROADMAP.md', 'PROGRESS.md', 'EVIDENCE_INDEX.md'];
+      const fileContents = {};
+
+      let targetHandle = dirHandle;
+      try {
+        const sub = await dirHandle.getDirectoryHandle('docs');
+        targetHandle = sub;
+      } catch (e) {}
+
+      for (const fName of requiredFiles) {
+        try {
+          const fileHandle = await targetHandle.getFileHandle(fName);
+          const file = await fileHandle.getFile();
+          fileContents[fName] = await file.text();
+        } catch (err) {
+          console.warn(`Could not read ${fName}`, err);
+        }
+      }
+
+      if (fileContents['ROADMAP.md'] && fileContents['CURRENT_STATE.md']) {
+        appData = parseClientMarkdown(fileContents);
+        setSourceStatus('folder', `Папка: ${targetHandle.name || 'docs'}/`);
+        document.getElementById('last-updated-text').innerText = `Обновлено: ${appData.parsed_at}`;
+        recalculateAndRender();
+        showToast('4 файла успешно прочитаны из папки docs!');
+      } else {
+        showToast('В выбранной папке не найдены нужные 4 файла. Выберите папку docs!');
+        showSourceModal();
+      }
+    }
+
+    function handleFolderSelect(files) {
+      const required = ['CURRENT_STATE.md', 'ROADMAP.md', 'PROGRESS.md', 'EVIDENCE_INDEX.md'];
+      const found = {};
+      let readCount = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (required.includes(f.name)) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            found[f.name] = e.target.result;
+            readCount++;
+            if (Object.keys(found).length >= 4 || readCount === files.length) {
+              if (found['ROADMAP.md']) {
+                appData = parseClientMarkdown(found);
+                setSourceStatus('folder', 'Локальные файлы docs/');
+                document.getElementById('last-updated-text').innerText = `Обновлено: ${appData.parsed_at}`;
+                recalculateAndRender();
+                closeSourceModal();
+                showToast('4 файла успешно прочитаны из папки!');
+              }
+            }
+          };
+          reader.readAsText(f);
+        }
+      }
+    }
+
+    function handleFilesSelect(files) {
+      handleFolderSelect(files);
+    }
+
+    // Auto-init on load
+    window.addEventListener('DOMContentLoaded', () => {
+      // 1. Initial render from embedded data if present
+      if (window.__INITIAL_DATA__) {
+        appData = window.__INITIAL_DATA__;
+        setSourceStatus('offline', 'Встроенный снимок (нажмите «Обновить из файлов»)');
+        document.getElementById('last-updated-text').innerText = `Обновлено: ${appData.parsed_at}`;
+        recalculateAndRender();
+      }
+
+      // 2. Try to connect to live HTTP server silently
+      fetch('http://127.0.0.1:8080/api/data')
+        .then(res => res.json())
+        .then(data => {
+          appData = data;
+          setSourceStatus('server', 'Подключено к серверу (http://localhost:8080)');
+          document.getElementById('last-updated-text').innerText = `Обновлено: ${data.parsed_at}`;
+          recalculateAndRender();
+        })
+        .catch(() => {
+          // If no server, initial data is already rendered
+        });
+
+      // 3. Periodic polling if server is available
+      setInterval(() => {
+        fetch('http://127.0.0.1:8080/api/data')
+          .then(res => res.json())
+          .then(data => {
+            if (JSON.stringify(data.mtimes) !== JSON.stringify(appData ? appData.mtimes : null)) {
+              appData = data;
+              setSourceStatus('server', 'Подключено к серверу (http://localhost:8080)');
+              document.getElementById('last-updated-text').innerText = `Обновлено: ${data.parsed_at}`;
+              recalculateAndRender();
+              showToast('Файлы изменились на диске! Таблица обновлена.');
+            }
+          })
+          .catch(() => {});
+      }, 5000);
+    });
+  </script>
+</body>
+</html>

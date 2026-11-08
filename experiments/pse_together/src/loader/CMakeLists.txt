@@ -1,0 +1,63 @@
+# P24 is independent of gameplay source edits in other packages.
+add_library(pse_loader SHARED pe_together.cpp)
+target_link_libraries(pse_loader PRIVATE pse_headers bcrypt)
+set_target_properties(pse_loader PROPERTIES OUTPUT_NAME pe-together)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/SDL2_exports.exp"
+  COMMAND "${CMAKE_AR}" /nologo /machine:x64
+    "/def:${CMAKE_CURRENT_SOURCE_DIR}/SDL2.def"
+    "/out:${CMAKE_CURRENT_BINARY_DIR}/SDL2_exports.lib"
+  DEPENDS SDL2.def VERBATIM)
+set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/SDL2_exports.exp" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_library(pse_sdl_proxy SHARED sdl_proxy.cpp "${CMAKE_CURRENT_BINARY_DIR}/SDL2_exports.exp")
+target_link_libraries(pse_sdl_proxy PRIVATE pse_headers bcrypt user32)
+set_target_properties(pse_sdl_proxy PROPERTIES OUTPUT_NAME SDL2)
+add_executable(pse_exe_check check_main.cpp)
+target_link_libraries(pse_exe_check PRIVATE pse_headers bcrypt)
+set_target_properties(pse_exe_check PROPERTIES OUTPUT_NAME pe-check)
+foreach(target pse_loader pse_sdl_proxy pse_exe_check)
+  target_compile_definitions(${target} PRIVATE UNICODE _UNICODE)
+  target_compile_options(${target} PRIVATE ${PSE_STRICT})
+  target_link_options(${target} PRIVATE /INCREMENTAL:NO /DEBUG:FULL)
+  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/p24")
+endforeach()
+add_custom_target(pse_loader_p24 DEPENDS pse_loader pse_sdl_proxy pse_exe_check)
+add_dependencies(pse_all pse_loader_p24)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME p24_loader_contract COMMAND "${CMAKE_COMMAND}" -E env
+  "PSE_P24_BUILD_DIR=${CMAKE_BINARY_DIR}/p24" "${Python3_EXECUTABLE}" -B -X utf8
+  "${PSE_ROOT}/tools/p24.py" offline auto)
+set_tests_properties(p24_loader_contract PROPERTIES TIMEOUT 60)
+
+# --- P27 / S9.6: native write guard, shim v2, pe-play launcher, offline fixtures --------------------------------------
+add_library(pse_guard STATIC pe_guard.cpp)
+target_link_libraries(pse_guard PUBLIC pse_headers pse_minhook)
+target_compile_definitions(pse_guard PRIVATE UNICODE _UNICODE)
+target_compile_options(pse_guard PRIVATE ${PSE_STRICT})
+add_library(pse_sdl_proxy_v2 SHARED sdl_proxy_v2.cpp "${CMAKE_CURRENT_BINARY_DIR}/SDL2_exports.exp")
+target_link_libraries(pse_sdl_proxy_v2 PRIVATE pse_guard pse_headers bcrypt user32)
+set_target_properties(pse_sdl_proxy_v2 PROPERTIES OUTPUT_NAME SDL2 ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/p27/lib")
+add_library(pse_loader_v2 SHARED pe_together_v2.cpp)
+target_link_libraries(pse_loader_v2 PRIVATE pse_headers bcrypt)
+set_target_properties(pse_loader_v2 PROPERTIES OUTPUT_NAME pe-together ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/p27/lib")
+add_executable(pse_play pe_play.cpp)
+target_link_libraries(pse_play PRIVATE pse_headers bcrypt)
+set_target_properties(pse_play PROPERTIES OUTPUT_NAME pe-play)
+add_library(pse_guard_probe SHARED guard_test.cpp)
+target_compile_definitions(pse_guard_probe PRIVATE PSE_PROBE_DLL)
+target_link_libraries(pse_guard_probe PRIVATE pse_guard pse_headers)
+set_target_properties(pse_guard_probe PROPERTIES OUTPUT_NAME guard_probe ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/p27/lib")
+add_executable(pse_guard_fixture guard_test.cpp)
+target_link_libraries(pse_guard_fixture PRIVATE pse_guard_probe pse_headers ole32 shell32)
+set_target_properties(pse_guard_fixture PROPERTIES OUTPUT_NAME guard_fixture)
+foreach(target pse_sdl_proxy_v2 pse_loader_v2 pse_play pse_guard_probe pse_guard_fixture)
+  target_compile_definitions(${target} PRIVATE UNICODE _UNICODE)
+  target_compile_options(${target} PRIVATE ${PSE_STRICT})
+  target_link_options(${target} PRIVATE /INCREMENTAL:NO /DEBUG:FULL)
+  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/p27")
+endforeach()
+add_custom_target(pse_loader_p27 DEPENDS pse_sdl_proxy_v2 pse_loader_v2 pse_play pse_guard_probe pse_guard_fixture)
+add_dependencies(pse_all pse_loader_p27)
+add_test(NAME p27_guard_contract COMMAND "${CMAKE_COMMAND}" -E env
+  "PSE_P27_BUILD_DIR=${CMAKE_BINARY_DIR}/p27" "${Python3_EXECUTABLE}" -B -X utf8
+  "${PSE_ROOT}/tools/p27.py" offline auto)
+set_tests_properties(p27_guard_contract PROPERTIES TIMEOUT 300)

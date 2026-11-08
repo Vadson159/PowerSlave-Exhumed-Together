@@ -1,5 +1,15 @@
 # PowerSlave Exhumed Together — Manual Respawn Architecture
 
+> **Уточнение П16 от 2026-11-06:** [решение пользователя](evidence/m1/P16_RESPAWN/DECISIONS.md)
+> сохраняет сброс оружия до стартового набора. Оружейный пикап **не исчезает
+> с карты** и выдаёт **только оружие, без патронов**; после смерти его можно
+> подобрать снова. Текущая реализация — [DOC-87](87_P16_RESPAWN_AND_WEAPON_POLICY.md),
+> **PARTIAL, без игровой приёмки**. Примеры ниже — исторический design-only
+> эскиз:100HP/50ammo и вымышленные названия native API не являются доказанными
+> контрактами. Native C19/C23 наблюдали200HP/60pistol counter в своих условиях.
+> Lifetime определяется [M0 handoff](M0_TO_M1_HANDOFF.md); ручные target/refs/
+> deletion-flag writes из старого примера5.2 запрещены.
+
 **Document ID:** `DOC-16-RESPAWN-DESIGN`  
 **Classification:** Systems Architecture & Network Protocol Specification  
 **Target Binary:** `anubis_Shipping_Steam_x64.exe` (SHA-256 `b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d`)  
@@ -166,35 +176,17 @@ In experiment `C05`, runtime analysis established that when an enemy AI is activ
 If the dead puppet is deleted without unlinking:
 - Enemy AI attempting to evaluate distance in `FUN_1401a02f0` or `FUN_1401ae110` dereferences freed memory, causing an immediate CTD (Crash To Desktop).
 
-### 5.2 Safe Teardown Protocol
+### 5.2 Accepted Native Lifecycle Contract
 
-Before allocating the new puppet, the host executes the following unlinking sequence:
-
-```cpp
-void Host_SafelyRetireDeadPuppet(CoopPlayerSlot* slot)
-{
-    kexSlavePuppet* pOldPuppet = slot->pPuppet;
-    if (pOldPuppet == nullptr) {
-        return;
-    }
-
-    // 1. Clear target pointers on all active enemy actors
-    for (kexActor* actor = g_ActorListHead; actor != nullptr; actor = actor->next)
-    {
-        if (actor->targetActor == pOldPuppet) {
-            actor->targetActor = nullptr; // Unlink target pointer safely
-            actor->stateFlags &= ~ACTOR_HAS_TARGET;
-        }
-    }
-
-    // 2. Unlink puppet from collision sectors
-    pOldPuppet->UnlinkFromSectors();
-
-    // 3. Mark for deferred engine retirement (bounded lifecycle)
-    pOldPuppet->flags |= ACTOR_RETIRED;
-    slot->pPuppet = nullptr;
-}
-```
+The previous manual target/flag-clearing example is withdrawn. Follow
+[M0 handoff](M0_TO_M1_HANDOFF.md), C19/C23: stop old scheduling; native Remove
+only on the confirmed owned Puppet; native Reset on its Player; acquire the
+starter weapon; scoped native Spawn at the current level start; weapon-ready;
+then validate a distinct Puppet/node generation. Keep old projectile ownership
+and attribution attached to the old generation. Remove does not prove immediate
+retirement/free. Do not clear refs, targets, SourceOwner or deletion flags.
+Native world teardown releases remaining holders; retain storage/code for the
+accepted lifetime. This contract alone does not attest a new P16 adapter.
 
 ### 5.3 Starter Weapon Reset Contract
 

@@ -1,0 +1,169 @@
+{
+  "name": "doc58b_run02_movement",
+  "description": "DOC-58B Run 02 Host positioning (2x W 0.03s), client spawn wait, strafe A/D with handoff, mouse turn, and forward W.",
+  "steps": [
+    {
+      "action": "focus",
+      "role": "host"
+    },
+    {
+      "action": "hold",
+      "seconds": 0.5
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "W",
+      "hold": 0.03
+    },
+    {
+      "action": "hold",
+      "seconds": 0.5
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "W",
+      "hold": 0.03
+    },
+    {
+      "action": "hold",
+      "seconds": 1.0
+    },
+    {
+      "action": "focus",
+      "role": "client"
+    },
+    {
+      "action": "hold",
+      "seconds": 2.0
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "A",
+      "hold": 0.06
+    },
+    {
+      "action": "hold",
+      "seconds": 0.4
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "A",
+      "hold": 0.08,
+      "handoff": true
+    },
+    {
+      "action": "hold",
+      "seconds": 0.4
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "A",
+      "hold": 0.06,
+      "handoff": true
+    },
+    {
+      "action": "hold",
+      "seconds": 0.4
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "A",
+      "hold": 0.08,
+      "handoff": true
+    },
+    {
+      "action": "hold",
+      "seconds": 0.5
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "A",
+      "hold": 0.2
+    },
+    {
+      "action": "hold",
+      "seconds": 0.5
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "D",
+      "hold": 0.12
+    },
+    {
+      "action": "hold",
+      "seconds": 0.4
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "D",
+      "hold": 0.06,
+      "handoff": true
+    },
+    {
+      "action": "mouse",
+      "role": "host",
+      "dx": 120
+    },
+    {
+      "action": "hold",
+      "seconds": 0.4
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "D",
+      "hold": 0.08
+    },
+    {
+      "action": "hold",
+      "seconds": 0.5
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "W",
+      "hold": 0.1
+    },
+    {
+      "action": "hold",
+      "seconds": 0.4
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "W",
+      "hold": 0.15
+    },
+    {
+      "action": "hold",
+      "seconds": 0.5
+    },
+    {
+      "action": "key",
+      "role": "host",
+      "key": "W",
+      "hold": 0.3
+    },
+    {
+      "action": "hold",
+      "seconds": 1.0
+    },
+    {
+      "action": "focus",
+      "role": "client"
+    },
+    {
+      "action": "hold",
+      "seconds": 1.0
+    }
+  ]
+}

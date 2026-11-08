@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "bind": "127.0.0.1",
+  "host": "127.0.0.1",
+  "port": 27015,
+  "name": "Friend",
+  "participant_id": "friend-01",
+  "token": "change-this-for-your-session",
+  "max_clients": 1,
+  "crash_dumps": true
+}

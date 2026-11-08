@@ -1,5 +1,12 @@
 # PowerSlave Exhumed Together — Automap Allies Architecture
 
+> **Поправка П23, 2026-11-06:** native-пример ниже не является проверенным ABI.
+> Сохранённые assembly показывают yaw как **float через XMM2**, radius — пятый
+> аргумент на стеке; raw Actor origin/yaw — +0x18/+0x38. Назначение this+0x10
+> как zoom не подтверждено. Независимая проверка и ограничения render seam —
+> [DOC-84](84_P23_UI_LOBBY_CHAT_AUTOMAP.md). Пример §6.2 напрямую не использовать;
+> новый native/runtime gate остаётся обязательным. Исторический текст сохранён.
+
 **Document ID:** `DOC-12-AUTOMAP-ALLIES`  
 **Classification:** Reverse Engineering & Systems Integration  
 **Target Binary:** `anubis_Shipping_Steam_x64.exe` (SHA-256 `b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d`)  

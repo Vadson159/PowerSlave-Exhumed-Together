@@ -1,0 +1,293 @@
+{
+  "schema": "pse-p8-sprites-v1",
+  "package": "experiments/pse_together/assets/coop_sprites.kpf",
+  "sha256": "83057162368e836f2a7adc3fa639f0996f60f885863d9b387043b95b8e264df2",
+  "slots": [
+    {
+      "slot": 0,
+      "texture": "sprites/player/john_p1.png",
+      "changed_pixels": 0,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    },
+    {
+      "slot": 1,
+      "texture": "sprites/player/john_p2.png",
+      "changed_pixels": 9674,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    },
+    {
+      "slot": 2,
+      "texture": "sprites/player/john_p3.png",
+      "changed_pixels": 9674,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    },
+    {
+      "slot": 3,
+      "texture": "sprites/player/john_p4.png",
+      "changed_pixels": 9674,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    },
+    {
+      "slot": 4,
+      "texture": "sprites/player/john_p5.png",
+      "changed_pixels": 9674,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    },
+    {
+      "slot": 5,
+      "texture": "sprites/player/john_p6.png",
+      "changed_pixels": 9674,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    },
+    {
+      "slot": 6,
+      "texture": "sprites/player/john_p7.png",
+      "changed_pixels": 9674,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    },
+    {
+      "slot": 7,
+      "texture": "sprites/player/john_p8.png",
+      "changed_pixels": 9674,
+      "alpha_preserved": true,
+      "non_ramp_pixels_preserved": true,
+      "rectangles": 40,
+      "frames": 14
+    }
+  ],
+  "members": [
+    {
+      "path": "PSE_TOGETHER_SPRITES_CREDITS.txt",
+      "sha256": "0f894ba4824d5599916614fa0550d22228a60057c5bf4242462f20e17493b143",
+      "size": 360
+    },
+    {
+      "path": "sprites/player/john_p1.png",
+      "sha256": "67ce2ffce9b0bf740eefde55872f7068d9bad25449f4beb67e434108f4f0d267",
+      "size": 155010
+    },
+    {
+      "path": "sprites/player/john_p1_anim.txt",
+      "sha256": "2334bb0cb54fd9a1a45faa327804c9f61dfe88884e9860479444fd9faab0aded",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p1_proxy_anim.txt",
+      "sha256": "fa361f872433937e0136edc63d5a5ac343a805d8cd2958afd76f7a1bd7674d06",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p1_sprite.txt",
+      "sha256": "63fb39834e79747e0c92483072315727ee7e5503aa21fd2a2751766609f1b641",
+      "size": 1576
+    },
+    {
+      "path": "sprites/player/john_p2.png",
+      "sha256": "e19b5dca1b124278db4f3b65e43c5a963e90103b6e0a3f8974d54769985481a2",
+      "size": 160841
+    },
+    {
+      "path": "sprites/player/john_p2_anim.txt",
+      "sha256": "ccdb25988ce9d5be106dfb44a7bf558f0ccf0e813b713595e453d59d151154e5",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p2_proxy_anim.txt",
+      "sha256": "483c501523c94e006076c7a4a528fd37fae0733c07cc30f471ac562181eb9a82",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p2_sprite.txt",
+      "sha256": "60153e520e4a74e4dec984c5516ec1b07f4f0a7415608c002124c5a8983afefe",
+      "size": 1576
+    },
+    {
+      "path": "sprites/player/john_p3.png",
+      "sha256": "fc51173ce1964f450168485a33979887f060c1d343e585e7f1de631d9232914c",
+      "size": 161980
+    },
+    {
+      "path": "sprites/player/john_p3_anim.txt",
+      "sha256": "441e69cbd785173ecc6c3c03af505931e0d5a8c8026312786b6248f1a72a5120",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p3_proxy_anim.txt",
+      "sha256": "034554d223440c530b9496d9134496db6b2176c3b41c103480ee7fdffadc94d1",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p3_sprite.txt",
+      "sha256": "d9f2b2c0c053233db2c8c1efefa6f5d10d3a53ec4f5956ef6ade91772bab7225",
+      "size": 1576
+    },
+    {
+      "path": "sprites/player/john_p4.png",
+      "sha256": "178cac90506a44d65769baa2ea4398039d55813c22aeb889699a375e9b3b54b8",
+      "size": 159877
+    },
+    {
+      "path": "sprites/player/john_p4_anim.txt",
+      "sha256": "06fb394379941bf7c71bf4b05576f02ff58d6a7b84e85f9fc688eddedde83ca7",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p4_proxy_anim.txt",
+      "sha256": "7ead4ba1774db168cfef760601cdee63aebf7afcc1e22e7529c0c6e8ef940441",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p4_sprite.txt",
+      "sha256": "abd8cb561b5f9d9143270acb56771d8cb054a6928ab08ab73378466942f3a01f",
+      "size": 1576
+    },
+    {
+      "path": "sprites/player/john_p5.png",
+      "sha256": "ab649e49e8c2b8274600e7d3336c30eb60db92bf6561941cabd737955c8377c4",
+      "size": 160924
+    },
+    {
+      "path": "sprites/player/john_p5_anim.txt",
+      "sha256": "fad755cf37913ff8f0e1af305323529121a908d26999a797ee295cec9c463256",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p5_proxy_anim.txt",
+      "sha256": "1d2e837e43abd89187c5b52730b4c463600c8067470f4a07941779300fa6f522",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p5_sprite.txt",
+      "sha256": "1c529ee81ec29848d93a4a0cb43746f1607b8040c439f90309941eb89b104a5b",
+      "size": 1576
+    },
+    {
+      "path": "sprites/player/john_p6.png",
+      "sha256": "5c6e2b120f2641bbc9ff1b694394bd8aa187114e985ae674dba0d19d816bad0a",
+      "size": 160410
+    },
+    {
+      "path": "sprites/player/john_p6_anim.txt",
+      "sha256": "e8bcc35413cd183ad294d3bc1585b53f9a011230913b4cd91e58024ddeeba9a5",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p6_proxy_anim.txt",
+      "sha256": "b353b15a60a9db2ef680dc0605acec35d286f004cc428d1f3c4b55129a94ffac",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p6_sprite.txt",
+      "sha256": "c752a802e5f0ec6221c2ae390b30fd1bdcff7818d8024904ac230e1197f42111",
+      "size": 1576
+    },
+    {
+      "path": "sprites/player/john_p7.png",
+      "sha256": "5a174774935e46355c9feca25b6959b968bcbd843b39ada8e337d1f7ae064b27",
+      "size": 160204
+    },
+    {
+      "path": "sprites/player/john_p7_anim.txt",
+      "sha256": "6f7bff26ca2fad7a06ec9be1e74f3830c4f8e844d285c50e82c48e02913ee92e",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p7_proxy_anim.txt",
+      "sha256": "bb18cc6da6419d61ef8d0180986444372b8081850b6da78aa544546554df7541",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p7_sprite.txt",
+      "sha256": "260807ad6ccc61395d496ff6bceb09bed4e0da22bce6f7f0dfcb1175984fc499",
+      "size": 1576
+    },
+    {
+      "path": "sprites/player/john_p8.png",
+      "sha256": "3c98634fa08b17fa20b26211e065c1606cd1adc3090456566c1b92904f7fac3e",
+      "size": 159536
+    },
+    {
+      "path": "sprites/player/john_p8_anim.txt",
+      "sha256": "592a49b6145213c9c5872e5a217526890bf28ab8bc889cfbbda7002959547904",
+      "size": 16570
+    },
+    {
+      "path": "sprites/player/john_p8_proxy_anim.txt",
+      "sha256": "78413ecd806c003dc876fd0f472f195ba47c9482d8cc806230a6bfe199c2d221",
+      "size": 16546
+    },
+    {
+      "path": "sprites/player/john_p8_sprite.txt",
+      "sha256": "63c1ed7e5f75606e0198778a461204c44688e3cb1e6aaaf068fc1e80aa59d0aa",
+      "size": 1576
+    }
+  ],
+  "source": [
+    {
+      "path": "docs/presentation/player_sprites/john.png",
+      "sha256": "67ce2ffce9b0bf740eefde55872f7068d9bad25449f4beb67e434108f4f0d267"
+    },
+    {
+      "path": "docs/presentation/player_sprites/john_anim.txt",
+      "sha256": "b828710b763d871392a18b35bcdb1a282072af548d89c2ec6b79b255897812ba"
+    },
+    {
+      "path": "docs/presentation/player_sprites/john_sprite.txt",
+      "sha256": "7b0ddfeb09cc175a2c6948a881c48dbc96e9b89e18b33466cfc0afeeff67db33"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p1.png",
+      "sha256": "67ce2ffce9b0bf740eefde55872f7068d9bad25449f4beb67e434108f4f0d267"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p2.png",
+      "sha256": "e19b5dca1b124278db4f3b65e43c5a963e90103b6e0a3f8974d54769985481a2"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p3.png",
+      "sha256": "fc51173ce1964f450168485a33979887f060c1d343e585e7f1de631d9232914c"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p4.png",
+      "sha256": "178cac90506a44d65769baa2ea4398039d55813c22aeb889699a375e9b3b54b8"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p5.png",
+      "sha256": "ab649e49e8c2b8274600e7d3336c30eb60db92bf6561941cabd737955c8377c4"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p6.png",
+      "sha256": "5c6e2b120f2641bbc9ff1b694394bd8aa187114e985ae674dba0d19d816bad0a"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p7.png",
+      "sha256": "5a174774935e46355c9feca25b6959b968bcbd843b39ada8e337d1f7ae064b27"
+    },
+    {
+      "path": "docs/presentation/player_sprites/demo_john_p8.png",
+      "sha256": "3c98634fa08b17fa20b26211e065c1606cd1adc3090456566c1b92904f7fac3e"
+    }
+  ],
+  "runtime_verified": false
+}

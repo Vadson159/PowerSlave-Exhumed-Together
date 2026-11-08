@@ -1,0 +1,18 @@
+# Include after pse_suite() is defined, before pse_offline_suites/pse_all.
+# New transport only: accepted v1.10 and identity-only v1.11 are unchanged.
+get_target_property(PSE_P7_V110_SOURCES pse_core SOURCES)
+set(PSE_P7_TRANSPORT_SOURCES "")
+foreach(source IN LISTS PSE_P7_V110_SOURCES)
+  list(APPEND PSE_P7_TRANSPORT_SOURCES "${PSE_ROOT}/src/wire112/${source}")
+endforeach()
+add_library(pse_core_p7 STATIC ${PSE_P7_TRANSPORT_SOURCES})
+target_include_directories(pse_core_p7 PUBLIC "${PSE_ROOT}/src/wire112/include")
+target_compile_definitions(pse_core_p7 PUBLIC PSE_FEATURE_P4 PSE_FEATURE_P7)
+target_compile_features(pse_core_p7 PUBLIC cxx_std_20)
+target_compile_options(pse_core_p7 PRIVATE /W4 /permissive- /utf-8 /EHsc)
+target_link_libraries(pse_core_p7 PUBLIC enet ws2_32 winmm psapi bcrypt)
+add_library(pse_session_p7 STATIC "${PSE_ROOT}/src/session/network_input.cpp")
+target_include_directories(pse_session_p7 PUBLIC "${PSE_ROOT}/src/session")
+target_link_libraries(pse_session_p7 PUBLIC pse_core_p7 pse_headers)
+target_compile_options(pse_session_p7 PRIVATE ${PSE_STRICT})
+pse_suite(p7_wire112_contract tests/native/p7_wire112_contract.cpp LIBS pse_session_p7 pse_headers)

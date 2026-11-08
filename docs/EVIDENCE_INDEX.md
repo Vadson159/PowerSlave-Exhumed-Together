@@ -1,5 +1,259 @@
 # Индекс Evidence
 
+## П27 срез 2 — S9.7, broker v2, permit без REA (2026-11-07)
+
+[DOC-89](89_P27_NATIVE_WRITE_GUARD.md): `evidence/m1/PSE_TOGETHER_P27/RUN02/` (`RESULT.json` 17/17, `snapshot_before/after.json`, `saved_games_backup/`, `run_log.json`, `root/profile/<role>/logs/{guard,native}_*.jsonl`, `root/install_manifest.json`), `OFFLINE_*` 85/85, `OFFLINE_ALL_05` (регрессия b94). Исходники: `src/loader/pe_together_v2.cpp`, `src/native/portable_policy.hpp`, правки `src/native/p23/{host,client}_p23.cpp`, `tools/p27.py install`.
+
+## П27 срез 1 — native write-guard, offline + RUN01 (2026-11-07)
+
+[DOC-89](89_P27_NATIVE_WRITE_GUARD.md): `evidence/m1/PSE_TOGETHER_P27/OFFLINE_*/RESULT.json` (70/70, `work/root/*.jsonl` — журналы guard, `scenarios/*.stdout` — сырой вывод fixture), `OFFLINE_ALL_01…04` (полная регрессия b94, не чистая), `RUN01/` (guard-only прогон игры: `RESULT.json` 9/9, `snapshot_before/after.json`, `saved_games_backup/`, `run_log.json`, `root/profile/logs/guard_*.jsonl`, `root/profile/early_native_logs/`), исходники `experiments/pse_together/src/loader/pe_guard.*`, `sdl_proxy_v2.cpp`, `pe_play.cpp`, `guard_test.cpp`, `tools/p27.py`.
+
+## П16 — PASS (bounded), нативные прогоны run08/run09 (2026-11-07)
+
+[DOC-88](88_P16_NATIVE_RESPAWN_RUNS.md): [RUN08_RESULT](evidence/m1/P16_RESPAWN/RUN08_RESULT.md), [RUN09_RESULT](evidence/m1/P16_RESPAWN/RUN09_RESULT.md), [INTEGRITY08](evidence/m1/P16_RESPAWN/INTEGRITY08/RESULT.json), [INTEGRITY09](evidence/m1/P16_RESPAWN/INTEGRITY09/RESULT.json), [OFFLINE17](evidence/m1/P16_RESPAWN/OFFLINE17/RESULT.json), gates PRE_NATIVE04…09, журналы `P16_HOST_08/native.jsonl`, `P16_CLIENT_08/native.jsonl`, REA bundles `REA_BUNDLE_*_08/09`, прерванные прогоны RUN04…RUN07_ABORTED.md.
+
+## П16 — предыдущий этап: offline автомат и кандидат постоянного weapon-only пикапа (2026-11-06)
+
+[DOC-87](87_P16_RESPAWN_AND_WEAPON_POLICY.md), [D14/точные ответы](evidence/m1/P16_RESPAWN/DECISIONS.md).
+П16/S4.5 не PASS: native E/TPK/rearm и настоящий повторный подбор после смерти
+не реализованы/не приняты. Игровых запусков и новых хуков0.
+
+- [OFFLINE04](evidence/m1/P16_RESPAWN/OFFLINE04/RESULT.json):38/38;
+  [policy474/0](evidence/m1/P16_RESPAWN/OFFLINE04/logs/p16_respawn_contract.log),
+  [real ENet68/0](evidence/m1/P16_RESPAWN/OFFLINE04/logs/p16_respawn_enet.log),
+  [weapon doubles16/0](evidence/m1/P16_RESPAWN/OFFLINE04/logs/p16_weapon_contract.log).
+  Native completion в ENet явно является fixture.
+- [AUDIT01](evidence/m1/P16_RESPAWN/AUDIT01/RESULT.json):18/18 file/evidence
+  predicates, original77/copies/actual5protected, П7 build7/7/exports,
+  frozen protocols и retained П7 RUN03 exact restores/exit0; это не П16 runtime.
+- [Воспроизведение/ошибки](evidence/m1/P16_RESPAWN/REPRODUCTION.md): OFFLINE01
+  build failure, OFFLINE03 невалидный Welcome fixture, финальный OFFLINE04.
+  Experimental DLL `pse_dll_host_p16` не загружалась в KEX.
+
+## П23 native — PASS в проверенных границах, приёмка В (2026-11-06)
+
+[DOC-85](85_P23_NATIVE_MENU_CHAT_AUTOMAP.md), независимый [DOC-86](86_P23_INDEPENDENT_ACCEPTANCE.md): П23/S8.1–S8.3 приняты. Два KEX/D3D11/TOMB/один ПК; настоящие меню/имена/HUD/чат/roster и native союзники на автокарте. Backend8endpoint проверен отдельно. Финальный вердикт и ограничения — DOC-86.
+
+- [PRE_NATIVE05](evidence/m1/P23_NATIVE/PRE_NATIVE05.json):13/13, frozen sources/DLL/PDB; [snapshot](evidence/m1/P23_NATIVE/PRE_NATIVE05_snapshot/). Exact EXE hash и foreign-process exit193 gate.
+- [OFFLINE_FINAL07](evidence/m1/P23_NATIVE/OFFLINE_FINAL07/RESULT.json):35/35; [UI574](evidence/m1/P23_NATIVE/OFFLINE_FINAL07/logs/p23_ui_contract.log), [real ENet83](evidence/m1/P23_NATIVE/OFFLINE_FINAL07/logs/p23_lobby_live.log), [WARP18](evidence/m1/P23_NATIVE/OFFLINE_FINAL07/logs/p23_d3d_fixture.log). New negative Pose channel/flags, latency path, opening-key queue order cases.
+- [Host raw](evidence/m1/P23_NATIVE/P23_HOST_05/native.jsonl), [client raw](evidence/m1/P23_NATIVE/P23_CLIENT_05/native.jsonl), [native audit36/36](evidence/m1/P23_NATIVE/NATIVE_FINAL05.json). Файл содержит SHA всех screenshots. Полные REA_FINAL130/128 без truncation, отдельные isolation/permit receipts, OS retained identity/signaled/observer-close и RHI restores лежат в тех же run-каталогах.
+- [Независимый supplement58/58](evidence/m1/P23_NATIVE/ACCEPTANCE_86/RESULT.json), [auditor source](evidence/m1/P23_NATIVE/ACCEPTANCE_86/audit86.py). Закрывает coverage gaps основного checker: все UI errors, unique control sites, chronology, observer close payload, exact current file hashes. [Host rebuild7/7](evidence/m1/P23_NATIVE/ACCEPTANCE_86/HOST_BUILD_EQUIVALENCE.json), [client rebuild7/7](evidence/m1/P23_NATIVE/ACCEPTANCE_86/CLIENT_BUILD_EQUIVALENCE.json); raw SHA отличается build metadata/PDB path, masked sections/exports равны.
+- [INTEGRITY_FINAL05](evidence/m1/P23_NATIVE/INTEGRITY_FINAL05/RESULT.json):current original77/copies/actual5protected и retained85/85+19/19, zero remaining game/diagnostic processes. Новые UI hooks отдельно exact40 в raw; native controls exact16. [REA_CLOSE05](evidence/m1/P23_NATIVE/REA_CLOSE05.json):30 успешных close-call receipts, target_state=unknown; OS exit0 подтверждён отдельно.
+- История native attempts01–04, Vulkan no-render, suspended abort03, обнаруженный opening T/layout дефект04 и исправления — DOC-85; эти попытки не заменяют финальную приёмку05. Принятые прежние исследования/игровые runs не повторялись.
+
+## История П23 backend — REVIEW / PARTIAL прежнего этапа (2026-11-06)
+
+[DOC-84](84_P23_UI_LOBBY_CHAT_AUTOMAP.md), [решение пользователя D13](evidence/m1/P23_UI/DECISION_V113.md), [код/контракт](../experiments/pse_together/src/ui/README.md), [независимый verdict](evidence/m1/P23_UI/INDEPENDENT_REVIEW.md). Backend принят в проверенных границах; пакет не PASS: меню/HUD/input/native frame binder/renderer KEX отсутствуют.
+
+- [OFFLINE_FINAL](evidence/m1/P23_UI/OFFLINE_FINAL/RESULT.json):34/34; [UI510/0](evidence/m1/P23_UI/OFFLINE_FINAL/logs/p23_ui_contract.log), [real ENet76/0](evidence/m1/P23_UI/OFFLINE_FINAL/logs/p23_lobby_live.log).8endpoints, Unicode names/chat, reliable direction/auth/generation/rate/replay/roster/reset, gen2/history текущих поколений; один ПК, assigned-interface bind, без KEX.
+- [INDEPENDENT_RUNS](evidence/m1/P23_UI/INDEPENDENT_RUNS.json): точные команды/stdout/exit codes отдельного проверяющего и source/artifact SHA,510/0+76/0; [processes final](evidence/m1/P23_UI/PROCESSES_FINAL.json):0.
+- [Source checks8/8](evidence/m1/P23_UI/FINAL_CHECKS02/SOURCE_CHECKS.json): wire111/wire112 = acceptedP7RUN03 source snapshot; v1.10 header SHA; EXE = independently reviewed hashes; source snapshot и ссылки на fresh offline/integrity. Не доказывает native UI.
+- [INTEGRITY_BEFORE](evidence/m1/P23_UI/INTEGRITY_BEFORE/RESULT.json), [INTEGRITY_AFTER](evidence/m1/P23_UI/INTEGRITY_AFTER/RESULT.json):85/85+19/19 по retained raw, current original77/copies/actual5protected и прежние exact restores/close receipts. Новых hook installations/REA sessions0.
+- [OFFLINE02](evidence/m1/P23_UI/OFFLINE02/RESULT.json):33/34, исходный Welcome lobby-stage failure/test crash; [ctest06](evidence/m1/P23_UI/ctest06.log): неназначенный127.0.0.2; [ctest08](evidence/m1/P23_UI/ctest08.log):исправленные2/2. Полная история ошибок/исправлений — DOC-84.
+- Native опора: [сохранённый Draw](evidence/ghidra_2022/G_FUNC_1401a2580.json), [Arrow](evidence/ghidra_2022/G_FUNC_1401a34c0.json), [поправки проверяющего](evidence/m1/P23_UI/INDEPENDENT_REVIEW.md): float yaw/XMM2 и stack radius; native/runtime UNKNOWN, не повторный реверс.
+
+## П25 — PARTIAL режима А; диагностическая упаковка (2026-11-05)
+
+[Реализация/границы/воспроизведение](../experiments/pse_together/packaging/README.md). Полный П25/S9.3 не принят: игровой install/config/dumps KEX на чистой машине не проверены. Диагностический friends kit не расширяет bounded PASS П24.
+
+- [VALIDATION07/RESULT](evidence/m1/P25_PACKAGING/VALIDATION07/RESULT.json),46/46: реальный ZIP в кириллической папке, Windows PowerShell5.1/иная cwd/урезанный PATH, batch entry, реальные standalone host/client auth/exit0, негативный конфиг и tampered EXE, настоящий second-chance crash и MDMP/ExceptionStream, collection/redaction/opt-in, disabled capture, occupied-port exit1, exact EXE checker и reproducible ZIPs. [Validator](../experiments/pse_together/packaging/validate_package.py), [raw crash journal](evidence/m1/P25_PACKAGING/VALIDATION07/fixture/crashed/diagnostics.log), [real dump](evidence/m1/P25_PACKAGING/VALIDATION07/fixture/crashed/crash.dmp). Это runtime инструментов вне KEX, не игровой runtime.
+- [DIST08](evidence/m1/P25_PACKAGING/DIST08/BUILD.json): [набор для друзей](evidence/m1/P25_PACKAGING/DIST08/PSE-P25-DIAGNOSTIC-1.zip), [символы](evidence/m1/P25_PACKAGING/DIST08/symbols.zip); SHA/size всех18неизменяемых файлов, editable friends.json, source provenance/frozen native-reference, ENet/MinHook licenses. [RU](../experiments/pse_together/packaging/README_RU.md)/[EN](../experiments/pse_together/packaging/README_EN.md). Игры/сохранений в ZIP нет.
+- [OFFLINE_ALL](evidence/m1/P25_PACKAGING/OFFLINE_ALL/RESULT.json),32/32, [loader756/756](evidence/m1/P25_PACKAGING/OFFLINE_ALL/logs/p24_loader_contract.log); [packaging CTest1/1](evidence/m1/P25_PACKAGING/ctest_packaging_final.log), [диагностическая сборка](evidence/m1/P25_PACKAGING/build_diagnostics_02.log), [transport build с PDB](evidence/m1/P25_PACKAGING/build_transport.log). Лаборатории/игровые артефакты не пересобирались на месте.
+- [INTEGRITY01](evidence/m1/P25_PACKAGING/INTEGRITY01/RESULT.json), [raw85/85](evidence/m1/P25_PACKAGING/INTEGRITY01/AUDIT83.json), [supplement19/19](evidence/m1/P25_PACKAGING/INTEGRITY01/SUPPLEMENT83.json): predicates принятых audit83/supplement83 не менялись, заменены лишь ROOT/OUT, hashes скриптов сохранены. Exact restores4+6+controller и16session-close по retained evidence; current original77/обе копии/actual5protected неизменны. Новых KEX/REA runs нет; процессов не осталось.
+- История попыток: VALIDATION01 Get-FileHash/окружение;02ошибка аргумента validator;03нет загруженной .NET Compression assembly;04PASS43/43;05bat зависел от PATH;06PASS46/46;07финальная упаковка с исходными PDB names. DIST/DIST02 — неполные попытки до отдельного symbol-enabled transport build; старые receipts сохранены. Объяснения в README.
+
+## П24 — PASS (bounded), независимая приёмка режима В (2026-11-05)
+
+[DOC-83](83_P24_INDEPENDENT_ACCEPTANCE.md), отдельный проверяющий Codex; исполнение [DOC-82](82_P24_COMPLETION_AND_VALIDATION.md) и [DOC-69](69_P24_PROXY_DLL_LOADER.md). Приняты П24/S9.1/S9.2, без повторных игровых runs и изменений production loader/P1 DLL.
+
+- [AUDIT83](evidence/m1/P24_ACCEPTANCE_83/AUDIT83.json), **85/85**, [независимый скрипт](evidence/m1/P24_ACCEPTANCE_83/audit83.py): frozen/source binding, raw native/module/primary affinity, isolation, exact restores4+6+controller, terminal/exit0, 16 session-close receipts. [SUPPLEMENT83](evidence/m1/P24_ACCEPTANCE_83/SUPPLEMENT83.json), **19/19**, [скрипт](evidence/m1/P24_ACCEPTANCE_83/supplement83.py): собственный PE parser, real GUI raw data, original77+copies+actual5protected. Ошибка первого predicate проверяющего сохранена как [ATTEMPT01](evidence/m1/P24_ACCEPTANCE_83/AUDIT83_ATTEMPT01.json).
+- [OFFLINE_ALL](evidence/m1/P24_COMPLETION_82/OFFLINE_ALL/RESULT.json), **32/32**, [CTest raw](evidence/m1/P24_COMPLETION_82/OFFLINE_ALL/ctest.log), [loader 756/756](evidence/m1/P24_COMPLETION_82/OFFLINE_ALL/logs/p24_loader_contract.log); [BUILD_EQUIVALENCE](evidence/m1/P24_COMPLETION_82/BUILD_EQUIVALENCE.json), все7/7sections каждого из SDL2.dll/broker/checker.
+- [DIALOG_NATIVE_02](evidence/m1/P24_COMPLETION_82/DIALOG_NATIVE_02/RESULT.json), **13/13**, [real window controls/modules](evidence/m1/P24_COMPLETION_82/DIALOG_NATIVE_02/dialog.txt), [fixture](evidence/m1/P24_COMPLETION_82/tools/dialog_fixture.cpp), [runner](evidence/m1/P24_COMPLETION_82/tools/run_dialog.py): RU/EN expected/actual SHA, реальный exit193, без game/Frida/broker/payload. Первая UI-попытка [FAIL](evidence/m1/P24_COMPLETION_82/DIALOG_NATIVE_01/RESULT.json) и ошибки сборки сохранены, объяснены в DOC82.
+- [COMPLETION_CHECKS](evidence/m1/P24_COMPLETION_82/COMPLETION_CHECKS.json), **41/41**, [INTEGRITY](evidence/m1/P24_COMPLETION_82/INTEGRITY.json), [скрипт](evidence/m1/P24_COMPLETION_82/tools/check_completion.py): original77/обе независимые копии и настоящие Powerslave EX4+Steam1files равны prelaunch, stage снят, тестовых процессов нет. Старый generic audit проверял другое название save folder; новое receipt использует actual protected_before paths, исходные receipts не изменены.
+
+Область: loader без Frida DLL-loader; D5 сохраняет Frida изоляцию/наблюдение игрового стенда. Полностью Frida-free KEX/portable release остаются UNKNOWN, S9.3/П25 не выполнены.
+
+## П7 — PASS (bounded), независимая приёмка режима В (2026-11-05)
+
+[DOC-81](81_P7_INDEPENDENT_ACCEPTANCE.md), независимый gpt-6-astra; исполнение Codex/native Sol max — [DOC-80](80_P7_SELF_STATE_NATIVE_GATES.md). Evidence: `docs/evidence/m1/PSE_TOGETHER_P7/`; режим Б повышен до В, П7/S2.2/S2.3 приняты.
+
+- [P7_INDEPENDENT_ACCEPTANCE.json](evidence/m1/PSE_TOGETHER_P7/P7_INDEPENDENT_ACCEPTANCE.json):PASS(bounded), блокирующих замечаний нет; [31/31](evidence/m1/PSE_TOGETHER_P7/P7_INDEPENDENT_RUN03_MACHINE.json), [скрипт рецензента](evidence/m1/PSE_TOGETHER_P7/P7_INDEPENDENT_RUN03_CHECK.py).842точныхcapture→send→receive→commit,54nativeapply,4damage suppressions,1death/3deadreadbacks,0applyпослеbarrier. Независимо перехешированы77originals,4realPowerslaveEX+Steamremotecache; исправлено покрытие wrongdirectory старогоchecker. [Исходное расхождение путей](evidence/m1/PSE_TOGETHER_P7/P7_INDEPENDENT_RUN03_PROTECTED_LIST_MISMATCH.json), [harness notes](evidence/m1/PSE_TOGETHER_P7/HARNESS_NOTES.md). N1/N2 и runtime limits вDOC81.
+
+- [RUN03_EXECUTION_AUDIT.json](evidence/m1/PSE_TOGETHER_P7/RUN03_EXECUTION_AUDIT.json):40/40,842/842 exact host→client native matches,8weapons/health/ammo/keys/inventory/singledeath/localdamage4kinds; [audit_p7_run03.py](../experiments/pse_together/tools/audit_p7_run03.py). Raw [host](evidence/m1/PSE_TOGETHER_P7/P7_HOST_03/native.jsonl)/[client](evidence/m1/PSE_TOGETHER_P7/P7_CLIENT_03/native.jsonl), [HUD](evidence/m1/PSE_TOGETHER_P7/P7_CLIENT_03/window_20261105_012056_998714.png). Naturalpickup/environment/heldfire paths не выдаются за отдельный runtime coverage.
+- [KEYS_DECISION_AND_GATE.md](evidence/m1/PSE_TOGETHER_P7/KEYS_DECISION_AND_GATE.md):D12, узкий scalar exception. Независимая [приёмка Astra RUN03](evidence/m1/PSE_TOGETHER_P7/KEYS_GATE_INDEPENDENT_ASTRA_RUN03.md), [270/270](evidence/m1/PSE_TOGETHER_P7/KEYS_GATE_ASTRA_RUN03_MACHINE_CHECKS.json), [host](evidence/m1/PSE_TOGETHER_P7/KEYS_GATE_ACCEPTED_HOST_RUN03.json)/[client](evidence/m1/PSE_TOGETHER_P7/KEYS_GATE_ACCEPTED_CLIENT_RUN03.json) receipts до permit/write, не для следующего run/rearm.
+- [OFFLINE_NATIVE_05](evidence/m1/PSE_TOGETHER_P7/OFFLINE_NATIVE_05/RESULT.json):32/32; [FINAL_BUILD_EQUIVALENCE](evidence/m1/PSE_TOGETHER_P7/FINAL_BUILD_EQUIVALENCE.json):7/7sections обеихP7DLL=loadedRUN03; [FINAL_NATIVE_PINS](evidence/m1/PSE_TOGETHER_P7/FINAL_NATIVE_PINS.json):23/23 exactprefixes, VA/RVA/PE-derivedoffsets. [PRE_NATIVE_RUN03](evidence/m1/PSE_TOGETHER_P7/PRE_NATIVE_RUN03.json) и frozen sources/DLL/PDB — входные gates, не runtime PASS.
+- [INTEGRITY_AFTER_RUN03](evidence/m1/PSE_TOGETHER_P7/INTEGRITY_AFTER_RUN03.json), [закрытие15REAсессий](evidence/m1/PSE_TOGETHER_P7/REA_CLOSED_RUN03.json), [REA bundle109records](evidence/m1/PSE_TOGETHER_P7/REA_RUN03_BUNDLE.json), exit observations [host](evidence/m1/PSE_TOGETHER_P7/P7_HOST_03/REA_STATUS_EXIT.json)/[client](evidence/m1/PSE_TOGETHER_P7/P7_CLIENT_03/REA_STATUS_EXIT.json). Exactrestore14nativehooks, обаexit0 и retained/duplicatewait0. Failures [RUN01](evidence/m1/PSE_TOGETHER_P7/RUN01_FAILURE_AND_CLEANUP.json)/[RUN02](evidence/m1/PSE_TOGETHER_P7/RUN02_RESULT_AND_CLEANUP.json), initial [audit schema errors](evidence/m1/PSE_TOGETHER_P7/RUN03_EXECUTION_AUDIT_SCHEMA_ERRORS.json) сохранены. Точный graphfalse на death→transition UNKNOWN, failclosed без apply послеbarrier.
+
+## П4 — повторная приёмка, PASS (bounded) режима В (2026-11-04)
+
+[DOC-79](79_P4_ACCEPTANCE_REVIEW.md), Codex по назначению пользователя. Evidence — `docs/evidence/m1/P4_ACCEPTANCE_CHECK_79/`; новые игровые runs не выполнялись.
+
+- [RAW_REVIEW.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/RAW_REVIEW.json): независимые91/91 по raw runs02–04; [RAW_DETAILS.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/RAW_DETAILS.json), [INPUT_HASHES.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/INPUT_HASHES.json), [review79.py](evidence/m1/P4_ACCEPTANCE_CHECK_79/review79.py). Anchor, corridor/native lerp→sprite, final long-pause buffer, живой background04, Esc/resume02, lifecycle/exit/integrity. Stationary03; moving04 brackets не exact-position proof.
+- [OFFLINE/RESULT.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/OFFLINE/RESULT.json):30/30, П4 presentation310/0, ENet75/0. [REBUILD.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/REBUILD.json): обе final DLL П4 и client П1 —7/7 секций, private `b79`; [rebuild79.py](evidence/m1/P4_ACCEPTANCE_CHECK_79/rebuild79.py).
+- [ACCEPTANCE.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/ACCEPTANCE.json), [PROCESS_CHECK.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/PROCESS_CHECK.json), [LINK_CHECK.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/LINK_CHECK.json). Первая85/89 — [RAW_REVIEW_FIRST.json](evidence/m1/P4_ACCEPTANCE_CHECK_79/RAW_REVIEW_FIRST.json), причины и исправления — [HARNESS_ERRORS.md](evidence/m1/P4_ACCEPTANCE_CHECK_79/HARNESS_ERRORS.md).
+- S1.4 принят только как bounded corridor; общие порталы/карты, water/cache-changing и несмежные teleport остаются PARTIAL. Frozen DLL/sources и первичные журналы DOC-72 сохранены без изменений.
+
+## П3 — повторная проверка и run 05, PASS (bounded) режима В (2026-11-04)
+
+[DOC-78 §7](78_P3_ACCEPTANCE_CHECK.md#7-повторная-проверка-после-исправлений), [DOC-71 §13](71_P3_RECONNECT_AND_MAP_CHANGE.md#13-исправления-по-doc-78-и-run-05). Каталоги `docs/evidence/m1/PSE_TOGETHER_P3/` и `docs/evidence/m1/P3_ACCEPTANCE_REVIEW_78/`.
+
+- Run 05 (`P3_HOST_05`, `P3_CLIENT_05`, DLL `af29298b…`, gate [05](evidence/m1/PSE_TOGETHER_P3/PRE_NATIVE_GATE_P3_05.json)): [P3_RUNTIME_RESULT_RUN05.json](evidence/m1/PSE_TOGETHER_P3/P3_RUNTIME_RESULT_RUN05.json) 19/19 (первый вывод 18/19 — [ATTEMPT01](evidence/m1/PSE_TOGETHER_P3/P3_RUNTIME_RESULT_RUN05_ATTEMPT01_F2_YAW_CONSTANT.json)), независимая сверка [REVIEW_CHECKS_RUN05.json](evidence/m1/P3_ACCEPTANCE_REVIEW_78/REVIEW_CHECKS_RUN05.json) 15/15, [REBUILD_05](evidence/m1/PSE_TOGETHER_P3/REBUILD_05/dll_compare.json) 7/7, [INTEGRITY_RUN05](evidence/m1/PSE_TOGETHER_P3/INTEGRITY_RUN05.json), [SOURCE_MANIFEST_RUN05](evidence/m1/PSE_TOGETHER_P3/SOURCE_MANIFEST_RUN05.json), `BUNDLE_*05*`.
+- Run 04 — прерванная попытка (`P3_*_04`, `BUNDLE_RUN04_FINAL.json`). Offline: [OFFLINE_05](evidence/m1/PSE_TOGETHER_P3/OFFLINE_05/RESULT.json) 30/30; `OFFLINE_04` (один сбой `snapshot_contract`) и `OFFLINE_04_MISTAKEN_B60` (сборка не в том дереве) сохранены как есть; [NEGATIVE_CONTROL_04](evidence/m1/PSE_TOGETHER_P3/NEGATIVE_CONTROL_04/result.txt).
+- Ошибки цикла — [HARNESS_ERRORS](evidence/m1/PSE_TOGETHER_P3/HARNESS_ERRORS.md) №11–18.
+
+## П3 — проверка режима В, возвращён (2026-11-04)
+
+[DOC-78](78_P3_ACCEPTANCE_CHECK.md), Sonnet 5.5 + независимое чтение кода агентом Opus. Игра не запускалась; сборка в `b74/`. Каталог `docs/evidence/m1/P3_ACCEPTANCE_REVIEW_78/`.
+
+- [REVIEW_CHECKS.json](evidence/m1/P3_ACCEPTANCE_REVIEW_78/REVIEW_CHECKS.json): 14/14, пересчёт заявлений DOC-71 по сырым журналам run 03; [MUTATION_RESULT.txt](evidence/m1/P3_ACCEPTANCE_REVIEW_78/MUTATION_RESULT.txt): 7/7 мутаций ловятся; [tools](evidence/m1/P3_ACCEPTANCE_REVIEW_78/tools/) (`check78.py`, `mutation78.py`).
+- [OFFLINE_B74.json](evidence/m1/P3_ACCEPTANCE_REVIEW_78/OFFLINE_B74.json), логи `b74_*.log`: свежая полная сборка, ctest 30/30, закреплённые строки совпали. [rebuild_b74_vs_run03.json](evidence/m1/P3_ACCEPTANCE_REVIEW_78/rebuild_b74_vs_run03.json): DLL П3 7/7 секций равна загруженной; [rebuild_b74_host_vs_p1.json](evidence/m1/P3_ACCEPTANCE_REVIEW_78/rebuild_b74_host_vs_p1.json) — справочно, дрейф хостовых исходников.
+- [copycheck.txt](evidence/m1/P3_ACCEPTANCE_REVIEW_78/copycheck.txt): оригинал и копии 77/77.
+
+## П3 — реконнект, повторный Spawn, смена карт; исполнение DOC-71 (2026-11-04), возвращён проверкой DOC-78
+
+[DOC-71](71_P3_RECONNECT_AND_MAP_CHANGE.md), Opus 5.5 max. Каталог `docs/evidence/m1/PSE_TOGETHER_P3/`.
+
+- [P3_RUNTIME_RESULT_RUN03.json](evidence/m1/PSE_TOGETHER_P3/P3_RUNTIME_RESULT_RUN03.json): ревью сырых журналов финального прогона 19/19. [P3_RUNTIME_RESULT.json](evidence/m1/PSE_TOGETHER_P3/P3_RUNTIME_RESULT.json): run 02, 18/18 (до исправления N1); [попытка 01 с неверным ожиданием E2](evidence/m1/PSE_TOGETHER_P3/P3_RUNTIME_RESULT_ATTEMPT01_E2_EXPECTATION.json) сохранена.
+- Прогоны: `P3_HOST_01…03`, `P3_CLIENT_01…03` (`native.jsonl`, `CYCLES.jsonl`, `launch.json`, `protected_before/after.json`, `exit.json`); run 01 — остановленная попытка. Артефакты DLL — в `native_artifact/`, REA-пакеты — `BUNDLE_*`.
+- Offline и gates: `OFFLINE_01…03` (29/29), `PRE_NATIVE_GATE_P3_01…03`, `TARGET_INVARIANCE/RESULT.json`, замороженные исходники `run01…03_sources/`.
+- Пересборка: [REBUILD_02](evidence/m1/PSE_TOGETHER_P3/REBUILD_02/dll_compare.json), [REBUILD_03](evidence/m1/PSE_TOGETHER_P3/REBUILD_03/dll_compare.json) — 7/7 секций.
+- [QA_DOC58C_TRIAGE.json](evidence/m1/PSE_TOGETHER_P3/QA_DOC58C_TRIAGE.json), [INTEGRITY_RUN03.json](evidence/m1/PSE_TOGETHER_P3/INTEGRITY_RUN03.json), [SOURCE_MANIFEST.json](evidence/m1/PSE_TOGETHER_P3/SOURCE_MANIFEST.json), [HARNESS_ERRORS.md](evidence/m1/PSE_TOGETHER_P3/HARNESS_ERRORS.md), [tools/](evidence/m1/PSE_TOGETHER_P3/tools/) (порядок прогона — `RUNTIME_P3.md`).
+
+## П6 — PASS архитектурных ADR-1/ADR-2, независимая приёмка редакции 3 (2026-11-04)
+
+[DOC-77](77_P6_REV3_INDEPENDENT_ACCEPTANCE.md), GPT-6.1 Sol с чистым контекстом, отдельный от автора агент. **П6/S2.1/S3.1 PASS**, A1 закрыт; это не native/runtime acceptance.
+
+- [DELTA_CHECKS](evidence/m1/P6_REV3_ACCEPTANCE_SOL/DELTA_CHECKS.json): **266/266** (196 reuse, 3 safety-scope, 44 новых probes, 3 binding43, 20 preservation). [review_delta.py](evidence/m1/P6_REV3_ACCEPTANCE_SOL/review_delta.py), [независимый повтор43](evidence/m1/P6_REV3_ACCEPTANCE_SOL/BOOTSTRAP_EXAMPLES.json), [ADR2 diff](evidence/m1/P6_REV3_ACCEPTANCE_SOL/ADR2_DELTA.diff).
+- [Проверенный DOC62 snapshot](evidence/m1/P6_REV3_ACCEPTANCE_SOL/DOC62_REVIEWED_SNAPSHOT.md) SHA `357ae548…578ef0`, технический текст T1–T7 SHA `e8db8c0c…15ca3a`; финальная шапка меняет статус, не технический контракт. [Начальная диагностика stale receipt](evidence/m1/P6_REV3_ACCEPTANCE_SOL/INITIAL_RECEIPT_MISMATCH.json) сохранена, собственные43 привязаны к snapshot.
+- [FINALIZATION](evidence/m1/P6_ADR_REV3/FINALIZATION.json): 14/14, нормативные §§1–6 DOC62 равны принятому snapshot, DOC77/fixture и wire110/111 неизменны, П6/S2.1/S3.1 имеют PASS. [Проверка](evidence/m1/P6_ADR_REV3/finalize_checks.py) не выполняет старые tests/research/runtime; это проверка переноса независимого вердикта в статусы. [Финальные ссылки](evidence/m1/P6_ADR_REV3/LINK_CHECK.json).
+- [Решения D2/D3/D3b/D10](evidence/m1/P6_ADR_REV3/DECISIONS.md), [D11 без Gemini](evidence/m1/P6_ADR_REV3/NO_GEMINI_REVIEW.md). Принятая статика25/25 переиспользована, исследований/runs нет; wire110/111 и код/DLL не менялись. Связанные native/runtime gates остаются П7/П9.
+
+## П6 — независимая Astra, A1 и редакция 3 (2026-11-04)
+
+- Независимый [DOC-75](75_P6_INDEPENDENT_REVIEW_ASTRA.md), [INITIAL_VERDICT](evidence/m1/P6_INDEPENDENT_REVIEW_ASTRA/INITIAL_VERDICT.json) до чтения DOC-74: ADR-1 REJECT A1, ADR-2 PASS архитектуры. [Reuse108](evidence/m1/P6_INDEPENDENT_REVIEW_ASTRA/EVIDENCE_REUSE.json), [inputs90](evidence/m1/P6_INDEPENDENT_REVIEW_ASTRA/INPUTS_UNCHANGED.json), [counterexample](evidence/m1/P6_INDEPENDENT_REVIEW_ASTRA/RESET_HISTORY_COUNTEREXAMPLE.json), [после ACK](evidence/m1/P6_INDEPENDENT_REVIEW_ASTRA/POST_ACK_HISTORY_COUNTEREXAMPLE.json), [сравнение после вердикта](evidence/m1/P6_INDEPENDENT_REVIEW_ASTRA/POST_VERDICT_COMPARISON.json).
+- Исправление [DOC-76](76_P6_ADR1_BOOTSTRAP_FIX.md), [DOC-62 ред. 3](62_P6_ADR_AUTHORITY_AND_CLIENT_WORLD.md): [BOOTSTRAP_EXAMPLES](evidence/m1/P6_ADR_REV3/BOOTSTRAP_EXAMPLES.json) 43/43, [REUSE_CHECKS](evidence/m1/P6_ADR_REV3/REUSE_CHECKS.json) 141/141, [raw](evidence/m1/P6_ADR_REV3/CHECKS.log), [fixture](research/p6_history_bootstrap_examples.py). **INFERRED**, не KEX acceptance; на повторную независимую проверку.
+- [Решения пользователя D2/D3/D3b/D10](evidence/m1/P6_ADR_REV3/DECISIONS.md), [проверенная предыдущая редакция](evidence/m1/P6_ADR_REV3/DOC62_REV2_BEFORE.md). AGENTS уточнён в разрешённых границах; wire110/111, код/DLL и прежние evidence не менялись. Принятая статика 25/25 переиспользована, не повторялась.
+
+## П6 — доработка ADR-1/ADR-2 после Sol, повторный REVIEW В (2026-11-04)
+
+[DOC-73](73_P6_ADR_REMEDIATION.md), [DOC-62 ред. 2](62_P6_ADR_AUTHORITY_AND_CLIENT_WORLD.md). Только S2.1/S3.1, исполнитель доработки — Codex. Никаких новых исследований/игровых runs; A/W1 остаются рекомендациями, приёмка и D2/D3 ожидаются.
+
+- [REUSE_CHECKS](evidence/m1/P6_ADR_REWORK/REUSE_CHECKS.json): 141/141 сверок hash/profile/exact EXE; принятая статика 25/25 и её подтверждение Sol переиспользованы, не повторены. [Wire111 receipt](evidence/m1/P6_ADR_REWORK/WIRE111_BASELINE.json), v1.10 SHA сохранён.
+- [CONTRACT_EXAMPLES](evidence/m1/P6_ADR_REWORK/CONTRACT_EXAMPLES.json): 53/53 synthetic примеров F1–F3, canonical content JSON/manifest hex. **INFERRED**, не доказательство KEX/ABI/lifetime. [Checker](research/p6_adr_rework_checks.py), [raw output](evidence/m1/P6_ADR_REWORK/CHECKS.log).
+- [DOC62_BEFORE](evidence/m1/P6_ADR_REWORK/DOC62_BEFORE.md): неизменённый снимок предыдущей редакции в исходном контексте путей; [LINK_CHECK](evidence/m1/P6_ADR_REWORK/LINK_CHECK.json) — ссылки обновлённых документов, без архивного снимка.
+- Контракты доработки: post-tick время/ledger/reset; factory provenance/current activation; C1 отдельно от M1; D3b и расширение wire П6 остаются отдельными разрешениями, D9 не расширен. Native/runtime-gates остаются за П7/П9.
+
+## П6 — независимая проверка Sol, возвращён в IN PROGRESS (2026-11-04), режим В
+
+[Отчёт](62_P6_REVIEW_SOL.md). Только S2.1/S3.1; текущие контракты ADR-1/ADR-2 не приняты (F1: время состояния/поправки; F2: provenance MAP; F3: content gate). A и W1 остаются кандидатами. Нового runtime/реверса нет.
+
+- [MAP_SPAWN_IDENTITY_STATIC](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/MAP_SPAWN_IDENTITY_STATIC.json): независимое воспроизведение 25/25, исходный результат сохранён. EXE ×3 — целевой SHA. Это проверки статического evidence, не 25 карт и не совпадение миров в runtime.
+- [REVIEW_CHECKS](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/REVIEW_CHECKS.json), [review_p6.py](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/review_p6.py): 23/23 проверок идентичности/предпосылок; [IMMUTABLE_INPUTS](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/IMMUTABLE_INPUTS.json) — неизменность исходных dossiers, evidence П6, native/input sources и wire.
+- [STATIC_EXCERPTS](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/STATIC_EXCERPTS.json), [SOURCE_EXCERPTS](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/SOURCE_EXCERPTS.json): основания замечаний и ответы на четыре вопроса Sol. [FUNCTION_COORDINATES](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/FUNCTION_COORDINATES.json): VA/RVA/file offset раздельно, профиль и ограничения ABI.
+- [CONTRACT_COUNTEREXAMPLES](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/CONTRACT_COUNTEREXAMPLES.json): INFERRED последствия формул/проекций ADR; не тесты физики KEX и не новые игровые наблюдения.
+- [LINK_CHECK](evidence/m1/P6_ACCEPTANCE_REVIEW_SOL/LINK_CHECK.json): ссылки отчёта, ADR и обновлённых сводок. Мутационный результат автора 3/3 переиспользован по SHA проверяющего скрипта, независимо не воспроизводился.
+
+## П4 — исправления DOC-67, новые bounded native runs, REVIEW В (2026-11-04)
+
+[DOC-72](72_P4_REMEDIATION_AND_RUNTIME.md). Пакет/S1.3–S1.5 — REVIEW, широкая S1.4 — PARTIAL; независимая приёмка не выполнена.
+
+- [OFFLINE_02](evidence/m1/PSE_TOGETHER_P4_REWORK_72/OFFLINE_02/RESULT.json): 30/30; [numeric310/0](evidence/m1/PSE_TOGETHER_P4_REWORK_72/OFFLINE_02/logs/p4_presentation_contract.log), [real ENet75/0](evidence/m1/PSE_TOGETHER_P4_REWORK_72/OFFLINE_02/logs/p4_wire111_contract.log). Long-pause fix после run03; полный build — OFFLINE_01/build.log, final DLL builds03–05.
+- [P1 client equivalence](evidence/m1/PSE_TOGETHER_P4_REWORK_72/P1_CLIENT_EQUIVALENCE.json): final7/7 sections = accepted P1. `b60` не перезаписывался.
+- [D9 решение v111](evidence/m1/PSE_TOGETHER_P4_REWORK_72/DECISION_V111.md); [fork manifest](../experiments/pse_together/src/wire111/BASELINE.json), [wire layout](../experiments/pse_together/src/wire111/README.md). Все32 исходных v110 files неизменны.
+- [PRE_NATIVE_RUN04](evidence/m1/PSE_TOGETHER_P4_REWORK_72/PRE_NATIVE_RUN04.json): 12/12, frozen DLL/PDB и source copies в одноимённом snapshot; final host28735135… / client2156d9cd… . Run02/03 относятся к предыдущему client4c38e64f… .
+- [RUNTIME_CHECKS](evidence/m1/PSE_TOGETHER_P4_REWORK_72/RUNTIME_CHECKS.json): 68/68; [checker](evidence/m1/PSE_TOGETHER_P4_REWORK_72/review72.py). Anchor/native READY, portals и renderer, background, long-pause recovery, lifetime/restore/exit. Точное расстояние run02 Spawn UNKNOWN из-за sparse scene witness; positive AABB brackets03/04.
+- Raw [client04](evidence/m1/PSE_TOGETHER_P4_REWORK_72/P4_CLIENT_04/native.jsonl), [renderer04](evidence/m1/PSE_TOGETHER_P4_REWORK_72/P4_CLIENT_04/observer_PORTAL.jsonl), [host04](evidence/m1/PSE_TOGETHER_P4_REWORK_72/P4_HOST_04/native.jsonl); остальные runs02/03 и `SELECTED_*` — в том же каталоге.
+- REA bundles [02](evidence/m1/PSE_TOGETHER_P4_REWORK_72/REA_RUN02_FINAL.json), [03](evidence/m1/PSE_TOGETHER_P4_REWORK_72/REA_RUN03_FINAL.json), [04](evidence/m1/PSE_TOGETHER_P4_REWORK_72/REA_RUN04_FINAL.json). [Closed04](evidence/m1/PSE_TOGETHER_P4_REWORK_72/RUN04_SESSIONS_CLOSED.json) и Closed02/03: 63 sessions всего, game processes0.
+- [Final integrity](evidence/m1/PSE_TOGETHER_P4_REWORK_72/INTEGRITY_CONFIRM_FINAL.json), [processes](evidence/m1/PSE_TOGETHER_P4_REWORK_72/PROCESS_CHECK.json), [ошибки/ограничения](evidence/m1/PSE_TOGETHER_P4_REWORK_72/FAILURES_AND_LIMITS.md). Original77/protected/copies неизменны; все6 retained exits0.
+
+## П14 — проверка режима В, возвращён (2026-11-04)
+
+[DOC-70](70_P14_ACCEPTANCE_CHECK.md), Opus 5.5 high. Без запуска игры/REA; только чтение и сборка в `b70/`.
+
+- [REVIEW_CHECKS](evidence/m1/P14_ACCEPTANCE_REVIEW_70/REVIEW_CHECKS.json): 19/20 — адреса GetPlayer, ветка Chase, GiveAnkh, Steam/consume/HUD по dossiers `ghidra_2022`; сырой журнал P14_HOST_02; FAIL — ожидаемая находка F2 (цель П1 `pse_dll_host` ≠ `P1_HOST_03`, из DOC-67).
+- [rebuild70.json](evidence/m1/P14_ACCEPTANCE_REVIEW_70/rebuild70.json), [cmp](evidence/m1/P14_ACCEPTANCE_REVIEW_70/cmp_pse_dll_host_p14_vs_run02.json): текущие исходники = DLL run02 `31ae050f…`, 7/7 с `/PDBALTPATH`; [контракт П14](evidence/m1/P14_ACCEPTANCE_REVIEW_70/logs/p14_contract.txt) 65 783/0.
+- [tools](evidence/m1/P14_ACCEPTANCE_REVIEW_70/tools/): `rebuild70.py`, `review_checks70.py`.
+
+## П24 — Proxy-DLL загрузчик / exact EXE SHA, REVIEW режима В (2026-11-04)
+
+[DOC-69](69_P24_PROXY_DLL_LOADER.md), S9.1–S9.2, D5 принято пользователем. Новый loader, прежний gameplay П1; независимая приёмка не выполнена.
+
+- [ARTIFACT_MANIFEST](evidence/m1/PSE_TOGETHER_P24/ARTIFACT_MANIFEST.json), [artifacts](evidence/m1/PSE_TOGETHER_P24/artifacts), [sources](evidence/m1/PSE_TOGETHER_P24/sources); [BUILD_04](evidence/m1/PSE_TOGETHER_P24/BUILD_04.log), [BUILD_ALL_02](evidence/m1/PSE_TOGETHER_P24/BUILD_ALL_02.log). Тестированные shim/broker совпадают с итоговыми hashes.
+- [OFFLINE_ALL](evidence/m1/PSE_TOGETHER_P24/OFFLINE_ALL/RESULT.json): 28/28 suites; [OFFLINE_03](evidence/m1/PSE_TOGETHER_P24/OFFLINE_03/RESULT.json): 756/756, фактические 738 exports/ordinal, все name/ordinal resolves и ABI forwarders в foreign child без Frida; real pe-check/broker exact/changed/missing EXE.
+- [RUNTIME_CHECKS](evidence/m1/PSE_TOGETHER_P24/RUNTIME_CHECKS.json): 30/30 сверок новых loader smoke; raw [host](evidence/m1/PSE_TOGETHER_P24/P24_HOST_01/native.jsonl) / [client](evidence/m1/PSE_TOGETHER_P24/P24_CLIENT_01/native.jsonl); [REA_STARTUP](evidence/m1/PSE_TOGETHER_P24/REA_STARTUP.json), [REA_GAMEPLAY](evidence/m1/PSE_TOGETHER_P24/REA_GAMEPLAY.json), [REA_EXIT](evidence/m1/PSE_TOGETHER_P24/REA_EXIT.json). Самостоятельная proxy-загрузка и primary bootstrap, native tick/exact restores/exit0 обеих ролей. Frida только для прежней изоляции/наблюдения; полностью Frida-free KEX/gameplay не доказан, permit не выдавался.
+- [INTEGRITY_FINAL](evidence/m1/PSE_TOGETHER_P24/INTEGRITY_FINAL.json): original77/copies/protected equal baseline; [RESTORE_host](evidence/m1/PSE_TOGETHER_P24/RESTORE_host.json), [RESTORE_client](evidence/m1/PSE_TOGETHER_P24/RESTORE_client.json), [SESSIONS_CLOSED](evidence/m1/PSE_TOGETHER_P24/SESSIONS_CLOSED.json), [PROCESS_CHECK](evidence/m1/PSE_TOGETHER_P24/PROCESS_CHECK.json).
+- [FAILURES](evidence/m1/PSE_TOGETHER_P24/FAILURES.md): MSVC mixed forward/local exports через DEF исправлены LIB/EXP, CMake scope исправлен; UI refusal fixture не аттестован. Тексты/codes checker подтверждены отдельно.
+
+## П8 — новые спрайты и native-анимации, REVIEW / PARTIAL (2026-11-04)
+
+[DOC-68](68_P8_PLAYER_SPRITES_AND_ANIMATIONS.md), режим В (с Б). Новые runtime runs, прежние принятые исследования/runs не повторялись.
+
+- [OFFLINE_04/RESULT](evidence/m1/PSE_TOGETHER_P8/OFFLINE_04/RESULT.json): 27/27; [PRE_NATIVE_GATE_RUN04](evidence/m1/PSE_TOGETHER_P8/PRE_NATIVE_GATE_RUN04.json): 10/10, frozen hashes и source snapshot; без П8 legacy DLL 7/7 к текущему b60.
+- [RUN04_CHECKS](evidence/m1/PSE_TOGETHER_P8/RUN04_CHECKS.json): 37/37 bounded assertions, 28 native frames обоих персонажей; 29 948 sprite matches, 29 P1 EQUAL; Remove/deferred retirement/exact restores/exit0. Preview не доказывает host combat transitions.
+- [REA_RUN04](evidence/m1/PSE_TOGETHER_P8/REA_RUN04.json), raw journals и captures в [P8_HOST_04](evidence/m1/PSE_TOGETHER_P8/P8_HOST_04) / [P8_CLIENT_04](evidence/m1/PSE_TOGETHER_P8/P8_CLIENT_04); [regression после отказа](evidence/m1/PSE_TOGETHER_P8/RUN04_AFTER_REFUSAL.json).
+- [Static exports](evidence/m1/PSE_TOGETHER_P8/static): lookup19ed10, bind1a1170, ChangeAnim string1a1240/thunk1a1360, Advance1a1940; ABI/ограничения/координаты — DOC-68. Новый реверс узкий, direct Ghidra12.2; REA не чинился.
+- [Новые атласы/промпты](../experiments/pse_together/assets/alternatives), [KPF manifest](../experiments/pse_together/assets/coop_sprites_expedition.manifest.json); 2 персонажа, 80 rects, 16 ресурсов, PNG байты сохранены. Roster на 8 различимых слотов открыт.
+- Неуспехи: [OFFLINE_01](evidence/m1/PSE_TOGETHER_P8/OFFLINE_01), [P8_HOST_01](evidence/m1/PSE_TOGETHER_P8/P8_HOST_01) (absolute -file), [REA_RUN03](evidence/m1/PSE_TOGETHER_P8/REA_RUN03.json) (staged/applied mismatch после Refused). John baseline — [REA_RUN02](evidence/m1/PSE_TOGETHER_P8/REA_RUN02.json), не финальная графика.
+- [INTEGRITY_FINAL](evidence/m1/PSE_TOGETHER_P8/INTEGRITY_FINAL.json): оригинал77, защищённые сохранения и EXE-копии без изменений; additive пакеты из тестовых копий удалены после SHA-проверки. Все свои процессы/REA-сессии закрыты.
+
+## П4 — проверка режима В, возвращён исполнителю (2026-11-04)
+
+[DOC-67](67_P4_ACCEPTANCE_CHECK.md), Opus 5.5 extra. Новых прогонов в KEX нет; сборки шли в дереве проверяющего, не в `b60`.
+
+- [REVIEW_CHECKS.json](evidence/m1/P4_ACCEPTANCE_CHECK_67/REVIEW_CHECKS.json): 12 проверок и 10 сравнений DLL (`cmp_*.json`). `run01_sources` = DLL run01 (7/7); база П1 = `P1_*_03` (7/7); цель П1 `pse_dll_client_proxy` из run01 и текущих исходников ≠ `P1_CLIENT_03` (F1).
+- Offline в дереве проверяющего: [cur_ctest.log](evidence/m1/P4_ACCEPTANCE_CHECK_67/cur_ctest.log) — 26/26; [cur_build_all.log](evidence/m1/P4_ACCEPTANCE_CHECK_67/cur_build_all.log) — LNK1104 при параллельной сборке (F3).
+- Run01: [independent_run01_check.json](evidence/m1/P4_ACCEPTANCE_CHECK_67/independent_run01_check.json) — 18/18. Целостность: [original_integrity_now.json](evidence/m1/P4_ACCEPTANCE_CHECK_67/original_integrity_now.json) — 77/77.
+- Буфер (F2): [проба](evidence/m1/P4_ACCEPTANCE_CHECK_67/tools/probe/probe_buffer.cpp) → [результат](evidence/m1/P4_ACCEPTANCE_CHECK_67/probe_result.txt); часы хоста в P1 run03 — [host_tick_clock_p1run03.json](evidence/m1/P4_ACCEPTANCE_CHECK_67/host_tick_clock_p1run03.json) (отставание до 123 мс, 60,0009 тика/с).
+- Скрипты: [rebuild65.py](evidence/m1/P4_ACCEPTANCE_CHECK_67/tools/rebuild65.py), [independent_run01_check.py](evidence/m1/P4_ACCEPTANCE_CHECK_67/tools/independent_run01_check.py), [host_tick_clock.py](evidence/m1/P4_ACCEPTANCE_CHECK_67/tools/host_tick_clock.py), [write_review_checks.py](evidence/m1/P4_ACCEPTANCE_CHECK_67/tools/write_review_checks.py).
+
+## П14 — host AI и pickups, REVIEW / PARTIAL (2026-11-04)
+
+[DOC-66](66_P14_HOST_AI_AND_PICKUPS.md), режим В (с Б). Новые native paths ещё не приняты в gameplay. Принятые исследования/runs не повторялись.
+
+- [EXACT_PROFILE](evidence/m1/PSE_TOGETHER_P14/EXACT_PROFILE.json): 10 точек, RVA/VA/file offset/bytes; семантика из сохранённых DOC-17/18/20 dossiers.
+- [OFFLINE_03](evidence/m1/PSE_TOGETHER_P14/OFFLINE_03/RESULT.json), [лог П14](evidence/m1/PSE_TOGETHER_P14/OFFLINE_03/logs/p14_gameplay_contract.log): 26/26 наборов, 65 783 checks без ошибок; engine doubles, не KEX acceptance.
+- [Pre-native](evidence/m1/PSE_TOGETHER_P14/PRE_NATIVE_03.json), [финальные 13/13 smoke checks и source hashes](evidence/m1/PSE_TOGETHER_P14/FINAL_CHECKS.json).
+- Неуспешный run01: [native](evidence/m1/PSE_TOGETHER_P14/P14_HOST_01/native.jsonl), [REA](evidence/m1/PSE_TOGETHER_P14/REA_RUN01.json), [штатный exit](evidence/m1/PSE_TOGETHER_P14/P14_HOST_01/OS_SIGNALED.json).
+- Run02 bootstrap/restore smoke без P2: [native](evidence/m1/PSE_TOGETHER_P14/P14_HOST_02/native.jsonl), [isolation PASS](evidence/m1/PSE_TOGETHER_P14/P14_HOST_02/ISOLATION_GATE.json), [retained exit](evidence/m1/PSE_TOGETHER_P14/P14_HOST_02/OS_SIGNALED.json), [REA final](evidence/m1/PSE_TOGETHER_P14/REA_FINAL.json), [sessions closed](evidence/m1/PSE_TOGETHER_P14/SESSIONS_CLOSED_02.json). AI/pickup/Ankh gameplay — NOT_EXECUTED.
+
+## П4 — spawn / portal / playout / background (2026-11-04), REVIEW / PARTIAL
+
+[DOC-65](65_P4_PRESENTATION_AND_SPAWN.md), режим В. [OFFLINE_02](evidence/m1/PSE_TOGETHER_P4/OFFLINE_02/RESULT.json) 25/25, P4 247/0; [PRE_NATIVE_CURRENT](evidence/m1/PSE_TOGETHER_P4/PRE_NATIVE_FINAL.json) 9/9 и текущие hashes; [BUILD_FINAL](evidence/m1/PSE_TOGETHER_P4/BUILD_FINAL.log). [Run01 PARTIAL](evidence/m1/PSE_TOGETHER_P4/RUNTIME_RUN01_PARTIAL.json): background без прокси, counter3840; ошибочный anchor support guard привёл к нулю Spawn и исправлен после опыта. Новая Host DLL не аттестована. Raw [host](evidence/m1/PSE_TOGETHER_P4/P4_HOST_01/native.jsonl) / [client](evidence/m1/PSE_TOGETHER_P4/P4_CLIENT_01/native.jsonl), [REA bundle](evidence/m1/PSE_TOGETHER_P4/RUN01_FINAL_BUNDLE.json), [20 sessions closed](evidence/m1/PSE_TOGETHER_P4/REA_SESSIONS_CLOSED.json), [integrity](evidence/m1/PSE_TOGETHER_P4/INTEGRITY_FINAL.json). Загруженные DLL/source hashes — [PRE_NATIVE_GATE](evidence/m1/PSE_TOGETHER_P4/PRE_NATIVE_GATE.json), исходники `run01_sources/`, DLL/PDB в `P4_*_01/native_artifact/`. [Предложение wire v1.11](evidence/m1/PSE_TOGETHER_P4/PROTOCOL_V111_DECISION.md), wire не изменён. Proxy/portal/jitter runtime — NOT_EXECUTED; gates не повышены.
+
+## П1 / S0.4 — приёмка режима В (2026-11-04) — PASS (bounded)
+
+- [DOC-64](64_P1_ACCEPTANCE_REVIEW.md) (Opus 5.5, extra), сводка [REVIEW_CHECKS.json](evidence/m1/P1_ACCEPTANCE_REVIEW_64/REVIEW_CHECKS.json): 13/13 PASS, 4 неблокирующих замечания. Без новых прогонов в KEX.
+- Хеши EXE, DLL и исходников: [verify_hashes.json](evidence/m1/P1_ACCEPTANCE_REVIEW_64/verify_hashes.json). Пересборка против загруженных DLL: [client](evidence/m1/P1_ACCEPTANCE_REVIEW_64/cmp_client_altpath.json), [host](evidence/m1/P1_ACCEPTANCE_REVIEW_64/cmp_host_altpath.json), host против DOC-56: [cmp_host_doc56_altpath.json](evidence/m1/P1_ACCEPTANCE_REVIEW_64/cmp_host_doc56_altpath.json). Сравнения без выравнивания пути PDB: [client](evidence/m1/P1_ACCEPTANCE_REVIEW_64/cmp_client.json), [host](evidence/m1/P1_ACCEPTANCE_REVIEW_64/cmp_host.json); разбор сдвига — [pe_diff.py](evidence/m1/P1_ACCEPTANCE_REVIEW_64/tools/pe_diff.py). Offline: [rb_ctest.log](evidence/m1/P1_ACCEPTANCE_REVIEW_64/rb_ctest.log) (24/24).
+- Независимое чтение run 03: [independent_p1_check.json](evidence/m1/P1_ACCEPTANCE_REVIEW_64/independent_p1_check.json), [update_chain_check.json](evidence/m1/P1_ACCEPTANCE_REVIEW_64/update_chain_check.json). Повторный прогон скрипта исполнителя: [review_rerun.json](evidence/m1/P1_ACCEPTANCE_REVIEW_64/review_rerun.json). Целостность оригинала: [original_integrity_now.json](evidence/m1/P1_ACCEPTANCE_REVIEW_64/original_integrity_now.json).
+
+## П6 / S2.1, S3.1 — ADR-1 и ADR-2 (2026-11-04) — REVIEW режима В
+
+- [DOC-62](62_P6_ADR_AUTHORITY_AND_CLIENT_WORLD.md). Runtime-evidence нет: статика и принятые журналы.
+- S3.1, порядок спавна и идентичность объектов карты: [MAP_SPAWN_IDENTITY_STATIC.json](evidence/m1/P6_ADR_AUTHORITY_WORLD/MAP_SPAWN_IDENTITY_STATIC.json) (25/25; хеши входов и трёх EXE), скрипт [p6_map_spawn_identity.py](research/p6_map_spawn_identity.py), [мутационный тест 3/3](evidence/m1/P6_ADR_AUTHORITY_WORLD/MUTATION_TEST.json).
+- Новые выгрузки Ghidra (проект только для чтения, `invoke_ghidra.py`): [G_FUNC_1401cc8d0](evidence/m1/P6_ADR_AUTHORITY_WORLD/static/G_FUNC_1401cc8d0.json) (BuildRHIBuffers), [G_REFS_140a42c90](evidence/m1/P6_ADR_AUTHORITY_WORLD/static/G_REFS_140a42c90.json), [G_INSPECT_14001ff30](evidence/m1/P6_ADR_AUTHORITY_WORLD/static/G_INSPECT_14001ff30.json), [G_MEMORY_140527430](evidence/m1/P6_ADR_AUTHORITY_WORLD/static/G_MEMORY_140527430.json) (имя класса kexSlaveAI); журналы вызовов — в том же [каталоге](evidence/m1/P6_ADR_AUTHORITY_WORLD/static/).
+- Принятые dossiers, на которые опирается ADR: [ReadActors](evidence/ghidra_2022/G_FUNC_1401cc490.json), [фабрика карты](evidence/ghidra_2022/G_FUNC_1401d41f0.json), [ctor kexSlaveActor](evidence/ghidra_2022/G_FUNC_14019ef20.json), [битсет потреблённых](evidence/ghidra_2022/G_FUNC_1401d8360.json), [восстановление сохранения](evidence/ghidra_2022/G_FUNC_1401b5df0.json), [LoadMap](evidence/ghidra_2022/G_FUNC_1401c7b70.json), [телепорт сектора](evidence/ghidra_2022/G_FUNC_1401be2f0.json), [GetHealth](evidence/ghidra_2022/G_FUNC_1401dfa20.json).
+- [Проверка ссылок DOC-62](evidence/m1/P6_ADR_AUTHORITY_WORLD/LINK_CHECK.json), скрипт [check_md_links.py](research/check_md_links.py).
+
+## П1 / S0.4 — нативный адаптер прокси (2026-11-04) — PASS режима В (приёмка — [DOC-64](64_P1_ACCEPTANCE_REVIEW.md))
+
+- [DOC-61](61_P1_NATIVE_PROXY_DLL.md), [канонический код](../experiments/pse_together/README.md), [native adapter](../experiments/pse_together/src/native/native_proxy.cpp). Runtime-candidate, отдельная приёмка другой моделью ещё не выполнена.
+- [Входная S0.3 review](evidence/m1/PSE_TOGETHER_P1/S03_ENTRY_REVIEW.md), [сверки hashes/saved results](evidence/m1/PSE_TOGETHER_P1/S03_ENTRY_CHECKS.json); принятые исследования/runs не повторялись.
+- [24/24 offline](evidence/m1/PSE_TOGETHER_P1/OFFLINE_01/RECOVERED_RESULT.json), [118 C++ checks](evidence/m1/PSE_TOGETHER_P1/BOUNDED_CONTRACT_RESULT.json), [pre-native11/11](evidence/m1/PSE_TOGETHER_P1/PRE_NATIVE_GATE_RUN03.json), [renderer census32 checks](evidence/m1/PSE_TOGETHER_P1/OBSERVER_CENSUS_TEST.log).
+- [Runtime34/34 + limits](evidence/m1/PSE_TOGETHER_P1/P1_RUNTIME_ACCEPTANCE_CANDIDATE.json), [10 283 correlations](evidence/m1/PSE_TOGETHER_P1/P1_RUNTIME_ACCEPTANCE_CANDIDATE_CORRELATION.jsonl), [coordinates12](evidence/m1/PSE_TOGETHER_P1/RUNTIME_COORDINATES_P1.json), [pre-native code review](evidence/m1/PSE_TOGETHER_P1/PRE_NATIVE_CODE_REVIEW.md).
+- Raw [host03](evidence/m1/PSE_TOGETHER_P1/P1_HOST_03/native.jsonl), [client03](evidence/m1/PSE_TOGETHER_P1/P1_CLIENT_03/native.jsonl), [renderer03](evidence/m1/PSE_TOGETHER_P1/P1_CLIENT_03/observer_LIVE.jsonl); [movement REA](evidence/m1/PSE_TOGETHER_P1/BUNDLE_RUN03_MOVEMENT.json), [exit REA](evidence/m1/PSE_TOGETHER_P1/BUNDLE_RUN03_EXIT.json), [sessions closed19/19](evidence/m1/PSE_TOGETHER_P1/RUN03_SESSIONS_CLOSED.json).
+- [P1 scoped integrity](evidence/m1/PSE_TOGETHER_P1/P1_SCOPED_INTEGRITY.json), [parallel P2 additions pinned](evidence/m1/PSE_TOGETHER_P1/CONCURRENT_WORKSPACE_ADDITIONS.json), [late parallel work](evidence/m1/PSE_TOGETHER_P1/CONCURRENT_WORKSPACE_LATE.json), [run02 interrupted, not accepted](evidence/m1/PSE_TOGETHER_P1/RUN02_INTERRUPTION.json), [final source manifest](evidence/m1/PSE_TOGETHER_P1/FINAL_SOURCE_MANIFEST.json). Run01 — negative refusal before factory, штатный exit; исходные журналы обеих попыток сохранены.
+
+## ROADMAP: пакеты и режимы приёмки (2026-11-03)
+
+- [ROADMAP §3, §4.1](ROADMAP.md) — план, не evidence; runtime-evidence нет.
+
+## S0.3 — единая кодовая база `pse_together` (2026-11-03)
+
+- [Отчёт DOC-60](60_S0_3_PSE_TOGETHER_UNIFIED_BASE.md), [README](../experiments/pse_together/README.md), код `experiments/pse_together/` (55 файлов, [SOURCE_MANIFEST](evidence/m1/PSE_TOGETHER_S03/SOURCE_MANIFEST.json), [UNIFICATION_MAP](evidence/m1/PSE_TOGETHER_S03/UNIFICATION_MAP.json)). Только offline, runtime-evidence нет.
+- Прогон одной командой 23/23: [RESULT.json](evidence/m1/PSE_TOGETHER_S03/RUN_20261103_223452/RESULT.json) (+ `logs/`, `build.log`, `ctest_junit.xml`). Неудачные первые попытки сохранены: [RUN_20261103_221933](evidence/m1/PSE_TOGETHER_S03/RUN_20261103_221933/RESULT.json), [RUN_20261103_222140](evidence/m1/PSE_TOGETHER_S03/RUN_20261103_222140/RESULT.json), [ctest_try1.log](evidence/m1/PSE_TOGETHER_S03/commands/ctest_try1.log); рабочая промежуточная [RUN_20261103_222324](evidence/m1/PSE_TOGETHER_S03/RUN_20261103_222324/RESULT.json).
+- Эквивалентность DLL (статически): [DLL_EQUIVALENCE](evidence/m1/PSE_TOGETHER_S03/DLL_EQUIVALENCE_20261103_223129/DLL_EQUIVALENCE.json) + `DLL_EQUIV_*.json` + логи `b61…b67`; разведочные — [exploratory_dll_equiv/](evidence/m1/PSE_TOGETHER_S03/exploratory_dll_equiv/).
+- [BASELINE](evidence/m1/PSE_TOGETHER_S03/BASELINE.json), [INTEGRITY_FINAL](evidence/m1/PSE_TOGETHER_S03/INTEGRITY_FINAL.json), [HARNESS_ERRORS](evidence/m1/PSE_TOGETHER_S03/HARNESS_ERRORS.md).
+
 ## S0.2 — git для исходников (2026-11-03)
 
 - [Отчёт DOC-59](59_S0_2_GIT_SOURCES.md), [`.gitignore`](../.gitignore) (SHA-256 `c5f2995da90f4dbe…`). Runtime-evidence нет; evidence-каталоги намеренно вне git.
@@ -365,6 +619,7 @@ VERIFIED = статическое наблюдение, не runtime успех.
 | [achievement symbols](evidence/ghidra_2022/G_ACHIEVEMENT_SYMBOLS.json), [vtable](evidence/ghidra_2022/G_MEMORY_1405257b0.json) | kexSocialAchievementsSteam slot+10→native SetAchievement |
 | [native SetAchievement](evidence/ghidra_2022/G_FUNC_140184110.json), [stats callback](evidence/ghidra_2022/G_FUNC_140184a90.json), [pump](evidence/ghidra_2022/G_FUNC_14018fbf0.json), [v012 initializer](evidence/ghidra_2022/G_FUNC_140182cc0.json) | Local unlock/readiness/cheat guards и actual Steam imports/calls |
 | [artifact](evidence/ghidra_2022/G_FUNC_1401d8ac0.json), [ankh](evidence/ghidra_2022/G_FUNC_1401d8870.json), [ankh helper](evidence/ghidra_2022/G_FUNC_1401e0910.json) | Owner vs singleton, bit/count conditions, duplicate side effects |
+| [P20 SPEC_CHECK](evidence/m4/P20_ACHIEVEMENT_SPEC/SPEC_CHECK.json), [links](evidence/m4/P20_ACHIEVEMENT_SPEC/LINKS_DOC63.json) | S6.1 ([DOC-63](63_S6_1_ACHIEVEMENT_SPEC.md)): 20 ключей ↔ E017/E018 ↔ псевдокод 9 эмиттеров ↔ defs/scripts/localization KPF ↔ таблица DOC-63; 49/49, мутации 8/8; static, без runtime и Steam |
 | [AI death](evidence/ghidra_2022/G_FUNC_140195050.json), [melee](evidence/ghidra_2022/G_FUNC_140199710.json), [finish](evidence/ghidra_2022/G_FUNC_1401b5850.json) | Boss/method/difficulty/no-ankhs examples; не все20 условий |
 | [E019](evidence/E019_STEAM_ENET_PRIMARY_SOURCES.json), [E016](evidence/E016_ABI_PRIMARY_SOURCES.json) | External primary documentation, отдельно от shipped evidence |
 
