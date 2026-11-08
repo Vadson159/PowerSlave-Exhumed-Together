@@ -93,7 +93,6 @@ struct Context {
 #endif
 #ifdef PSE_FEATURE_P4
     bool anchorValid{};pse::placement::Box anchor{};float anchorYaw{},anchorFloor{},anchorCeiling{};int anchorSector{};
-    pse::placement::WaitBudget anchorWait;
 #endif
 #ifdef PSE_ROLE_HOST
     m12a::Session* network{}; // retained, never a CRT global destructor
@@ -211,7 +210,7 @@ void captureNativeSnapshots() {
             using namespace pse::player_art;
             Animation art;bool changed{};
             if(!art.accept(s) || !Binding::apply(g.base,id.actor,slot,art.pose(),false,changed)) { block("p8_host_sprite_binding");return; }
-            if(changed) log("p8_host_animation","\"slot\":%u,\"pose\":\"%s\",\"actions\":0,\"native_bind\":true",slot,name(art.pose()));
+            if(changed) log("p8_host_animation","\"slot\":%u,\"pose\":\"%s\",\"actions\":0,\"native_bind\":true,\"scale\":%.4f,\"p1_scale\":%.4f,\"flags16c\":%u,\"p1_flags16c\":%u,\"flags1c0\":%u,\"anim\":\"%p\",\"def\":\"%p\",\"vtable\":\"%p\"",slot,name(art.pose()),read<float>(id.actor,0x124),read<float>(g.p1.actor,0x124),read<unsigned>(id.actor,0x16c),read<unsigned>(g.p1.actor,0x16c),read<unsigned>(id.actor,0x1c0),read<void*>(id.actor,0x108),read<void*>(id.actor,0x170),read<void*>(id.actor));
         }
         log("p8_snapshot_art","\"slot\":%u,\"sequence\":%u,\"health\":%d,\"life_state\":%u,\"buttons\":%u,\"velocity\":[%.9g,%.9g,%.9g]",slot,s.sequence,s.health,s.lifeState,s.buttons,s.velX,s.velY,s.velZ);
 #endif
@@ -534,7 +533,7 @@ void unbind(const char* reason) {
 #endif
 #ifdef PSE_FEATURE_P4
     g.p7KeysPermitted=false;g.p7KeyProbeSerial=g.p7KeyReviewSerial=0;
-    g.anchorValid=false;g.anchorWait.clear(); // No anchor survives this world's barrier.
+    g.anchorValid=false; // No spawn spot survives this world's barrier.
 #endif
 #ifdef PSE_ROLE_HOST
     g.backgroundStopping=true;
@@ -593,19 +592,7 @@ void __fastcall hookFinal() {
 }
 
 #ifdef PSE_FEATURE_P4
-void captureSpawnAnchor() {
-    if(g.anchorValid || g.localThisTick!=1 || !gameplay() || read<int>(instance(),0x20)!=3) return;
-    auto* n=read<Byte*>(primary(),0xd8);auto* a=n?read<Byte*>(n,0x28):nullptr;
-    if(!a || read<Byte*>(a,0x10)!=n || read<Byte*>(a,0x1b8)!=primary()) return;
-    const pse::placement::Box b{read<pse::bounded::Vec3>(a,0x18),read<pse::bounded::Vec3>(a,0xec),read<pse::bounded::Vec3>(a,0xf8)};
-    if(!pse::placement::valid(b)) return;
-    g.anchor=b;g.anchorYaw=read<float>(a,0x38);g.anchorSector=read<int>(a,0x3c);
-    g.anchorFloor=read<float>(a,0x11c);g.anchorCeiling=read<float>(a,0x120);
-    if(!pse::placement::sameSupport(g.anchorFloor,g.anchorCeiling,g.anchorFloor,g.anchorCeiling)) return;
-    g.anchorValid=true;
-    log("p4_spawn_anchor","\"sector\":%d,\"position\":[%.9g,%.9g,%.9g],\"source\":\"first observed native local gameplay update\"",g.anchorSector,b.position[0],b.position[1],b.position[2]);
-}
-bool spawnAnchorClear() {
+bool spawnAnchorClear(bool quiet=false) {
     namespace pp=pse::native_proxy::profile;
     if(!g.anchorValid || !std::isfinite(g.anchorYaw)) return false;
     const auto count=read<std::uint64_t>(g.base,0xa45970);auto* sectors=read<Byte*>(g.base,0xa45968);
@@ -631,7 +618,7 @@ bool spawnAnchorClear() {
             auto* actor=read<Byte*>(node,0x28);if(!actor || read<Byte*>(actor,0x10)!=node) return false;
             const pse::placement::Box other{read<pse::bounded::Vec3>(actor,0x18),read<pse::bounded::Vec3>(actor,0xec),read<pse::bounded::Vec3>(actor,0xf8)};
             if(!pse::placement::separate(g.anchor,other)) {
-                if(g.ticks%120==0)log("p4_anchor_occupied","\"sector\":%zu,\"actor\":\"%p\",\"position\":[%.9g,%.9g,%.9g],\"bounds_min\":[%.9g,%.9g,%.9g],\"bounds_max\":[%.9g,%.9g,%.9g],\"flags\":%u",i,actor,other.position[0],other.position[1],other.position[2],other.lo[0],other.lo[1],other.lo[2],other.hi[0],other.hi[1],other.hi[2],read<unsigned>(actor,0x16c));
+                if(!quiet && g.ticks%120==0)log("p4_anchor_occupied","\"sector\":%zu,\"actor\":\"%p\",\"position\":[%.9g,%.9g,%.9g],\"bounds_min\":[%.9g,%.9g,%.9g],\"bounds_max\":[%.9g,%.9g,%.9g],\"flags\":%u",i,actor,other.position[0],other.position[1],other.position[2],other.lo[0],other.lo[1],other.lo[2],other.hi[0],other.hi[1],other.hi[2],read<unsigned>(actor,0x16c));
                 return false;
             }
             previous=node;node=read<Byte*>(node,8);
@@ -639,6 +626,35 @@ bool spawnAnchorClear() {
         if(!node || read<Byte*>(node)!=previous) return false;
     }
     return true;
+}
+// Pick a clear spot beside the host's CURRENT position (right, left, behind, then farther out) in the host's own sector:
+// native point-in-sector, identical floor/ceiling support and a read-only census of every actor. No fixed anchor, no timeout:
+// it is retried every tick until a spot is free.
+bool chooseSpawn() {
+    auto* n=read<Byte*>(primary(),0xd8);auto* a=n?read<Byte*>(n,0x28):nullptr;
+    if(!a || read<Byte*>(a,0x10)!=n || read<Byte*>(a,0x1b8)!=primary()) return false;
+    const pse::placement::Box base{read<pse::bounded::Vec3>(a,0x18),read<pse::bounded::Vec3>(a,0xec),read<pse::bounded::Vec3>(a,0xf8)};
+    const float yaw=read<float>(a,0x38);
+    if(!pse::placement::valid(base) || !std::isfinite(yaw)) return false;
+    const float fx=std::sin(yaw),fy=std::cos(yaw),rx=fy,ry=-fx; // forward = (sin,cos); right = (cos,-sin)
+    struct Step{float right,forward,distance;};
+    static constexpr Step steps[]={{1,0,96},{-1,0,96},{0,-1,96},{1,0,140},{-1,0,140},{0,-1,140},{0,1,96},{1,-1,120},{-1,-1,120}};
+    for(const auto& s:steps) {
+        const float len=std::sqrt(s.right*s.right+s.forward*s.forward);
+        pse::placement::Box c=base;
+        c.position[0]=base.position[0]+s.distance*(rx*s.right+fx*s.forward)/len;
+        c.position[1]=base.position[1]+s.distance*(ry*s.right+fy*s.forward)/len;
+        g.anchor=c;g.anchorYaw=yaw;g.anchorSector=read<int>(a,0x3c);
+        g.anchorFloor=read<float>(a,0x11c);g.anchorCeiling=read<float>(a,0x120);
+        g.anchorValid=true;
+        if(spawnAnchorClear(true)) {
+            log("p4_spawn_chosen","\"sector\":%d,\"host\":[%.9g,%.9g,%.9g],\"spawn\":[%.9g,%.9g,%.9g],\"right\":%.0f,\"forward\":%.0f,\"distance\":%.0f",
+                g.anchorSector,base.position[0],base.position[1],base.position[2],c.position[0],c.position[1],c.position[2],s.right,s.forward,s.distance);
+            return true;
+        }
+    }
+    g.anchorValid=false;
+    return false;
 }
 #endif
 
@@ -681,11 +697,9 @@ bool installWeapon16(){
 }
 void construct() {
 #ifdef PSE_FEATURE_P4
-    if(g.anchorWait.expired())return;
-    if(!spawnAnchorClear()) {
-        if(g.anchorWait.deferred())log("p4_spawn_expired","\"reason\":\"anchor not verified clear within 1800 eligible ticks; new session required\",\"factory_calls\":0,\"reset_calls\":0");
-        if(g.ticks%120==0) log("p4_spawn_deferred","\"reason\":\"native anchor occupied or geometry unverified\",\"factory_calls\":0");
-        return; // Stay Armed. Never allocate/reset P2 or fall back to P1's occupied position.
+    if(!chooseSpawn()) {
+        if(g.ticks%120==0) log("p4_spawn_deferred","\"reason\":\"no clear native spot beside the host yet\",\"factory_calls\":0");
+        return; // Stay Armed and retry next tick. Never allocate/reset P2 or fall back to P1's occupied position.
     }
 #endif
     g.phase = Phase::Constructing;
@@ -799,7 +813,6 @@ void __fastcall hookTick(void* self) {
         if (g.localThisTick == 1) {
             ++g.activeTicks;
 #ifdef PSE_FEATURE_P4
-            captureSpawnAnchor();
 #endif
             if (g.phase == Phase::Armed && ++g.attestSamples >= 60) {
 #ifdef PSE_ROLE_HOST

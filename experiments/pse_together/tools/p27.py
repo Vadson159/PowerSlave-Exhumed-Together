@@ -18,7 +18,14 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / 'docs/evidence/m1/PSE_TOGETHER_P27'
-BUILD = Path(os.environ.get('PSE_P27_BUILD_DIR', str(ROOT / 'b94/p27'))).resolve()
+def _latest_build():
+    """Newest CMake build tree in the mod root that has both the loader (bN/p27) and pse_together.dll (bN/dll)."""
+    found = [d for d in ROOT.glob('b[0-9]*') if (d / 'p27' / 'pe-together.dll').exists() and (d / 'dll' / 'pse_together.dll').exists()]
+    return max(found, key=lambda d: min((d / 'p27' / 'pe-together.dll').stat().st_mtime, (d / 'dll' / 'pse_together.dll').stat().st_mtime), default=ROOT / 'b97')
+
+
+BUILD_ROOT = _latest_build()
+BUILD = Path(os.environ.get('PSE_P27_BUILD_DIR', str(BUILD_ROOT / 'p27'))).resolve()
 EXE_NAME = 'anubis_Shipping_Steam_x64.exe'
 EXE_SHA = 'b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d'
 HOST_COPY = ROOT / 'experiments/m0/game'
@@ -336,7 +343,7 @@ def offline(tag):
 
 
 SDL_SHA = 'f65b50d693484d5d5a2bb8df1cf520628dd744e99e9a937bb936839b990943a0'
-PAYLOAD = Path(os.environ.get('PSE_PAYLOAD_DLL', str(ROOT / 'b97/dll/pse_together.dll')))  # one DLL, both roles
+PAYLOAD = Path(os.environ.get('PSE_PAYLOAD_DLL', str(BUILD.parent / 'dll' / 'pse_together.dll')))  # one DLL, both roles
 
 
 def install(root_arg, source_arg=None):
@@ -365,6 +372,9 @@ def install(root_arg, source_arg=None):
     shutil.copyfile(BUILD / 'SDL2.dll', game / 'SDL2.dll')
     shutil.copyfile(BUILD / 'pe-together.dll', game / 'pe-together.dll')
     shutil.copyfile(PAYLOAD, game / 'pse_together.dll')
+    # Third-person player sprites (P8): KEX auto-mounts mods/*.kpf. Host P2 and the client proxy of the host use them.
+    (game / 'mods').mkdir(exist_ok=True)
+    shutil.copyfile(ROOT / 'experiments/pse_together/assets/coop_sprites_john.kpf', game / 'mods/coop_sprites_john.kpf')
     ini = '[payload]\nsha256=' + sha(game / 'pse_together.dll') + '\n'
     (game / 'pe-together.ini').write_text(ini, encoding='utf-16')
     shutil.copyfile(BUILD / 'pe-play.exe', root / 'pe-play.exe')

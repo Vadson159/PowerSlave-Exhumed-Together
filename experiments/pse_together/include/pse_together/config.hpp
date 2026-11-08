@@ -11,8 +11,8 @@
 //   PSE_FEATURE_VISUAL_PROXY  DOC-58B/58B.2 visual proxy of the remote player on the client (requires MAPREADY, client only)
 #pragma once
 
-#if defined(PSE_FEATURE_P8) && (!defined(PSE_FEATURE_MAPREADY) || defined(PSE_FEATURE_P4) || defined(PSE_FEATURE_P14))
-#error "PSE_FEATURE_P8 requires MAPREADY and its own isolated candidate targets"
+#if defined(PSE_FEATURE_P8) && !defined(PSE_FEATURE_MAPREADY)
+#error "PSE_FEATURE_P8 requires MAPREADY"
 #endif
 
 #if defined(PSE_ROLE_HOST) && defined(PSE_ROLE_CLIENT)

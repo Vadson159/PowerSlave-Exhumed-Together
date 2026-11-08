@@ -33,7 +33,6 @@ bool active() {
     if (!thread() || s.stopped || !s.host.eligible()) return false;
     s.armed=true; return true;
 }
-bool dormant() { return thread() && !s.stopped && !s.armed; }
 void fail(const char* reason) { s.stopped=true; s.scoped=nullptr; s.returnAddress=0; s.host.fault(reason); }
 bool alive(const Member& m) {
     return m.player && m.actor && read<std::int16_t>(m.actor,0x17a)>0 &&
@@ -95,14 +94,14 @@ void acquire(void* ai, unsigned index, unsigned returnRva) {
     reinterpret_cast<Unary>(s.original[index])(ai);
 }
 void __fastcall idle(void* ai) {
-    if (!active()) { if (dormant()) reinterpret_cast<Unary>(s.original[0])(ai); return; }
+    if (!active()) { reinterpret_cast<Unary>(s.original[0])(ai); return; } // no eligible P2: stock single-player AI, never freeze
     if (s.busy) return;
     Busy busy;
     if (read<void*>(ai,0x28)) { reinterpret_cast<Unary>(s.original[0])(ai); return; }
     acquire(ai,0,0x1955f4);
 }
 void __fastcall chase(void* ai) {
-    if (!active()) { if (dormant()) reinterpret_cast<Unary>(s.original[1])(ai); return; }
+    if (!active()) { reinterpret_cast<Unary>(s.original[1])(ai); return; }
     if (s.busy) return;
     Busy busy;
     const auto node=read<void*>(ai,0x28);
@@ -111,7 +110,7 @@ void __fastcall chase(void* ai) {
     acquire(ai,1,0x1972ca);
 }
 void touch(void* pickup,void* actor,unsigned index,unsigned returnRva) {
-    if (!active()) { if (dormant()) reinterpret_cast<Touch>(s.original[index])(pickup,actor); return; }
+    if (!active()) { reinterpret_cast<Touch>(s.original[index])(pickup,actor); return; }
     if (s.busy) return;
     Busy busy;
     const auto m=owner(actor,s.host.roster());

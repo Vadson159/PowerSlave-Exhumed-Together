@@ -30,6 +30,10 @@ HW=[None]
 def post(vk,down):
     sc=u.MapVirtualKeyW(vk,0);lp=1|(sc<<16)|(0 if down else ((1<<30)|(1<<31)))
     return u.PostMessageW(HW[0],0x100 if down else 0x101,vk,lp)
+def mouse_move(dx,dy=0,steps=20):
+    # Relative mouse motion (SDL raw input) delivered in small steps; the window must have the foreground.
+    for _ in range(steps):
+        i=IN(0,UN(mi=MI(int(dx/steps),int(dy/steps),0,0x0001,0,0)));u.SendInput(1,ctypes.byref(i),ctypes.sizeof(IN));time.sleep(0.01)
 def tap(vk,hold=0.06):
     post(vk,True);time.sleep(hold);post(vk,False)
 def text(s):
@@ -46,5 +50,6 @@ if __name__=='__main__':
         if a.startswith('hold:'):
             name,sec=a[5:].split('=');focus(h);post(VK[name],True);time.sleep(float(sec));post(VK[name],False);continue
         if a.startswith('text:'):focus(h);text(a[5:]);continue
+        if a.startswith('mouse:'):focus(h);mouse_move(int(a[6:]));continue
         if not focus(h):print('lost focus before',a)
         tap(VK[a]);time.sleep(0.25)

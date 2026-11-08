@@ -110,9 +110,9 @@ int main() {
     reset();invocation(2,foreign.data());check(originalCalls==0,"foreign toucher rejected before dereference");
     reset();getterWorks=false;invocation(3,actors[3].data());check(originalCalls==0 && faults==1,"scope failure stops native action");
     getterWorks=true;invocation(2,actors[0].data());invocation(0);invocation(1);
-    check(originalCalls==0,"latched failure never resumes singleton handlers");
+    check(originalCalls==3,"after a latched failure the stock handlers run (AI and pickups never freeze)");
     reset();invocation(0);const auto calls=originalCalls;eligible=false;invocation(1);invocation(2,actors[0].data());
-    check(originalCalls==calls,"lost authority never resumes singleton handlers");
+    check(originalCalls==calls+2,"lost authority falls back to the stock handlers");
     reset();for (unsigned i=0;i<5;++i) {
         freshPickup(i);invocation(4,actors[i].data());
         check(gives==8*(i+1) && consumed==i+1,"team grant once per live player");

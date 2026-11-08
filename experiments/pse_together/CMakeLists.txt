@@ -50,7 +50,7 @@ target_compile_options(pse_session PRIVATE ${PSE_STRICT})
 add_library(pse_together SHARED
   src/native/dll_main.cpp src/native/host.cpp src/native/client.cpp
   src/native/native_proxy.cpp src/native/self_native_p16.cpp
-  src/native/weapon_pickup_p16.cpp src/native/ui_native.cpp)
+  src/native/weapon_pickup_p16.cpp src/native/ui_native.cpp src/native/gameplay_p14.cpp)
 target_compile_features(pse_together PRIVATE cxx_std_20)
 target_compile_definitions(pse_together PRIVATE UNICODE _UNICODE)
 target_compile_options(pse_together PRIVATE ${PSE_STRICT})
@@ -58,9 +58,9 @@ target_link_options(pse_together PRIVATE /INCREMENTAL:NO /DEBUG:FULL /OPT:REF /O
 target_link_libraries(pse_together PRIVATE pse_minhook pse_session pse_net pse_headers bcrypt d3d11 dxgi d3dcompiler gdi32 user32)
 # Role-specific feature switches are per translation unit (include/pse_together/config.hpp checks them).
 set_source_files_properties(src/native/host.cpp PROPERTIES COMPILE_DEFINITIONS
-  "PSE_ROLE_HOST;PSE_FEATURE_SNAPSHOT;PSE_FEATURE_MAPREADY;PSE_FEATURE_P4;PSE_FEATURE_P7")
+  "PSE_ROLE_HOST;PSE_FEATURE_SNAPSHOT;PSE_FEATURE_MAPREADY;PSE_FEATURE_P4;PSE_FEATURE_P7;PSE_FEATURE_P14;PSE_FEATURE_P8")
 set_source_files_properties(src/native/client.cpp src/native/native_proxy.cpp PROPERTIES COMPILE_DEFINITIONS
-  "PSE_ROLE_CLIENT;PSE_FEATURE_SNAPSHOT;PSE_FEATURE_MAPREADY;PSE_FEATURE_P4;PSE_FEATURE_VISUAL_PROXY")
+  "PSE_ROLE_CLIENT;PSE_FEATURE_SNAPSHOT;PSE_FEATURE_MAPREADY;PSE_FEATURE_P4;PSE_FEATURE_VISUAL_PROXY;PSE_FEATURE_P8")
 set_source_files_properties(src/native/self_native_p16.cpp PROPERTIES COMPILE_DEFINITIONS
   "PSE_ROLE_CLIENT;PSE_FEATURE_SNAPSHOT;PSE_FEATURE_MAPREADY;PSE_FEATURE_P4")
 set_source_files_properties(src/native/weapon_pickup_p16.cpp PROPERTIES COMPILE_DEFINITIONS "PSE_ROLE_HOST;PSE_FEATURE_P4;PSE_FEATURE_P7")
@@ -93,6 +93,9 @@ pse_suite(lifecycle58b1_contract tests/proxy/lifecycle58b1_contract.cpp LIBS pse
 pse_suite(lifecycle58b2_contract tests/proxy/lifecycle58b2_contract.cpp LIBS pse_net pse_headers)
 pse_suite(bounded_proxy_contract tests/proxy/bounded_proxy_contract.cpp LIBS pse_headers)
 pse_suite(p4_presentation_contract tests/proxy/p4_presentation_contract.cpp LIBS pse_net pse_headers)
+pse_suite(p14_gameplay_contract tests/native/p14_gameplay_contract.cpp LIBS pse_headers pse_minhook)
+target_sources(p14_gameplay_contract PRIVATE src/native/gameplay_p14.cpp)
+target_compile_definitions(p14_gameplay_contract PRIVATE PSE_P14_OFFLINE)
 pse_suite(ui_contract tests/ui/contract.cpp LIBS pse_net pse_headers)
 pse_suite(lobby_live tests/ui/lobby_live.cpp LIBS pse_net pse_headers)
 # lobby_live also exercises a non-loopback interface: use the first assigned preferred IPv4 (no remote peer, no firewall change).

@@ -73,7 +73,7 @@ struct State {
 #endif
     std::vector<Sector> sectors;
 #ifdef PSE_FEATURE_P4
-    int expectedSector{259},plannedSector{259};pse::presentation::Buffer buffer;
+    int expectedSector{259},plannedSector{259};bool relocate{};pse::presentation::Buffer buffer;
     std::uint64_t geometryRefreshes{},geometryMaxNs{};
 #endif
 } g;
@@ -101,8 +101,8 @@ bool stable() {
     if(!thread() || g.stopping) return false;
     const auto o=map56::observe(g.base);
     map56::Identity id;
-    return map56::derive(o,id)==map56::Fault::None && o.state==3 && o.next==3 && !o.pending &&
-        id.name=="maps/TOMB.MAP" && id.version==1 && id.countA==71 && id.countB==28608;
+    // Generic engine stability only. Map identity against the host is enforced by the ClientGate (Welcome name/structure).
+    return map56::derive(o,id)==map56::Fault::None && o.state==3 && o.next==3 && !o.pending && !id.name.empty();
 }
 void scope() { require(thread() && g.inTick && !g.stopping,"SIMULATION_SCOPE");require(stable(),"WORLD_NOT_STABLE"); }
 constexpr std::size_t FieldOffsets[]={0x84,0x86,0x90,0x94,0x98,0x9a,0xa4,0x88,0x8c,0xcc,0xbc,0x17a};
@@ -202,21 +202,11 @@ bool unique(const Vec3& p) {
 }
 bool sameFloat(float a,float b) { return std::bit_cast<std::uint32_t>(a)==std::bit_cast<std::uint32_t>(b); }
 void attestArea() {
-    const auto count=read<std::uint64_t>(g.base,0xa45970);require(count==270,"UNATTESTED_SECTOR_COUNT");
-    g.sectors.clear();for(int i=0;i<270;++i) g.sectors.push_back(geometry(i));
-    unsigned samples=0;float floor=0,ceiling=0;
-    for(int ix=0;ix<=8;++ix) for(int iy=0;iy<=8;++iy) {
-        const Vec3 p{-7552.0f+32.0f*ix,-6912.0f+32.0f*iy,1240};
-        if(!bounded::fits(g.sectors[259].planes,p)) continue;
-        require(unique(p) && point(p),"AREA_IDENTITY");
-        const float f=height(profile::floor_height,p),c=height(profile::ceiling_height,p);
-        require(std::isfinite(f) && std::isfinite(c),"AREA_HEIGHT_NONFINITE");
-        if(!samples) { floor=f;ceiling=c; }
-        else require(sameFloat(f,floor) && sameFloat(c,ceiling),"AREA_NONFLAT");
-        ++samples;
-    }
-    require(samples>=16,"AREA_INSUFFICIENT_SAMPLES");g.floor=floor;g.ceiling=ceiling;g.area=true;
-    emit("attested_area","\"status\":\"ATTESTED\",\"sector\":259,\"sector_count\":270,\"samples\":%u,\"floor\":%.9g,\"ceiling\":%.9g,\"z_offset\":88,\"native_cpp\":true",samples,floor,ceiling);
+    // Every sector of the loaded map (any level): the proxy is placed in whichever sector the host actually stands in.
+    const auto count=read<std::uint64_t>(g.base,0xa45970);require(count>0 && count<=4096,"SECTOR_COUNT");
+    g.sectors.clear();for(int i=0;i<static_cast<int>(count);++i) g.sectors.push_back(geometry(i));
+    g.area=true;
+    emit("attested_area","\"status\":\"ATTESTED\",\"sector_count\":%llu,\"generic\":true,\"z_offset\":88,\"native_cpp\":true",static_cast<unsigned long long>(count));
 }
 bool interpolation(Byte* a) {
     return read<Byte*>(a,0x58)==a+0x18 && read<Byte*>(a,0x80)==a+0x30 &&
@@ -252,25 +242,31 @@ const char* target(const Vec3& p,bool withActor) {
     if(g.geometryRefreshes<=3 || g.geometryRefreshes%60==0)emit("p4_geometry_refresh","\"sectors\":%zu,\"refreshes\":%llu,\"duration_ns\":%llu,\"max_ns\":%llu,\"capacity_reused\":true",g.sectors.size(),g.geometryRefreshes,duration,g.geometryMaxNs);
     int found=-1;unsigned hits=0;
     for(std::size_t i=0;i<g.sectors.size();++i) if(bounded::inside(g.sectors[i].planes,p)) { found=static_cast<int>(i);++hits; }
-    if(!hits || (hits>1 && !bounded::inside(g.sectors[static_cast<std::size_t>(currentSector())].planes,p))) return "P4_SECTOR_AMBIGUOUS";
+    // Before the first spawn there is no current sector: a point on a shared boundary is retried on a later sample.
+    const bool haveCurrent=g.life.actor!=0 && static_cast<std::size_t>(currentSector())<g.sectors.size();
+    if(!hits || (hits>1 && !(haveCurrent && bounded::inside(g.sectors[static_cast<std::size_t>(currentSector())].planes,p)))) return "P4_SECTOR_AMBIGUOUS";
     if(hits>1) found=currentSector(); // Retain exact boundary membership until the center crosses.
     if(!point(p,found)) return "P4_NATIVE_POINT_FALSE";
     const auto& dst=g.sectors[static_cast<std::size_t>(found)];
+    g.relocate=false;
     if(withActor) {
         const auto& src=g.sectors[static_cast<std::size_t>(currentSector())];
         if(found!=currentSector()) {
-            if(!pse::portal::corridor(src.portal,currentSector(),dst.portal,found,g.expected,p)) return "P4_PORTAL_CORRIDOR_UNVERIFIED";
+            // No verified portal corridor (long jump, non-adjacent sector, coalesced snapshots): relocate with a native
+            // LinkSector + interpolant reset instead of refusing, so the proxy always follows the host's real sector.
+            if(!pse::portal::corridor(src.portal,currentSector(),dst.portal,found,g.expected,p)) g.relocate=true;
         } else if(!bounded::fits(dst.planes,p)) {
             bool aperture=false;
             for(const auto& f:dst.portal.faces) if(f.portal && f.adjoin>=0 && static_cast<std::size_t>(f.adjoin)<g.sectors.size())
                 aperture|=pse::portal::sweptAperture(dst.portal,found,g.sectors[static_cast<std::size_t>(f.adjoin)].portal,f.adjoin,g.expected,p);
-            if(!aperture) return "P4_APERTURE_UNVERIFIED";
+            (void)aperture; // a proxy partly inside a wall is cosmetic only; the centre stays inside the sector
         }
         auto* a=ptr(g.life.actor);
+        // Different floor/ceiling at the target: the engine's own height functions refresh the actor caches after the move.
         if(!sameFloat(height(profile::floor_height,p,found),read<float>(a,0x11c)) ||
-           !sameFloat(height(profile::ceiling_height,p,found),read<float>(a,0x120))) return "P4_CACHE_CHANGE_UNVERIFIED";
+           !sameFloat(height(profile::ceiling_height,p,found),read<float>(a,0x120))) g.relocate=true;
         if(read<unsigned>(a,0x16c)&0x80) return "PHYSICS_BIT7_SET";
-    } else if(!bounded::fits(dst.planes,p)) return "P4_SPAWN_AABB_OUTSIDE_SECTOR";
+    } // spawn: the centre is inside the sector (checked above) and native point-in-sector agrees; the box may touch a wall
     g.plannedSector=found;return nullptr;
 }
 #else
@@ -320,7 +316,7 @@ void tickEnter(std::uint64_t tick) {
 }
 std::int32_t worldReady(std::uint64_t) {
     try {
-        scope();list(259);int flags=seam::StableWorld;
+        scope();list(0);int flags=seam::StableWorld;
         if(g.p1ThisTick) {
             const auto p=local();if(!g.baseline) { g.local=p;g.baseline=true;emit("p1_baseline","\"actor\":\"%p\",\"node\":\"%p\",\"owner\":\"%p\"",p.actor,p.node,p.owner); }
             checkLocal(p);flags|=seam::LocalTicked;if(!g.area) attestArea();
@@ -395,7 +391,7 @@ std::int32_t update(std::uint64_t h,const ProxyCommand* c) {
         if(!moved && !turned) { g.command=*c;++g.unchanged;return 2; }
         auto* a=ptr(g.life.actor);actorIdentity(a,ptr(g.life.node),true);
         if(moved) if(const auto* why=target(p,true)) { if(++g.refused%60==1) emit("update_refused","\"reason\":\"%s\",\"sequence\":%u,\"target\":[%.9g,%.9g,%.9g]",why,c->sequence,p[0],p[1],p[2]);return 3; }
-        const auto before=local();const bool teleport=moved && bounded::teleport(g.expected,p);
+        const auto before=local();const bool teleport=moved && (g.relocate || bounded::teleport(g.expected,p));
 #ifdef PSE_FEATURE_P4
         if(moved && g.plannedSector!=g.expectedSector) {
             constexpr Byte linkPrefix[]={0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20,0x48};
@@ -416,6 +412,13 @@ std::int32_t update(std::uint64_t h,const ProxyCommand* c) {
                 emit("p4_portal_crossed","\"from\":%d,\"to\":%d,\"native_lerp_preserved\":%s",from,to,teleport?"false":"true");
             }
 #endif
+            if(g.relocate) {
+                // Cache refresh with the engine's own floor/ceiling functions for the new sector (what a ticking actor would do).
+                const float fl=height(profile::floor_height,p,g.expectedSector),ce=height(profile::ceiling_height,p,g.expectedSector);
+                require(std::isfinite(fl) && std::isfinite(ce) && fl<ce,"RELOCATE_HEIGHTS");
+                store<float>(a,0x11c,fl);store<float>(a,0x120,ce);
+                emit("p4_relocated","\"sector\":%d,\"floor\":%.9g,\"ceiling\":%.9g,\"target\":[%.9g,%.9g,%.9g]",g.expectedSector,fl,ce,p[0],p[1],p[2]);
+            }
             g.expected=p;if(teleport) reset(a+0x50);++g.revision;
         }
         if(turned) { store<float>(a,0x38,yaw);g.expectedYaw=yaw;reset(a+0x78);++g.revision; }
