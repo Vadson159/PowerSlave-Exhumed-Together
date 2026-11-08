@@ -1,3 +1,4 @@
+#include "ui/shared_p23.hpp"
 #include "network_input.hpp"
 #include <windows.h>
 #include <cmath>
@@ -7,6 +8,7 @@
 #endif
 
 namespace m12a {
+void (*respawnHandler)(const pse::BridgeRespawnRequest&)=nullptr;
 namespace {
 constexpr std::size_t OutboxCap = 8192;
 // Diagnostic control domain, not a claim to replicate or load a KEX map remotely.
@@ -65,12 +67,17 @@ bool Session::publishNativeSnapshot(pse::BridgePlayerSnapshot snapshot) {
 bool Session::start(std::uint16_t port) {
     bridge.registerSimulationThread();
     pse::HostConfig config;
-    config.bindAddress = "127.0.0.1";
-    config.port = port;
+    // Settings come from the host menu (UI); without a submitted host menu (offline tests) fall back to loopback.
+    const auto menu=pse::ui::shared().settings();
+    const bool fromMenu=menu.host && menu.valid();
+    config.bindAddress = fromMenu ? menu.address : "127.0.0.1";
+    if(fromMenu) config.hostName=menu.displayName;
+    config.port = fromMenu ? *pse::ui::port(menu.portText) : port;
+    port=config.port;
     config.maxClients = 1;
     config.maxClientSlots = 1;
     config.rejectedPeerTimeoutMs = 250;
-    config.joinToken = "M12A_Loopback";
+    config.joinToken = fromMenu ? menu.token : "M12A_Loopback";
     if (!worker.startHost(config)) {
         bridge.unregisterSimulationThread();
         stopped = true;
@@ -87,7 +94,7 @@ bool Session::start(std::uint16_t port) {
     enqueue(std::move(map));
     flush();
 #ifdef PSE_FEATURE_P4
-    log("network_started", "\"port\":%u,\"max_clients\":1,\"protocol\":273,\"thread_checks\":true,\"headless_control_domain\":true,\"timeout_ticks\":%llu,\"timeout_wall_ms\":%llu", port,inputTimeout.ticks,inputTimeout.wallMs);
+    log("network_started", "\"port\":%u,\"max_clients\":1,\"protocol\":275,\"thread_checks\":true,\"headless_control_domain\":true,\"timeout_ticks\":%llu,\"timeout_wall_ms\":%llu", port,inputTimeout.ticks,inputTimeout.wallMs);
 #else
     log("network_started", "\"port\":%u,\"max_clients\":1,\"protocol\":272,\"thread_checks\":true,\"headless_control_domain\":true,\"timeout_ticks\":%llu,\"timeout_wall_ms\":%llu", port,inputTimeout.ticks,inputTimeout.wallMs);
 #endif
@@ -216,7 +223,7 @@ void Session::consume(pse::BridgeMessage& message) {
         // Explicitly refuse features outside this phase instead of acknowledging
         // a world mutation that did not occur. Stale/foreign requests must not
         // manufacture a fresh KICK for the current session (DOC-45 P1-1).
-        if (active && req->slotId == 1 && req->connectionGeneration == gen) recover(pse::RESYNC_EXTERNAL);
+        if(active&&ready&&req->slotId==1&&req->connectionGeneration==gen&&req->mapEpoch==epoch&&snapshotEligible()&&respawnHandler)respawnHandler(*req);
     } else if (const auto* interaction = std::get_if<pse::BridgeInteractionRequest>(&message)) {
         if (active && interaction->slotId == 1 && interaction->connectionGeneration == gen) recover(pse::RESYNC_EXTERNAL);
     }

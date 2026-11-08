@@ -6,6 +6,8 @@
 
 namespace m12a {
 using Logger = void(*)(const char*, const char*, ...);
+// Set by the host DLL: receives the verified respawn request of the remote player (simulation thread only).
+extern void (*respawnHandler)(const pse::BridgeRespawnRequest&);
 struct InputTimeout {
     std::uint64_t ticks=6;
     std::uint64_t wallMs=150;

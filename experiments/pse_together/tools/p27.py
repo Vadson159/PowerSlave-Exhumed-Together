@@ -318,7 +318,7 @@ def offline(tag):
         man = json.loads((inst / 'install_manifest.json').read_text(encoding='utf8'))
         ini = (inst / 'game/pe-together.ini').read_text(encoding='utf-16')
         check('installer: 77 verified files, EXE and original SDL SHA exact', man['files'] == 77 and man['hashes']['anubis_Shipping_Steam_x64.exe'] == EXE_SHA and man['hashes']['SDL2_pse_original.dll'] == 'f65b50d693484d5d5a2bb8df1cf520628dd744e99e9a937bb936839b990943a0')
-        check('installer: ini carries the exact payload SHAs', 'host_sha256=' + man['hashes']['pse-host.dll'] in ini and 'client_sha256=' + man['hashes']['pse-client.dll'] in ini)
+        check('installer: ini carries the exact payload SHA', 'sha256=' + man['hashes']['pse_together.dll'] in ini)
         check('installer: shim = built SDL2.dll, broker = built pe-together.dll', man['hashes']['SDL2.dll'] == sha(BUILD / 'SDL2.dll') and man['hashes']['pe-together.dll'] == sha(BUILD / 'pe-together.dll'))
         check('installer: host.bat / join.bat are ASCII and call pe-play with the right role',
               b'--role host' in (inst / 'host.bat').read_bytes() and b'--role client' in (inst / 'join.bat').read_bytes() and all(b < 128 for b in (inst / 'host.bat').read_bytes() + (inst / 'join.bat').read_bytes()))
@@ -336,8 +336,7 @@ def offline(tag):
 
 
 SDL_SHA = 'f65b50d693484d5d5a2bb8df1cf520628dd744e99e9a937bb936839b990943a0'
-PAYLOADS = {'host': ROOT / 'b94/dll/pse_dll_host_p23/pse_m11_bootstrap.dll',
-            'client': ROOT / 'b94/dll/pse_dll_client_p23/pse_native_client58b.dll'}
+PAYLOAD = Path(os.environ.get('PSE_PAYLOAD_DLL', str(ROOT / 'b97/dll/pse_together.dll')))  # one DLL, both roles
 
 
 def install(root_arg, source_arg=None):
@@ -365,17 +364,16 @@ def install(root_arg, source_arg=None):
     shutil.copyfile(game / 'SDL2.dll', game / 'SDL2_pse_original.dll')
     shutil.copyfile(BUILD / 'SDL2.dll', game / 'SDL2.dll')
     shutil.copyfile(BUILD / 'pe-together.dll', game / 'pe-together.dll')
-    shutil.copyfile(PAYLOADS['host'], game / 'pse-host.dll')
-    shutil.copyfile(PAYLOADS['client'], game / 'pse-client.dll')
-    ini = '[payload]\nhost_sha256=' + sha(game / 'pse-host.dll') + '\nclient_sha256=' + sha(game / 'pse-client.dll') + '\n'
+    shutil.copyfile(PAYLOAD, game / 'pse_together.dll')
+    ini = '[payload]\nsha256=' + sha(game / 'pse_together.dll') + '\n'
     (game / 'pe-together.ini').write_text(ini, encoding='utf-16')
     shutil.copyfile(BUILD / 'pe-play.exe', root / 'pe-play.exe')
     for name, role in (('host', 'host'), ('join', 'client')):
         (root / (name + '.bat')).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\n"%~dp0pe-play.exe" --role ' + role + '\r\nset "pse_result=%ERRORLEVEL%"\r\n'
             'if not "%pse_result%"=="0" echo Failed with code %pse_result%\r\npause\r\nexit /b %pse_result%\r\n').encode('ascii'))
     manifest = dict(root=str(root), source=str(source), files=len(prep['independent_copy_files']),
-                    hashes={n: sha(game / n) for n in ['SDL2.dll', 'SDL2_pse_original.dll', 'pe-together.dll', 'pse-host.dll', 'pse-client.dll', 'anubis_Shipping_Steam_x64.exe']},
-                    play=sha(root / 'pe-play.exe'), note='installer P27 slice 2; payload = P23 host/client rebuilt with the portable path policy')
+                    hashes={n: sha(game / n) for n in ['SDL2.dll', 'SDL2_pse_original.dll', 'pe-together.dll', 'pse_together.dll', 'anubis_Shipping_Steam_x64.exe']},
+                    play=sha(root / 'pe-play.exe'), note='payload = pse_together.dll (host and client in one DLL, role from PSE_ROLE)')
     (root / 'install_manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf8')
     print('installed', root)
     print(json.dumps(manifest['hashes'], indent=2))

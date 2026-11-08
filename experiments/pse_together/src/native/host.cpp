@@ -1,18 +1,31 @@
+// P7 isolated host candidate. Copied foundation; canonical host.cpp is unchanged.
+#ifndef PSE_FEATURE_P7
+#error "host_p7.cpp requires PSE_FEATURE_P7"
+#endif
 // M1.1 exact-build adapter. Opaque KEX objects; this is not reconstructed KEX source.
 // All KEX calls and all hook changes execute on the launch primary / attested tick thread.
+#include "portable_policy.hpp"
 #include <windows.h>
 #include <bcrypt.h>
 #include <MinHook.h>
+#include "ui_native.hpp"
+#include "ui/shared_p23.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cwchar>
 #include <intrin.h>
 #include <pse_together/config.hpp>
+#include "weapon_pickup_p16.hpp"
+#include "lifecycle_p16.hpp"
+#include "respawn_p16.hpp"
+#include <deque>
+#include <optional>
 #include "build_profile.hpp"
 #ifdef PSE_FEATURE_P8
 #include "sprite_binding.hpp"
@@ -91,10 +104,13 @@ struct Context {
     background::FocusLease focusLease{};
     std::uint64_t focusSerial{}, backgroundTicks{}, neutralUpdates{};
     bool focusKnown{}, focusLost{}, backgroundStopping{}, backgroundPeriod{};
-    bool neutralPrimary{}, resumeNeutral{}, bindingsResetPending{};
+    bool neutralPrimary{}, resumeNeutral{}, bindingsResetPending{}, uiCaptureWas{};
     DWORD foregroundPid{};
 #ifdef PSE_FEATURE_SNAPSHOT
     std::uint32_t snapshotSequence{}, entityGeneration[2]{};
+    std::uint32_t p7DeathSequence[2]{};bool p7Dead[2]{};
+    std::uint64_t p7KeyProbeSerial{},p7KeyReviewSerial{};
+    std::uint32_t p7KeyProbeGeneration{},p7KeyProbeConnection{},p7KeyProbeEpoch{};bool p7KeysPermitted{};
 #endif
 #ifdef PSE_FEATURE_MAPREADY
     bool snapshotEligibleLogged{};
@@ -143,6 +159,11 @@ bool live(const Identity& id, Byte* p) {
 }
 Vec3 position(Byte* a) { return {read<float>(a, 0x18), read<float>(a, 0x1c), read<float>(a, 0x20)}; }
 bool finite(Vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+bool p16Pending(unsigned slot);
+bool p16Restore();
+void tick16();
+int p16DtorEntry(void* actor);
+void p16DtorReturn(int index,void* actor);
 #ifdef PSE_FEATURE_SNAPSHOT
 #ifndef PSE_FEATURE_MAPREADY
 bool firstMapWitness() {
@@ -167,10 +188,11 @@ void captureNativeSnapshots() {
     if(!live(g.p1,primary()) || !live(g.p2,player()) || !guards()) { block("snapshot_capture_ownership");return; }
     if(g.ticks>UINT32_MAX || g.snapshotSequence>UINT32_MAX-2) { block("snapshot_counter_exhaustion");return; }
     for(unsigned slot=0;slot<2;++slot) {
+        if(p16Pending(slot))continue;
         const auto& id=slot ? g.p2 : g.p1;
         const auto v=position(id.actor);const float yaw=read<float>(id.actor,0x38),pitch=read<float>(id.actor,0x30);
         if(!finite(v) || !std::isfinite(yaw) || !std::isfinite(pitch) || !g.entityGeneration[slot]
-#ifndef PSE_FEATURE_P8
+#if !defined(PSE_FEATURE_P8) && !defined(PSE_FEATURE_P7)
            || read<std::int16_t>(id.actor,0x17a)<=0
 #endif
         ) { block("snapshot_capture_transform_or_lifetime");return; }
@@ -193,6 +215,42 @@ void captureNativeSnapshots() {
         }
         log("p8_snapshot_art","\"slot\":%u,\"sequence\":%u,\"health\":%d,\"life_state\":%u,\"buttons\":%u,\"velocity\":[%.9g,%.9g,%.9g]",slot,s.sequence,s.health,s.lifeState,s.buttons,s.velX,s.velY,s.velZ);
 #endif
+
+        // Actual post-world native scalars, not transport defaults. Both slots
+        // use their own validated Full Player; no addresses enter the DTO.
+        Byte* const nativePlayer=slot?player():primary();
+        const auto active=read<int>(nativePlayer,0x88),pending=read<int>(nativePlayer,0x8c);
+        if(active<0||active>=8||pending<0||pending>=8){block("p7_native_weapon_range");return;}
+        s.activeWeapon=static_cast<std::uint8_t>(active);s.weaponMask=0;
+        for(unsigned index=0;index<8;++index) {
+            const auto owned=read<Byte>(nativePlayer,0xcc+index);
+            if(owned>1){block("p7_native_owned_nonbool");return;}
+            if(owned)s.weaponMask|=1u<<index;
+            s.ammoByWeapon[index]=read<std::uint16_t>(nativePlayer,0xbc+index*2);
+        }
+        s.ammo=s.ammoByWeapon[s.activeWeapon];
+        s.pendingWeapon=pending==active?-1:pending;
+        s.keys=read<std::uint16_t>(nativePlayer,0x98);
+        s.artifacts=read<std::uint32_t>(nativePlayer,0x90);s.abilities=read<std::uint32_t>(nativePlayer,0x94);
+        s.questItems=read<std::uint16_t>(nativePlayer,0x9a);
+        s.ankhCount=read<std::uint16_t>(nativePlayer,0x84);s.ankhMask=read<std::uint16_t>(nativePlayer,0x86);
+        s.teamDolls=read<std::uint32_t>(nativePlayer,0xa4);
+        s.buttons=read<std::uint32_t>(nativePlayer);
+        s.velX=read<float>(id.actor,0xe0);s.velY=read<float>(id.actor,0xe4);s.velZ=read<float>(id.actor,0xe8);
+        if(!std::isfinite(s.velX)||!std::isfinite(s.velY)||!std::isfinite(s.velZ)){block("p7_native_velocity_nonfinite");return;}
+        const bool dead=s.health<=0||(read<unsigned>(id.actor,0x1c0)&0x200u)!=0;
+        if(g.p7Dead[slot]&&!dead){block("p7_unadmitted_native_revival");return;}
+        if(dead&&!g.p7Dead[slot]){
+            if(g.p7DeathSequence[slot]==UINT32_MAX){block("p7_death_sequence_exhausted");return;}
+            ++g.p7DeathSequence[slot];g.p7Dead[slot]=true;
+        }
+        s.lifeState=dead?pse::LIFE_DEAD:pse::LIFE_ALIVE;s.deathSequence=g.p7DeathSequence[slot];
+        s.stateTimeNs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        // This bounded host has exactly one native incarnation and no respawn.
+        s.resetToken=s.discontinuitySequence=s.entityGeneration;
+        log("p7_native_scalars","\"slot\":%u,\"snapshot_seq\":%u,\"server_tick\":%u,\"state_time_ns\":%llu,\"health\":%d,\"life_state\":%u,\"death_sequence\":%u,\"active_weapon\":%u,\"pending_weapon\":%d,\"weapon_mask\":%u,\"ammo\":[%u,%u,%u,%u,%u,%u,%u,%u],\"keys\":%u,\"artifacts\":%u,\"abilities\":%u,\"quest_items\":%u,\"ankh_count\":%u,\"ankh_mask\":%u,\"team_dolls\":%u,\"reset_token\":%u,\"discontinuity\":%u,\"post_world_tick\":true",
+            slot,s.sequence,s.serverTick,s.stateTimeNs,s.health,s.lifeState,s.deathSequence,s.activeWeapon,s.pendingWeapon,s.weaponMask,s.ammoByWeapon[0],s.ammoByWeapon[1],s.ammoByWeapon[2],s.ammoByWeapon[3],s.ammoByWeapon[4],s.ammoByWeapon[5],s.ammoByWeapon[6],s.ammoByWeapon[7],s.keys,s.artifacts,s.abilities,s.questItems,s.ankhCount,s.ankhMask,s.teamDolls,s.resetToken,s.discontinuitySequence);
+
         const bool queued=g.network->publishNativeSnapshot(s);
         log("native_snapshot_captured", "\"slot\":%u,\"snapshot_seq\":%u,\"server_tick\":%u,\"map_epoch\":%u,\"connection_generation\":%u,\"entity_id\":%u,\"entity_generation\":%u,\"pos\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"pitch\":%.9g,\"bits\":[%u,%u,%u,%u,%u],\"queued\":%s,\"actor\":\"%p\",\"node\":\"%p\",\"owner\":\"%p\",\"p2_updates\":%llu,\"p2_puppet_ticks\":%llu,\"post_world_tick\":true",
             slot,s.sequence,s.serverTick,s.mapEpoch,s.connectionGeneration,s.entityId,s.entityGeneration,v.x,v.y,v.z,yaw,pitch,snapshot55::bits(v.x),snapshot55::bits(v.y),snapshot55::bits(v.z),snapshot55::bits(yaw),snapshot55::bits(pitch),queued ? "true" : "false",id.actor,id.node,read<Byte*>(id.actor,0x1b8),g.secondaryUpdates,g.secondaryPuppetTicks);
@@ -208,6 +266,7 @@ LocalState localState() {
     s.weapon = read<int>(primary(), 0x88); s.pending = read<int>(primary(), 0x8c);
     return s;
 }
+
 void snapshot(const char* name) {
     if (!live(g.p1, primary()) || !live(g.p2, player())) { block("snapshot_identity"); return; }
     const Vec3 a = position(g.p1.actor), b = position(g.p2.actor);
@@ -385,8 +444,12 @@ void __fastcall hookUpdate(void* p) {
     }
     if (!g.schedule || !gameplay()) return;
     if (!live(g.p1, primary()) || !live(g.p2, player()) || !guards()) { block("controller_identity_or_guards"); return; }
-    if (read<std::int16_t>(g.p2.actor, 0x17a) <= 0 || (read<unsigned>(g.p2.actor, 0x1c0) & 0x200u)) {
-#ifdef PSE_FEATURE_P8
+    // M0 C19 seam: after P1 Update, before P2 Update and this tick's
+    // ActorTick/Sweep/Drain. Native Remove must not be issued at tick end.
+    tick16();
+    if(g.failed)return;
+    if (p16Pending(1) || read<std::int16_t>(g.p2.actor, 0x17a) <= 0 || (read<unsigned>(g.p2.actor, 0x1c0) & 0x200u)) {
+#if defined(PSE_FEATURE_P8) || defined(PSE_FEATURE_P7)
         // M0 C13/C19: dead P2 keeps native Puppet ticks; skip its Player Update.
         // Preserve the owned identity for a death presentation snapshot. No respawn.
         g.p2Tick=g.ticks;g.motionBefore=position(g.p2.actor);return;
@@ -450,21 +513,27 @@ void __fastcall hookPuppetTick(void* p) {
     reinterpret_cast<Unary>(g.original[profile::PuppetTick])(p);
 }
 void __fastcall hookDtor(void* p) {
+    const int retiredIndex16=p16DtorEntry(p);
     const bool owned = p == g.p2.actor && p != nullptr && !g.p2.destroyed;
     if (owned && !thread()) { ++g.foreignCalls; block("owned_destructor_thread"); }
     if (owned) log("owned_actor_dtor_entry", "\"actor\":\"%p\",\"external_handle_null\":%s", p, read<Byte*>(player(), 0xd8) ? "false" : "true");
     reinterpret_cast<Unary>(g.original[profile::ActorDtor])(p);
+    p16DtorReturn(retiredIndex16,p);
     if (owned) {
         g.p2.destroyed = true; ++g.dtorReturns;
         log("owned_actor_dtor_return", "\"actor\":\"%p\",\"actor_reads_after_return\":false,\"guards\":%s", p, guards() ? "true" : "false");
     }
 }
 void unbind(const char* reason) {
+    if(!p16Restore())block("p16_restart_restore");
+    if(!pse::weapon_p16::stop())block("p16_weapon_restore");
+    if(std::strcmp(reason,"StateExit")==0)pse::native_ui::worldExit();else pse::native_ui::stop();
     if (!thread()) { ++g.foreignCalls; block("unbind_thread"); return; }
 #ifdef PSE_FEATURE_P14
     pse::p14::stop();
 #endif
 #ifdef PSE_FEATURE_P4
+    g.p7KeysPermitted=false;g.p7KeyProbeSerial=g.p7KeyReviewSerial=0;
     g.anchorValid=false;g.anchorWait.clear(); // No anchor survives this world's barrier.
 #endif
 #ifdef PSE_ROLE_HOST
@@ -572,6 +641,44 @@ bool spawnAnchorClear() {
     return true;
 }
 #endif
+
+// Primary-player scalars compared around a respawn: the host player must be untouched.
+struct P7PrimaryScalars {
+    LocalState state;std::array<std::uint32_t,9> scalar{};
+    bool operator==(const P7PrimaryScalars&)const=default;
+};
+P7PrimaryScalars p7PrimaryScalars(){
+    P7PrimaryScalars s;s.state=localState();
+    const std::size_t offsets[]={0x84,0x88,0x8c,0x90,0x94,0x98,0x9c,0xa0,0xa4};
+    for(unsigned i=0;i<9;++i)s.scalar[i]=read<std::uint32_t>(primary(),offsets[i]);return s;
+}
+bool p16Eligible(){
+    return thread()&&g.inTick&&g.schedule&&g.phase==Phase::Live&&!g.failed&&!g.worldExit&&!g.shutdown&&
+        gameplay()&&g.network&&g.network->wantsPlayer();
+}
+bool p16WeaponEligible(){
+    return thread()&&g.inTick&&!g.failed&&!g.worldExit&&!g.shutdown&&gameplay()&&g.network&&g.network->running();
+}
+pse::weapon_p16::Roster p16Roster(){
+    pse::weapon_p16::Roster r{};
+    if(p16WeaponEligible()){
+        pse::life_p16::Graph p1{primary()},p2{player()};
+        if(pse::life_p16::graph(g.base,p1))r[0]={primary(),p1.actor,0,!p16Pending(0)};
+        if(pse::life_p16::graph(g.base,p2))r[1]={player(),p2.actor,1,!p16Pending(1)};
+    }
+    return r;
+}
+void p16Event(const char* name,unsigned slot,unsigned value){
+    log(name,"\"slot\":%u,\"value\":%u",slot,value);
+}
+void p16Grant(const pse::weapon_p16::Grant& r){
+    log("p16_weapon_grant_receipt","\"slot\":%u,\"weapon\":%u,\"generation\":%u,\"epoch\":%u,\"player\":\"%p\",\"puppet\":\"%p\",\"pickup\":\"%p\",\"node\":\"%p\",\"persistent\":%s,\"ammo_before\":[%u,%u,%u,%u,%u,%u,%u,%u],\"ammo_after_equal\":true",r.slot,r.weapon,g.entityGeneration[r.slot],g.network->mapEpoch(),r.player,r.puppet,r.pickup,r.node,r.persistent?"true":"false",r.ammo[0],r.ammo[1],r.ammo[2],r.ammo[3],r.ammo[4],r.ammo[5],r.ammo[6],r.ammo[7]);
+}
+#include "host_respawn_p16.inc"
+bool installWeapon16(){
+    static bool installed{};if(installed)return true;
+    installed=pse::weapon_p16::install(g.base,g.expectedTid,{p16WeaponEligible,p16Roster,p16Event,p16Grant});return installed;
+}
 void construct() {
 #ifdef PSE_FEATURE_P4
     if(g.anchorWait.expired())return;
@@ -671,7 +778,9 @@ void __fastcall hookTick(void* self) {
             log("background_session_begin", "\"tick\":%llu,\"generation\":%u,\"p2_exists\":%s,\"foreground_pid\":%lu,\"native_focus_before\":1",g.ticks,g.network->generation(),g.schedule ? "true" : "false",g.foregroundPid);
         }
     }
-    g.neutralPrimary=applied || g.resumeNeutral;
+    const bool uiCapture=pse::ui::nativeCapture(g.permit.load(std::memory_order_acquire)!=0,gameplay(),pse::ui::shared().capture.load());
+    if(uiCapture!=g.uiCaptureWas) {g.bindingsResetPending=true;log("p23_ui_input_gate","\"capture\":%s,\"scoped_native_neutral\":true",uiCapture?"true":"false");}
+    g.neutralPrimary=applied || g.resumeNeutral || uiCapture || g.uiCaptureWas;g.uiCaptureWas=uiCapture;
 #endif
 #ifdef PSE_FEATURE_P14
     pse::p14::sync();
@@ -686,7 +795,7 @@ void __fastcall hookTick(void* self) {
     g.neutralPrimary=false;
 #endif
     if (!g.failed && !g.shutdown && !g.worldExit && gameplay()) {
-        if (g.phase == Phase::Waiting && g.permit.load(std::memory_order_acquire)) { g.phase = Phase::Armed; log("test_permit_consumed", "\"mailbox_only\":true"); }
+        if (g.phase == Phase::Waiting && g.permit.load(std::memory_order_acquire) && pse::ui::shared().requested.load(std::memory_order_acquire)) { g.phase = Phase::Armed; log("test_permit_consumed", "\"mailbox_only\":true"); }
         if (g.localThisTick == 1) {
             ++g.activeTicks;
 #ifdef PSE_FEATURE_P4
@@ -711,6 +820,7 @@ void __fastcall hookTick(void* self) {
                     log("snapshot_epoch_bound", "\"map_epoch\":%u,\"source\":\"host_attested_first_level_session_tick\",\"tick\":%llu,\"domain\":\"%s\",\"native_mapready_general_contract\":false,\"initial_sector\":259",g.network->mapEpoch(),g.ticks,snapshot55::Domain);
 #endif
                     if (!g.network->start()) block("network_start");
+                    if(!g.failed&&!installWeapon16())block("p16_weapon_hook_install");
                 }
                 if (!g.failed && g.network->wantsPlayer()) construct();
 #else
@@ -743,6 +853,7 @@ void __fastcall hookTick(void* self) {
             }
         }
     }
+
 #ifdef PSE_FEATURE_SNAPSHOT
     captureNativeSnapshots();
 #endif
@@ -752,6 +863,7 @@ void __fastcall hookTick(void* self) {
         log("tick_status", "\"ticks\":%llu,\"state\":%d,\"pending\":%d,\"local_updates\":%llu,\"local_this_tick\":%u,\"phase\":%d,\"p2_updates\":%llu",
             g.ticks, read<int>(instance(),0x24), read<int>(instance(),0x28), g.localUpdates, g.localThisTick, static_cast<int>(g.phase), g.secondaryUpdates);
     }
+    pse::native_ui::tick(!g.failed && gameplay() && g.network && g.network->snapshotEligible(),g.network?g.network->mapEpoch():0,0,1);
     g.inTick = false;
 }
 
@@ -774,6 +886,7 @@ void CALLBACK bootstrapApc(ULONG_PTR) {
         !exact(g.base+background::ResetBindings,background::ResetPrefix) ||
         !exact(g.base+background::FocusGate,background::GatePrefix)) { block("background_exact_profile"); return; }
 #endif
+
     if (MH_Initialize() != MH_OK) { block("minhook_initialize"); return; }
 #ifdef PSE_FEATURE_P14
     if (!pse::p14::install(g.base,g.expectedTid,{p14Eligible,p14Roster,p14Getter,p14Event,block})) {
@@ -797,6 +910,7 @@ void CALLBACK bootstrapApc(ULONG_PTR) {
         const auto i=static_cast<profile::Index>(n);
         if (i != profile::Getter && !setHook(i, true)) return;
     }
+    if(!pse::native_ui::install(g.base,g.expectedTid,true,log)) {block("p23_ui_install");return;}
     AddVectoredExceptionHandler(0, exceptions);
     log("bootstrap_ready", "\"game_calls\":0,\"hooks_installed_on_primary\":true,\"spawn_requires_tick_and_isolation_permit\":true,\"module_pinned\":true");
 }
@@ -820,15 +934,20 @@ bool hashMatches(const wchar_t* exe) {
 
 // Called by the diagnostic loader before ResumeThread. Only adapter-owned memory,
 // documented OS APIs, hashing and a same-process primary-thread APC are used here.
-extern "C" __declspec(dllexport) DWORD WINAPI M11Prepare(const wchar_t* logPath, DWORD primaryTid) {
+namespace m12a { static void p16Receive(const pse::BridgeRespawnRequest& request); }
+extern "C" DWORD WINAPI host_M11Prepare(const wchar_t* logPath, DWORD primaryTid) {
     if (g.prepared.exchange(1) != 0) return ERROR_ALREADY_INITIALIZED;
-    wchar_t exe[32768]{}, dll[32768]{}, fullLog[32768]{};
-    if (!GetModuleFileNameW(nullptr, exe, 32768) || _wcsicmp(exe, profile::Executable) != 0 || !within(exe, profile::Workspace) || !hashMatches(exe)) return ERROR_BAD_EXE_FORMAT;
-    if (!GetModuleFileNameW(g.module, dll, 32768) || !within(dll, profile::Workspace)) return ERROR_BAD_PATHNAME;
+    m12a::respawnHandler = &m12a::p16Receive;
+    wchar_t exe[32768]{}, dll[32768]{}, fullLog[32768]{}, installRoot[32768]{};
+    // P27: pe-play (PSE_GUARD_ROOT) selects the portable install-root policy; otherwise the unchanged lab policy.
+    const bool portable = pse::portable::root(installRoot, 32768);
+    const wchar_t* allowed = portable ? installRoot : profile::Workspace;
+    if (!GetModuleFileNameW(nullptr, exe, 32768) || !(portable ? pse::portable::exeMatches(exe, installRoot) : _wcsicmp(exe, profile::Executable) == 0) || !within(exe, allowed) || !hashMatches(exe)) return ERROR_BAD_EXE_FORMAT;
+    if (!GetModuleFileNameW(g.module, dll, 32768) || !within(dll, allowed)) return ERROR_BAD_PATHNAME;
     const DWORD length=GetFullPathNameW(logPath, 32768, fullLog, nullptr);
-    if (!length || length >= 32768 || !within(fullLog, profile::Workspace)) return ERROR_BAD_PATHNAME;
+    if (!length || length >= 32768 || !within(fullLog, allowed)) return ERROR_BAD_PATHNAME;
     HMODULE pinned{};
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, reinterpret_cast<LPCWSTR>(&M11Prepare), &pinned)) return GetLastError();
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, reinterpret_cast<LPCWSTR>(&host_M11Prepare), &pinned)) return GetLastError();
     g.expectedTid=primaryTid; g.base=reinterpret_cast<Byte*>(GetModuleHandleW(nullptr));
     g.log=CreateFileW(fullLog, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (g.log == INVALID_HANDLE_VALUE) return GetLastError();
@@ -841,10 +960,18 @@ extern "C" __declspec(dllexport) DWORD WINAPI M11Prepare(const wchar_t* logPath,
     return error;
 }
 // Mailbox only; no KEX call or game-memory access on the loader/diagnostic thread.
-extern "C" __declspec(dllexport) DWORD WINAPI M11PermitTest() { g.permit.store(1, std::memory_order_release); return ERROR_SUCCESS; }
-
-BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) g.module=module;
-    // No hooks, threads, KEX calls, file I/O, free, or detach cleanup under loader lock.
-    return TRUE;
+extern "C" DWORD WINAPI host_M11PermitTest() { pse::native_ui::permit();g.permit.store(1, std::memory_order_release); return ERROR_SUCCESS; }
+namespace m12a {static void p16Receive(const pse::BridgeRespawnRequest& request){
+    if(!thread()||!g.inTick){block("p16_request_affinity");return;}
+    if(requests16.size()>=128){block("p16_request_capacity");return;}requests16.push_back(request);
+}}
+extern "C" DWORD WINAPI host_PSE_P16_PermitRestore(std::uint64_t probe,std::uint64_t review){
+    if(!probe||!review)return ERROR_INVALID_PARAMETER;approvedReview16.store(0,std::memory_order_release);approvedProbe16.store(probe,std::memory_order_release);approvedReview16.store(review,std::memory_order_release);return ERROR_SUCCESS;
+}
+extern "C" DWORD WINAPI host_PSE_P16_HostFixture(unsigned op){
+    if(op<1||op>3)return ERROR_INVALID_PARAMETER;unsigned empty=0;
+    return fixture16.compare_exchange_strong(empty,op)?ERROR_SUCCESS:ERROR_BUSY;
+}
+extern "C" void host_attach(HINSTANCE module) {
+    g.module=module;
 }

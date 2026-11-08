@@ -1,11 +1,14 @@
-// Exact-build passive input client (role PSE_ROLE_CLIENT). KEX stays opaque; no Player writes/calls.
+// Unified client: P4 background, P7 self state, P16 respawn, P23 UI, proxy of the host player.
 // S0.3 unified source: the former lab copies src/client.cpp (DOC-51..56, no proxy) and src/client58b.cpp (DOC-58B)
 // were one file plus a diff; they are now this file selected by flags (PSE_FEATURE_SNAPSHOT / _MAPREADY / _VISUAL_PROXY).
 // PSE_FEATURE_VISUAL_PROXY routes accepted remote snapshots to VisualProxyStateMachine and drives the registered
 // native C++ adapter from this simulation-thread StateTick detour. Frida supplies read-only observation only.
+#include "portable_policy.hpp"
 #include <windows.h>
 #include <bcrypt.h>
 #include <MinHook.h>
+#include "ui_native.hpp"
+#include "ui/shared_p23.hpp"
 #include <atomic>
 #include <array>
 #include <algorithm>
@@ -16,6 +19,10 @@
 #include <share.h>
 #include <pse_together/config.hpp>
 #include "build_profile.hpp"
+#include "self_native_p16.hpp"
+#include "lifecycle_p16.hpp"
+#include "respawn_p16.hpp"
+#include "self_state_p7.hpp"
 #ifdef PSE_FEATURE_P4
 #include "background_policy.hpp"
 #include "background_profile.hpp"
@@ -65,7 +72,7 @@ struct Context {
     void* focusOriginal{};background::FocusLease focusLease;
     std::atomic<unsigned> backgroundPermit{};
     std::uint64_t focusSerial{},backgroundTicks{};
-    bool focusKnown{},focusLost{},neutral{},backgroundPeriod{},resetPending{};
+    bool focusKnown{},focusLost{},neutral{},backgroundPeriod{},resetPending{},uiCaptureWas{};
 #endif
 } g;
 template<class T> T read(const void* p,std::size_t off=0) { return *reinterpret_cast<const T*>(static_cast<const Byte*>(p)+off); }
@@ -86,6 +93,8 @@ void log(const char* event,const char* fmt="",...) {
 void block(const char* reason) { g.failed=true;log("blocked","\"reason\":\"%s\",\"retry\":false",reason); }
 bool prefix(profile::Index i) { return std::equal(std::begin(profile::Sites[i].prefix),std::end(profile::Sites[i].prefix),static_cast<Byte*>(at(i))); }
 void flushJournal() { AcquireSRWLockExclusive(&g.logLock);std::fflush(g.journal);ReleaseSRWLockExclusive(&g.logLock); }
+#include "client_self_p16.inc"
+#include "client_respawn_p16.inc"
 #ifdef PSE_FEATURE_VISUAL_PROXY
 pse::seam::Seam seam58;
 void nativeProxyJournal(const char* event,const char* detail) { log(event,"%s",detail); }
@@ -122,7 +131,8 @@ struct Session {
             log("client_map_status","\"tick\":%llu,\"fault\":\"%s\",\"local\":\"%s\",\"host\":\"%s\",\"state\":\"%s\",\"stable_ticks\":%u,\"epoch\":%u,\"generation\":%u,\"count_a\":%llu,\"count_b\":%llu",g.ticks,map56::text(fault),id.name.c_str(),mapGate.hostName().c_str(),map56::ClientGate::text(state),mapGate.stableTicks(),mapGate.mapEpoch(),mapGate.connection(),id.countA,id.countB);
         if(state!=lastState && state==map56::ClientGate::State::Mismatch) block("native_map_mismatch_no_ready");
         if(state!=lastState && state==map56::ClientGate::State::Invalidated) {
-            readySent=baseline=false;block("native_map_invalidated");
+            readySent=baseline=false;p7Authority.barrier();p7Admitted=false;pse::self_native_p7::invalidate();p7LifetimeClosed=true;
+            log("p16_world_barrier","\"reason\":\"native map invalidated\",\"further_gameplay_writes\":0");
 #ifdef PSE_FEATURE_VISUAL_PROXY
             barrier58("native_map_invalidated");
 #endif
@@ -209,10 +219,11 @@ struct Session {
         worker.setClientInputObserver([](const pse::ClientInputDispatch& d) {
             log("client_input_dispatched","\"slot\":%u,\"generation\":%u,\"input_seq\":%u,\"sample_ordinal\":%llu,\"sample_tick\":%llu,\"sampled_ns\":%llu,\"generated_ns\":%llu,\"forward\":%.1f,\"fresh\":%s,\"stage\":\"enet_dispatch_not_udp_proof\"",d.slotId,d.generation,d.sequence,d.sampleOrdinal,d.simulationTick,d.sampledSteadyNs,d.generatedSteadyNs,d.forward,d.sampleFresh?"true":"false");
         });
-        pse::ClientConfig cfg;cfg.hostPort=28745;cfg.joinToken="M12A_Loopback";cfg.participantId="native_second_instance_p2";cfg.displayName="KEX_Input_Client";
+        const auto menu=pse::ui::shared().settings();
+        pse::ClientConfig cfg;cfg.hostAddress=menu.address;cfg.hostPort=*pse::ui::port(menu.portText);cfg.joinToken=menu.token;cfg.participantId="p23_client_"+std::to_string(GetCurrentProcessId());cfg.displayName=menu.displayName;
         if(!worker.startClient(cfg)) { bridge.unregisterSimulationThread();block("client_worker_start");return false; }
 #ifdef PSE_FEATURE_P4
-        started=true;log("client_worker_started","\"target_hz\":60,\"freshness_ms\":100,\"protocol\":273");return true;
+        started=true;log("client_worker_started","\"target_hz\":60,\"freshness_ms\":100,\"protocol\":275");return true;
 #else
         started=true;log("client_worker_started","\"target_hz\":60,\"freshness_ms\":100,\"protocol\":272");return true;
 #endif
@@ -297,7 +308,17 @@ struct Session {
                 baseline=true;log("client_input_domain_ready","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"entities\":0,\"world_synchronized\":false",slot,gen,epoch);
 #endif
 #ifdef PSE_FEATURE_SNAPSHOT
+            } else if(const auto* c=std::get_if<pse::BridgeRespawnConfirm>(&m)) {
+                if(!active||!readySent||!baseline||c->mapEpoch!=epoch||c->slotId>=2||!c->deathSequence||
+                   c->newEntityId!=0x5500u+c->slotId||c->newGeneration!=expectedGeneration16[c->slotId]+1||c->defaultWeapons!=3||c->ammo!=60)continue;
+                if(c->slotId==slot&&!stageLocal16(*c,slot,gen,epoch))continue;
+                expectedGeneration16[c->slotId]=c->newGeneration;
+                auto& prior=snapshots.slots[c->slotId];prior.entity=c->newEntityId;prior.generation=c->newGeneration;
+                log("p16_generation_admitted","\"slot\":%u,\"epoch\":%u,\"generation\":%u,\"death\":%u",c->slotId,epoch,c->newGeneration,c->deathSequence);
             } else if(const auto* s=std::get_if<pse::BridgePlayerSnapshot>(&m)) {
+                if(s->slotId>=2||s->entityGeneration!=expectedGeneration16[s->slotId]){
+                    log("p16_snapshot_generation_wait","\"slot\":%u,\"generation\":%u",s->slotId,s->entityGeneration);continue;
+                }
 #ifdef PSE_FEATURE_MAPREADY
                 const bool mapEligible=mapGate.snapshotEligible(s->connectionGeneration,s->mapEpoch);
 #else
@@ -306,6 +327,8 @@ struct Session {
                 const auto verdict=snapshots.accept(*s,active && readySent && baseline && gameplay() && !g.failed && !g.stopped && mapEligible);
                 if(verdict==snapshot55::Verdict::EntityMismatch || verdict==snapshot55::Verdict::Nonfinite) { block("snapshot_unexplained_entity_or_transform");continue; }
                 if(verdict!=snapshot55::Verdict::Accept) { log("native_snapshot_rejected","\"slot\":%u,\"snapshot_seq\":%u,\"reason\":%u",s->slotId,s->sequence,static_cast<unsigned>(verdict));continue; }
+                lastDeath16[s->slotId]=s->deathSequence;lastDead16[s->slotId]=s->lifeState==pse::LIFE_DEAD;
+                if(s->slotId==slot){hostDeath16=s->deathSequence;hostDead16=s->lifeState==pse::LIFE_DEAD;p7Offer(*s,slot,active&&readySent&&baseline);}
                 log("native_snapshot_received","\"slot\":%u,\"snapshot_seq\":%u,\"server_tick\":%u,\"map_epoch\":%u,\"connection_generation\":%u,\"entity_id\":%u,\"entity_generation\":%u,\"pos\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"pitch\":%.9g,\"bits\":[%u,%u,%u,%u,%u],\"player_writes\":0",
                     s->slotId,s->sequence,s->serverTick,s->mapEpoch,s->connectionGeneration,s->entityId,s->entityGeneration,s->posX,s->posY,s->posZ,s->yaw,s->pitch,snapshot55::bits(s->posX),snapshot55::bits(s->posY),snapshot55::bits(s->posZ),snapshot55::bits(s->yaw),snapshot55::bits(s->pitch));
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -340,6 +363,23 @@ struct Session {
     }
     void sample(bool valid) {
         if(!active || stopped) return;
+        const bool ready16=readySent&&baseline&&mapGate.snapshotEligible(gen,epoch)&&gameplay()&&!g.failed&&g.localThisTick==1;
+        if(ready16&&!restart16.install(g.base,g.tid)){block("p16_restart_install");return;}
+        if(ready16&&!inputBound16){input16.bind({slot,gen,epoch},localGeneration16);inputBound16=true;}
+        if(ready16&&newLocal16)completeLocal16();
+        if(ready16&&!newLocal16){
+            input16.observe(hostDead16,hostDeath16);
+            nl16::Graph graph16{primary()};const bool nativeDead16=nl16::graph(g.base,graph16)&&read<std::int16_t>(graph16.actor,0x17a)<=0;
+            DWORD foreground16{};GetWindowThreadProcessId(GetForegroundWindow(),&foreground16);
+            const bool canRequest=foreground16==GetCurrentProcessId()&&nativeDead16&&read<Byte>(instance(),background::MenuByte)==0;
+            if(const auto request=input16.sample((GetAsyncKeyState('E')&0x8000)!=0,GetTickCount64(),canRequest)){
+                pse::BridgeRespawnRequest out;out.slotId=slot;out.connectionGeneration=gen;out.mapEpoch=epoch;out.deathSequence=request->death;
+                if(pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{out}))){
+                    if(!requestPending16){if(!sn7::quiesceForRespawn()){block("p16_request_quiesce");return;}p7Authority.disconnect();p7Admitted=false;}
+                    requestPending16=true;log("p16_E_request_sent","\"slot\":%u,\"connection\":%u,\"epoch\":%u,\"death\":%u",slot,gen,epoch,out.deathSequence);
+                }
+            }
+        }
         pse::BridgeClientInputSample s;s.slotId=slot;s.connectionGeneration=gen;s.sampleOrdinal=++g.ordinal;s.sampledSteadyNs=steadyNs();s.simulationTick=g.ticks;
         s.valid=valid && baseline;s.moveForward=s.valid ? (g.forwardHeld?1.0f:0.0f)-(g.backHeld?1.0f:0.0f) : 0.0f;
         const bool queued=pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{s}));
@@ -385,7 +425,7 @@ void __fastcall hookClientTurning(void* p) {
 #endif
 void stop(const char* reason) {
     if(!thread()) { ++g.foreign;block("stop_affinity");return; }
-    if(g.stopped) return;
+    if(g.stopped) {if(std::strcmp(reason,"DirectQuit")==0) {pse::native_ui::stop();flushJournal();}return;}
 #ifdef PSE_FEATURE_P4
     endClientLease();g.neutral=false;
     for(const auto i:{profile::Commands,profile::Turning}) if(g.enabled[i]) {
@@ -394,6 +434,11 @@ void stop(const char* reason) {
         if(rc!=MH_OK || !prefix(i)) block("p4_control_restore");
     }
 #endif
+    if(!restart16.restore(log))block("p16_restart_restore");
+    input16.invalidate();requestPending16=newLocal16=protect16=false;
+    stagedConfirm16.reset();
+    p7Authority.barrier();p7Admitted=false;pse::self_native_p7::invalidate();
+    if(std::strcmp(reason,"StateExit")==0)pse::native_ui::worldExit();else pse::native_ui::stop();
     if(g.session) g.session->stop(reason);
     g.stopped=true;
     if(g.enabled[profile::Update]) {
@@ -422,6 +467,10 @@ void __fastcall hookUpdate(void* p) {
     if(!thread() || !g.inTick) { ++g.foreign;block("update_affinity");return; }
     ++g.localUpdates;if(++g.localThisTick!=1) { block("duplicate_local_update");return; }
     if(!gameplay() || g.failed) return;
+    if(stagedConfirm16){
+        const auto staged=*stagedConfirm16;stagedConfirm16.reset();
+        if(!confirmLocal16(staged.wire,staged.slot,staged.connection,staged.epoch)){block("p16_staged_confirm_failed");return;}
+    }
     Byte* node=read<Byte*>(p,0xd8);Byte* actor=node?read<Byte*>(node,0x28):nullptr;
     if(!actor || read<Byte*>(actor,0x10)!=node || read<void*>(actor,0x1b8)!=p || read<Byte*>(actor)!=g.base+0x52d198) { block("local_player_graph");return; }
     if(read<std::int16_t>(actor,0x17a)<=0 || (read<unsigned>(actor,0x1c0)&0x200u)) return;
@@ -451,7 +500,9 @@ void __fastcall hookTick(void* self) {
     if(leased && !g.backgroundPeriod) g.resetPending=true;
     const bool returning=g.backgroundPeriod && g.focusKnown && !g.focusLost;
     if(returning) g.resetPending=true;
-    g.neutral=leased||returning;
+    const bool uiCapture=pse::ui::nativeCapture(g.permit.load(std::memory_order_acquire)!=0,gameplay(),pse::ui::shared().capture.load());
+    if(uiCapture!=g.uiCaptureWas) {g.resetPending=true;log("p23_ui_input_gate","\"capture\":%s,\"scoped_native_neutral\":true",uiCapture?"true":"false");}
+    g.neutral=leased||returning||uiCapture||g.uiCaptureWas;g.uiCaptureWas=uiCapture;
     if(leased) { g.backgroundPeriod=true;++g.backgroundTicks; }
     if(returning) g.backgroundPeriod=false;
 #endif
@@ -462,10 +513,10 @@ void __fastcall hookTick(void* self) {
         log("p4_client_background_tick","\"count\":%llu,\"local_this_tick\":%u,\"focus_after\":%u,\"buttons\":%u,\"held_forward\":%u,\"held_back\":%u",g.backgroundTicks,g.localThisTick,read<Byte>(instance(),background::FocusByte),g.buttons,g.forwardHeld,g.backHeld);
 #endif
     if(!g.stopped) {
-        if(!g.session && g.permit.load(std::memory_order_acquire) && !g.failed && gameplay() && g.localThisTick==1) { g.session=new Session;g.session->start(); }
+        if(!g.session && g.permit.load(std::memory_order_acquire) && pse::ui::shared().requested.load(std::memory_order_acquire) && !g.failed && gameplay() && g.localThisTick==1) { g.session=new Session;g.session->start(); }
         if(g.session && g.session->started && !g.session->stopped) {
             g.session->consume();DWORD foregroundPid{};GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
-            g.session->sample(g.sampled && g.localThisTick==1 && gameplay() && !g.failed && foregroundPid==GetCurrentProcessId());
+            g.session->sample(g.sampled && g.localThisTick==1 && gameplay() && !g.failed && !pse::ui::shared().capture.load() && foregroundPid==GetCurrentProcessId());
 #ifdef PSE_FEATURE_VISUAL_PROXY
             if(seam58.attached()) g.session->phase58(seam58.worldReady(g.ticks));
 #endif
@@ -485,6 +536,7 @@ void __fastcall hookTick(void* self) {
     }
     if(seam58.faults()!=faultsLogged58) { faultsLogged58=seam58.faults();pse::native_proxy::fault();block("seam_native_fault");log("seam_native_fault","\"faults\":%llu,\"seam_status\":%u,\"further_calls\":false",faultsLogged58,seam58.status()); }
 #endif
+    pse::native_ui::tick(!g.stopped && !g.failed && gameplay() && g.session && g.session->active && g.session->readySent && g.session->baseline,g.session?g.session->epoch:0,g.session?g.session->slot:255,g.session?g.session->gen:0);
     g.inTick=false;
 }
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -542,6 +594,7 @@ void CALLBACK bootstrap(ULONG_PTR) {
     if(!pse::native_proxy::install(g.base,g.tid,nativeProxyJournal) || seam58.registerTable(&pse::native_proxy::table())!=ERROR_SUCCESS) { block("native_proxy_install");return; }
     log("seam_registered","\"result\":0,\"abi\":\"58b00001\",\"size\":72,\"owner\":\"native_cpp\",\"external_callbacks\":false,\"before_permit\":true");
 #endif
+    if(!pse::native_ui::install(g.base,g.tid,false,log)) {block("p23_ui_install");return;}
     AddVectoredExceptionHandler(0,exceptions);log("bootstrap_ready","\"game_calls\":0,\"hooks\":6,\"module_pinned\":true");
 }
 bool within(const wchar_t* p,const wchar_t* root) { const auto n=wcslen(root);return _wcsnicmp(p,root,n)==0 && (p[n]==L'\\' || p[n]==L'\0'); }
@@ -555,13 +608,16 @@ bool hashMatches(const wchar_t* exe) {
     char hex[65]{};for(unsigned i=0;i<32;++i) sprintf_s(hex+2*i,3,"%02x",result[i]);return ok && strcmp(hex,profile::Sha256)==0;
 }
 }
-extern "C" __declspec(dllexport) DWORD WINAPI M11Prepare(const wchar_t* logfile,DWORD tid) {
+extern "C" DWORD WINAPI client_M11Prepare(const wchar_t* logfile,DWORD tid) {
     if(g.prepared.exchange(1)) return ERROR_ALREADY_INITIALIZED;
-    wchar_t exe[32768]{},dll[32768]{},path[32768]{};
-    if(!GetModuleFileNameW(nullptr,exe,32768) || _wcsicmp(exe,ClientExe)!=0 || !hashMatches(exe)) return ERROR_BAD_EXE_FORMAT;
-    if(!GetModuleFileNameW(g.module,dll,32768) || !within(dll,profile::Workspace)) return ERROR_BAD_PATHNAME;
-    const DWORD length=GetFullPathNameW(logfile,32768,path,nullptr);if(!length || length>=32768 || !within(path,profile::Workspace)) return ERROR_BAD_PATHNAME;
-    HMODULE pinned{};if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&M11Prepare),&pinned)) return GetLastError();
+    wchar_t exe[32768]{},dll[32768]{},path[32768]{},installRoot[32768]{};
+    // P27: pe-play (PSE_GUARD_ROOT) selects the portable install-root policy; otherwise the unchanged lab policy.
+    const bool portable=pse::portable::root(installRoot,32768);
+    const wchar_t* allowed=portable?installRoot:profile::Workspace;
+    if(!GetModuleFileNameW(nullptr,exe,32768) || !(portable?pse::portable::exeMatches(exe,installRoot):_wcsicmp(exe,ClientExe)==0) || (portable && !within(exe,allowed)) || !hashMatches(exe)) return ERROR_BAD_EXE_FORMAT;
+    if(!GetModuleFileNameW(g.module,dll,32768) || !within(dll,allowed)) return ERROR_BAD_PATHNAME;
+    const DWORD length=GetFullPathNameW(logfile,32768,path,nullptr);if(!length || length>=32768 || !within(path,allowed)) return ERROR_BAD_PATHNAME;
+    HMODULE pinned{};if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&client_M11Prepare),&pinned)) return GetLastError();
     g.base=reinterpret_cast<Byte*>(GetModuleHandleW(nullptr));g.tid=tid;
     // Permit the read-only isolation/acceptance observer while retaining sole
     // write ownership. Secure fopen's default sharing blocked the smoke gate.
@@ -572,27 +628,38 @@ extern "C" __declspec(dllexport) DWORD WINAPI M11Prepare(const wchar_t* logfile,
     if(GetProcessIdOfThread(th)!=GetCurrentProcessId()) { CloseHandle(th);return ERROR_INVALID_PARAMETER; }
     const DWORD queued=QueueUserAPC(bootstrap,th,0);const DWORD result=queued?ERROR_SUCCESS:GetLastError();CloseHandle(th);return result;
 }
-extern "C" __declspec(dllexport) DWORD WINAPI M11PermitTest() { g.permit.store(1,std::memory_order_release);return ERROR_SUCCESS; }
+extern "C" DWORD WINAPI client_M11PermitTest() { pse::native_ui::permit();g.permit.store(1,std::memory_order_release);return ERROR_SUCCESS; }
 #ifdef PSE_FEATURE_VISUAL_PROXY
 // Frida-thread exports: they only publish atomics; every proxy/KEX action happens on the simulation thread.
-extern "C" __declspec(dllexport) DWORD WINAPI PSE58B_RegisterSeam(const pse::seam::SeamTable* t) {
+extern "C" DWORD WINAPI client_PSE58B_RegisterSeam(const pse::seam::SeamTable* t) {
     // The P1 adapter is internal. Retain the export for an explicit, machine-checkable refusal.
     (void)t;return ERROR_NOT_SUPPORTED;
 }
-extern "C" __declspec(dllexport) DWORD WINAPI PSE_P1_PermitProxySpawn() { pse::native_proxy::permitSpawn();return ERROR_SUCCESS; }
+extern "C" DWORD WINAPI client_PSE_P1_PermitProxySpawn() { pse::native_proxy::permitSpawn();return ERROR_SUCCESS; }
 #ifdef PSE_FEATURE_P8
-extern "C" __declspec(dllexport) DWORD WINAPI PSE_P8_Preview(unsigned slot,unsigned pose) { return pse::native_proxy::previewAnimation(slot,pose); }
+extern "C" DWORD WINAPI client_PSE_P8_Preview(unsigned slot,unsigned pose) { return pse::native_proxy::previewAnimation(slot,pose); }
 #endif
-extern "C" __declspec(dllexport) DWORD WINAPI PSE_P1_ReadObservation(pse::native_proxy::Observation* out,std::uint32_t size) { return pse::native_proxy::observe(out,size); }
-extern "C" __declspec(dllexport) DWORD WINAPI PSE_P1_IsPositionInterpolant(const void* candidate) { return pse::native_proxy::isPositionInterpolant(candidate) ? 1u : 0u; }
-extern "C" __declspec(dllexport) DWORD WINAPI PSE58B_RequestProxyShutdown() { proxyShutdown58.store(1,std::memory_order_release);return ERROR_SUCCESS; }
-extern "C" __declspec(dllexport) DWORD WINAPI PSE58B_RequestDetach() { detach58.store(1,std::memory_order_release);return ERROR_SUCCESS; }
+extern "C" DWORD WINAPI client_PSE_P1_ReadObservation(pse::native_proxy::Observation* out,std::uint32_t size) { return pse::native_proxy::observe(out,size); }
+extern "C" DWORD WINAPI client_PSE_P1_IsPositionInterpolant(const void* candidate) { return pse::native_proxy::isPositionInterpolant(candidate) ? 1u : 0u; }
+extern "C" DWORD WINAPI client_PSE58B_RequestProxyShutdown() { proxyShutdown58.store(1,std::memory_order_release);return ERROR_SUCCESS; }
+extern "C" DWORD WINAPI client_PSE58B_RequestDetach() { detach58.store(1,std::memory_order_release);return ERROR_SUCCESS; }
 // seam status | proxies quiescent<<8 | (slot proxy state+1)<<16, as last published by the simulation thread.
-extern "C" __declspec(dllexport) DWORD WINAPI PSE58B_Status() { return seam58.status()|status58.load(std::memory_order_acquire); }
+extern "C" DWORD WINAPI client_PSE58B_Status() { return seam58.status()|status58.load(std::memory_order_acquire); }
 #endif
-BOOL WINAPI DllMain(HINSTANCE module,DWORD reason,LPVOID) { if(reason==DLL_PROCESS_ATTACH) g.module=module;return TRUE; }
+extern "C" DWORD WINAPI client_PSE_P7_RequestKeyProbe() {p7ProbeRequest.store(1,std::memory_order_release);return ERROR_SUCCESS;}
+extern "C" DWORD WINAPI client_PSE_P16_PermitRestore(std::uint64_t probe,std::uint64_t review){
+    if(!probe||!review)return ERROR_INVALID_PARAMETER;
+    approvedReview16.store(0,std::memory_order_release);approvedProbe16.store(probe,std::memory_order_release);approvedReview16.store(review,std::memory_order_release);return ERROR_SUCCESS;
+}
+extern "C" DWORD WINAPI client_PSE_P7_PermitKeys(std::uint64_t probe,std::uint64_t review) {pse::self_native_p7::permitKeys(probe,review);return ERROR_SUCCESS;}
+extern "C" DWORD WINAPI client_PSE_P7_LocalDamage(int type,int amount) {
+    if(type<0||type>3||amount<1||amount>32767)return ERROR_INVALID_PARAMETER;
+    if(p7LocalDamageRequest.load(std::memory_order_acquire))return ERROR_BUSY;
+    p7LocalDamageType.store(type);p7LocalDamageAmount.store(amount);p7LocalDamageRequest.store(1,std::memory_order_release);return ERROR_SUCCESS;
+}
+extern "C" void client_attach(HINSTANCE module) { g.module=module; }
 
 #ifdef PSE_FEATURE_P4
 // Explicit test-only atomic; background mode defaults off. No KEX calls from the caller's thread.
-extern "C" __declspec(dllexport) DWORD WINAPI PSE_P4_EnableBackground(DWORD enabled) { g.backgroundPermit.store(enabled!=0,std::memory_order_release);return ERROR_SUCCESS; }
+extern "C" DWORD WINAPI client_PSE_P4_EnableBackground(DWORD enabled) { g.backgroundPermit.store(enabled!=0,std::memory_order_release);return ERROR_SUCCESS; }
 #endif

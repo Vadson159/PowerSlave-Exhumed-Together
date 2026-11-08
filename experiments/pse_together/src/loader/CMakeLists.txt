@@ -58,6 +58,6 @@ endforeach()
 add_custom_target(pse_loader_p27 DEPENDS pse_sdl_proxy_v2 pse_loader_v2 pse_play pse_guard_probe pse_guard_fixture)
 add_dependencies(pse_all pse_loader_p27)
 add_test(NAME p27_guard_contract COMMAND "${CMAKE_COMMAND}" -E env
-  "PSE_P27_BUILD_DIR=${CMAKE_BINARY_DIR}/p27" "${Python3_EXECUTABLE}" -B -X utf8
+  "PSE_P27_BUILD_DIR=${CMAKE_BINARY_DIR}/p27" "PSE_PAYLOAD_DLL=${CMAKE_BINARY_DIR}/dll/pse_together.dll" "${Python3_EXECUTABLE}" -B -X utf8
   "${PSE_ROOT}/tools/p27.py" offline auto)
 set_tests_properties(p27_guard_contract PROPERTIES TIMEOUT 300)

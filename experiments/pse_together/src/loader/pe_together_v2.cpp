@@ -2,7 +2,7 @@
 // Differences from the accepted P24 broker (pe_together.cpp, unchanged):
 //  - install root, role, profile and native log come from the pe-play environment (PSE_GUARD_ROOT, PSE_ROLE,
 //    PSE_GUARD_PROFILE, PSE_NATIVE_LOG) instead of two compiled-in workspace paths;
-//  - payload SHA-256 comes from pe-together.ini ([payload] host_sha256 / client_sha256) written by the installer;
+//  - payload SHA-256 comes from pe-together.ini ([payload] sha256) written by the installer;
 //  - after Prepare + the bootstrap APC the broker itself issues the mailbox permits the REA stand used to send.
 // Every gate of P24 stays: exact EXE SHA, exact <root>\game\EXE path, broker next to the EXE, canonical fresh log
 // directory inside root (no reparse, no ADS, no overwrite), payload read-handle held across LoadLibrary, loaded path ==
@@ -57,7 +57,7 @@ BOOL CALLBACK start(PINIT_ONCE, PVOID, PVOID*) {
     if (_wcsicmp(dir.c_str(), parent(exe).c_str()) != 0) { result = ERROR_BAD_PATHNAME; return TRUE; }
     const auto ini = dir + L"\\pe-together.ini";
     std::array<wchar_t, 128> shaText{};
-    GetPrivateProfileStringW(L"payload", host ? L"host_sha256" : L"client_sha256", L"", shaText.data(), static_cast<DWORD>(shaText.size()), ini.c_str());
+    GetPrivateProfileStringW(L"payload", L"sha256", L"", shaText.data(), static_cast<DWORD>(shaText.size()), ini.c_str());
     const std::string expected = narrow(shaText.data());
     if (!hex64(expected)) { result = ERROR_INVALID_DATA; return TRUE; }
     // Canonical existing log directory inside root, CREATE_NEW in M11Prepare, no overwrite.
@@ -69,7 +69,7 @@ BOOL CALLBACK start(PINIT_ONCE, PVOID, PVOID*) {
         GetFileAttributesW(logPath.c_str()) != INVALID_FILE_ATTRIBUTES) { result = ERROR_BAD_PATHNAME; return TRUE; }
     File runtimeFile;
     std::string sha;
-    const auto runtimePath = dir + (host ? L"\\pse-host.dll" : L"\\pse-client.dll");
+    const auto runtimePath = dir + L"\\pse_together.dll";  // one DLL for both roles (PSE_ROLE selects)
     result = hashFile(runtimePath.c_str(), runtimeFile, sha);
     if (result) return TRUE;
     if (sha != expected) { result = ERROR_CRC; return TRUE; }
