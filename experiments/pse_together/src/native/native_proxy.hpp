@@ -7,7 +7,11 @@
 
 namespace pse::native_proxy {
 using Journal = void(*)(const char* event, const char* json);
-bool install(unsigned char* image, DWORD simulationTid, Journal journal);
+// remoteSlot: the player this proxy shows (client: the host, slot 0; host: the remote player, slot 1).
+// hostMode: the host DLL owns the puppet-tick detour and forwards each call to notePuppetTick().
+bool install(unsigned char* image, DWORD simulationTid, Journal journal, unsigned remoteSlot=0, bool hostMode=false);
+void notePuppetTick(void* self); // hostMode only, simulation thread
+bool rearm(); // fresh incarnation after a world transition or a fully retired Actor; no engine calls, hooks stay
 const seam::SeamTable& table();
 void permitSpawn(); // publishes an atomic only; no game calls
 #ifdef PSE_FEATURE_P8

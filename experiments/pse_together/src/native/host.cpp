@@ -27,6 +27,8 @@
 #include <deque>
 #include <optional>
 #include "build_profile.hpp"
+#include "seam.hpp"
+#include "native_proxy.hpp"
 #ifdef PSE_FEATURE_P8
 #include "sprite_binding.hpp"
 #endif
@@ -172,6 +174,76 @@ bool firstMapWitness() {
     return finite(v) && v.x==-7420.0f && v.y==-6775.0f && v.z==1152.0f && read<int>(id.actor,0x3c)==259;
 }
 #endif
+// ---- Host-side visual proxy of the remote player (slot 1) -----------------------------------------------------------
+// The stock Puppet of P2 is never drawn by the world renderer, so the host shows P2 the way the client shows the host:
+// a passive stock actor with the player sprite (native_proxy.cpp in hostMode) that follows P2's snapshots.
+pse::seam::Seam proxySeam;
+pse::proxy::SnapshotRouter<1>* proxies{}; // process lifetime, never freed
+bool proxyInstalled{},proxyConfigured{},proxyMapReady{},proxyExited{},proxySafe{};
+std::uint32_t proxyGeneration{};
+std::uint64_t proxyNotSafeLogged{},proxyDeferredLogged{};
+void proxyJournal(const char* event,const char* detail) { log(event,"%s",detail); }
+std::uint64_t proxyMapToken(const map56::Identity& id,std::uint32_t epoch) {
+    std::uint64_t h=1469598103934665603ULL;auto mix=[&](std::uint64_t v) { for(int i=0;i<8;++i) { h^=(v>>(i*8))&0xff;h*=1099511628211ULL; } };
+    for(char ch:id.name) mix(static_cast<unsigned char>(ch));mix(id.countA);mix(id.countB);mix(id.version);mix(epoch);return h ? h : 1;
+}
+void proxyRoute(const pse::BridgePlayerSnapshot& s) {
+    if(!proxyInstalled || proxyExited || !proxies || !g.network) return;
+    const auto gen=g.network->generation(),epoch=g.network->mapEpoch();
+    if(proxyConfigured && proxyGeneration!=gen) {
+        // The remote player rejoined (new connection generation, e.g. after its level restart): the previous proxy must be
+        // fully retired in this world before a fresh incarnation (new automaton + adapter rearm) may spawn.
+        proxies->forEach([](pse::proxy::VisualProxyStateMachine& p) { p.onDisconnect(); });
+        if(!proxies->quiescent() || !pse::native_proxy::rearm()) return;
+        proxies=new pse::proxy::SnapshotRouter<1>();proxies->bind(g.expectedTid);proxyConfigured=false;
+        log("proxy_rejoin_rearmed","\"old_generation\":%u,\"generation\":%u",proxyGeneration,gen);
+    }
+    if(!proxyConfigured) {
+        proxies->configureSession(0,gen,epoch);proxyConfigured=true;proxyGeneration=gen;proxyMapReady=false;
+        log("proxy_session_configured","\"local_slot\":0,\"remote_slot\":1,\"generation\":%u,\"epoch\":%u",gen,epoch);
+    }
+    if(!proxyMapReady) {
+        map56::Identity id;const auto fault=map56::derive(map56::observe(g.base),id);
+        if(fault==map56::Fault::None) { proxies->onNativeMapReady(epoch,proxyMapToken(id,epoch));proxyMapReady=true;log("proxy_native_map_ready","\"epoch\":%u,\"map\":\"%s\"",epoch,id.name.c_str()); }
+    }
+    pse::proxy::Rejection rj{};const auto rr=proxies->route(s,gameplay(),rj);
+    if(rr==pse::proxy::RouteResult::Routed) pse::native_proxy::stageAnimation(s);
+}
+void proxyPhase() {
+    if(!proxyInstalled || proxyExited || !proxies || !proxySeam.attached()) return;
+    using namespace pse::proxy;
+    if(proxyConfigured && !(g.network && g.network->wantsPlayer())) { proxies->forEach([](VisualProxyStateMachine& p) { p.onDisconnect(); }); }
+    const auto ready=proxySeam.worldReady(g.ticks);
+    const bool step=gameplay() && g.localThisTick==1 && !g.failed && (ready&pse::seam::LocalTicked) && (ready&pse::seam::AdapterHealthy);
+    const TickContext ctx{step,(ready&pse::seam::StableWorld)!=0};
+    if(step!=proxySafe) { proxySafe=step;log("proxy_safe_phase","\"safe\":%s,\"ready_flags\":%d,\"tick\":%llu",step?"true":"false",ready,g.ticks); }
+    proxies->forEach([&](VisualProxyStateMachine& p) {
+        const auto before=p.state();
+        const auto a=p.tick(&proxySeam,ctx);
+        if(a==TickAction::None || (a==TickAction::NotSafe && ++proxyNotSafeLogged%600!=1) || (a==TickAction::SpawnDeferred && ++proxyDeferredLogged%120!=1)) return;
+        log("proxy_tick_action","\"slot\":%u,\"action\":\"%s\",\"state_before\":\"%s\",\"state_after\":\"%s\",\"quarantine\":\"%s\",\"handle\":%llu,\"tick\":%llu",
+            p.targetSlot(),toString(a),toString(before),toString(p.state()),toString(p.quarantineReason()),p.handle() ? p.handle() : p.orphanedHandle(),g.ticks);
+    });
+}
+void proxyTickEnter() { if(proxyInstalled && !proxyExited && proxySeam.attached()) proxySeam.tickEnter(g.ticks); }
+void proxyTickLeave() { if(proxyInstalled && !proxyExited && proxySeam.attached()) proxySeam.tickLeave(g.ticks,g.localThisTick); }
+// World exit / shutdown: automaton latch first, then the adapter, never a native proxy call afterwards.
+void proxyExit(const char* reason,std::uint32_t code) {
+    if(!proxyInstalled || proxyExited || !thread()) return;
+    proxyExited=true;
+    if(proxies) proxies->forEach([](pse::proxy::VisualProxyStateMachine& p) { p.onPreUnload(); });
+    const bool was=proxySeam.attached();
+    if(was) proxySeam.worldExit(code);
+    pse::native_proxy::exitBarrier(code);
+    const bool restored=pse::native_proxy::detach();
+    proxySeam.detach(restored && !proxySeam.faults() ? pse::seam::ExitDetached : pse::seam::Faulted);
+    log("proxy_world_exit","\"reason\":\"%s\",\"was_attached\":%s,\"restored\":%s",reason,was?"true":"false",restored?"true":"false");
+}
+bool installHostProxy() {
+    proxies=new pse::proxy::SnapshotRouter<1>();proxies->bind(g.expectedTid);
+    if(!pse::native_proxy::install(g.base,g.expectedTid,proxyJournal,1,true) || proxySeam.registerTable(&pse::native_proxy::table())!=ERROR_SUCCESS) return false;
+    pse::native_proxy::permitSpawn();proxyInstalled=true;return true;
+}
 void captureNativeSnapshots() {
     if(!thread() || !g.inTick) { block("snapshot_capture_affinity");return; }
     if(g.failed || g.shutdown || g.worldExit || g.backgroundStopping || !gameplay() ||
@@ -205,13 +277,8 @@ void captureNativeSnapshots() {
         s.buttons=read<std::uint32_t>(slot?player():primary());
         s.lifeState=s.health>0 && !(read<unsigned>(id.actor,0x1c0)&0x200u)?pse::LIFE_ALIVE:pse::LIFE_DEAD;
         if(!std::isfinite(s.velX)||!std::isfinite(s.velY)||!std::isfinite(s.velZ)) { block("p8_velocity_nonfinite");return; }
-        // Bind only the remote Full Player on the host; no extra Player/Actor.
-        if(slot==1) {
-            using namespace pse::player_art;
-            Animation art;bool changed{};
-            if(!art.accept(s) || !Binding::apply(g.base,id.actor,slot,art.pose(),false,changed)) { block("p8_host_sprite_binding");return; }
-            if(changed) log("p8_host_animation","\"slot\":%u,\"pose\":\"%s\",\"actions\":0,\"native_bind\":true,\"scale\":%.4f,\"p1_scale\":%.4f,\"flags16c\":%u,\"p1_flags16c\":%u,\"flags1c0\":%u,\"anim\":\"%p\",\"def\":\"%p\",\"vtable\":\"%p\"",slot,name(art.pose()),read<float>(id.actor,0x124),read<float>(g.p1.actor,0x124),read<unsigned>(id.actor,0x16c),read<unsigned>(g.p1.actor,0x16c),read<unsigned>(id.actor,0x1c0),read<void*>(id.actor,0x108),read<void*>(id.actor,0x170),read<void*>(id.actor));
-        }
+        // The stock Puppet is not drawn by the world renderer: P2 is shown by a passive proxy actor (see proxyRoute below).
+        if(slot==1) proxyRoute(s);
         log("p8_snapshot_art","\"slot\":%u,\"sequence\":%u,\"health\":%d,\"life_state\":%u,\"buttons\":%u,\"velocity\":[%.9g,%.9g,%.9g]",slot,s.sequence,s.health,s.lifeState,s.buttons,s.velX,s.velY,s.velZ);
 #endif
 
@@ -506,6 +573,7 @@ void __fastcall hookUpdate(void* p) {
 }
 void __fastcall hookPuppetTick(void* p) {
     if (thread() && !g.shutdown) {
+        if (proxyInstalled && !proxyExited) pse::native_proxy::notePuppetTick(p);
         if (p == g.p1.actor && !g.p1.destroyed) ++g.primaryPuppetTicks;
         if (p == g.p2.actor && !g.p2.destroyed) ++g.secondaryPuppetTicks;
     }
@@ -524,6 +592,7 @@ void __fastcall hookDtor(void* p) {
     }
 }
 void unbind(const char* reason) {
+    proxyExit(reason,std::strcmp(reason,"StateExit")==0?1u:2u);
     if(!p16Restore())block("p16_restart_restore");
     if(!pse::weapon_p16::stop())block("p16_weapon_restore");
     if(std::strcmp(reason,"StateExit")==0)pse::native_ui::worldExit();else pse::native_ui::stop();
@@ -761,6 +830,7 @@ void __fastcall hookTick(void* self) {
     if (!g.observedTid) { g.observedTid = GetCurrentThreadId(); log("simulation_attested", "\"expected_tid\":%lu,\"observed_tid\":%lu,\"game_instance\":\"%p\"", g.expectedTid, g.observedTid, self); }
     if (g.inTick) { block("nested_tick"); return; }
     g.inTick = true; g.localThisTick = 0; ++g.ticks;
+    proxyTickEnter();
     if (g.shutdown) ++g.shutdownTicks;
 #ifdef PSE_ROLE_HOST
 #ifdef PSE_FEATURE_MAPREADY
@@ -870,6 +940,7 @@ void __fastcall hookTick(void* self) {
 #ifdef PSE_FEATURE_SNAPSHOT
     captureNativeSnapshots();
 #endif
+    proxyPhase();proxyTickLeave();
     // Always retain the first real P1 update, even after a long menu/startup.
     // The periodic diagnostic horizon must not suppress the isolation/readiness gate.
     if ((g.localUpdates == 1 && g.localThisTick == 1) || g.ticks <= 3 || (g.ticks % 120 == 0 && g.ticks <= 2400)) {
@@ -924,6 +995,7 @@ void CALLBACK bootstrapApc(ULONG_PTR) {
         if (i != profile::Getter && !setHook(i, true)) return;
     }
     if(!pse::native_ui::install(g.base,g.expectedTid,true,log)) {block("p23_ui_install");return;}
+    if(!installHostProxy()) { block("host_proxy_install"); return; }
     AddVectoredExceptionHandler(0, exceptions);
     log("bootstrap_ready", "\"game_calls\":0,\"hooks_installed_on_primary\":true,\"spawn_requires_tick_and_isolation_permit\":true,\"module_pinned\":true");
 }

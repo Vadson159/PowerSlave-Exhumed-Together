@@ -82,6 +82,25 @@ def sweep(pid, prefix, steps=4, turn=500):
 
 if os.environ.get('SMOKE_SWEEP'):
     sweep(host, '5_host_sweep'); sweep(client, '6_client_sweep')
+if os.environ.get('SMOKE_MENU'):
+    # Explore the pause menu on the client: ESC, then DOWN a few times, one picture each.
+    keys(client, 'ESC', 'wait=1.5'); look(client, 'm_0.png', 0.5)
+    for i in range(1, 6):
+        keys(client, 'DOWN', 'wait=0.5'); shot(client, f'm_{i}.png')
+def restart(pid, name, role):
+    # Pause menu: Resume, Options, Reload Last Checkpoint, Restart Level, Exit To Title, Quit.
+    keys(pid, 'ESC', 'wait=1.5', 'DOWN', 'DOWN', 'DOWN', 'RETURN', 'wait=1', 'LEFT', 'RETURN', 'wait=2'); shot(pid, name + '_a.png')
+    keys(pid, 'wait=10'); look(pid, name + '_b.png', 2)
+    n = len(events(role, 'native_proxy_fault', 'blocked', 'proxy_world_exit', 'seam_world_exit'))
+    print(name, '- alive:', pid in pids(), '| exit/fault events so far:', n)
+
+
+if os.environ.get('SMOKE_RESTART'):
+    restart(client, 'r_client', 'client')
+    # The rejoined client and the host should see each other again in the new world.
+    keys(client, 'hold:W=0.3', 'wait=1'); look(host, 'r_host_sees_p2.png', 3)
+    keys(host, 'hold:W=0.1', 'wait=1'); look(client, 'r_client_sees_host.png', 3)
+    sweep(host, 'r_host_sweep', 2)
 sp = events('client', 'proxy_spawned'); ref = events('client', 'spawn_refused')
 print('client proxy spawned:', len(sp), '| refused:', len(ref), sorted({r.get('reason') for r in ref}))
 mot = [r for r in events('host', 'network_native_motion') if r['before'] != r['after']]

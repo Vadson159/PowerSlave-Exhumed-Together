@@ -12,6 +12,6 @@
 | Меню, лобби, чат, автокарта | `src/native/ui_native.cpp`, `src/ui/` |
 | Загрузчик (SDL2-shim, broker, `pe-play`, защита записи) | `src/loader/` |
 | Установка копии игры + `host.bat`/`join.bat` | `tools/p27.py install` |
-| Реконнект прокси при смене карты (ещё не слит) | `p3_reconnect/` |
+| Смена мира (Restart Level, чекпоинт) | `worldTransition()` в `client.cpp`, `native_proxy::rearm()` |
 
 Сборка и тесты — в `AGENTS.md`. Подробности удалённых форков — в git-теге `pre-collapse`.

@@ -57,6 +57,7 @@ struct State {
     Byte* base{};std::atomic<DWORD> tid{};Journal journal{};
     void* original[profile::Count]{};bool enabled[profile::Count]{};
     std::atomic<unsigned> spawnPermit{};
+    unsigned remoteSlot{};bool hostMode{}; // slot of the remote player this proxy shows; hostMode: the DLL already hooks the puppet tick
     bounded::Lifetime life;
     bool installed{},inTick{},inSweep{},stopping{},faulted{},removeRequest{},baseline{},area{},controllerStopped{};
     unsigned p1ThisTick{},spawnCalls{},removeCalls{},revision{},actorTicks{},liveSteps{},postSteps{};
@@ -309,7 +310,7 @@ void animate() {
     }
 }
 #endif
-bool command(const ProxyCommand* c) { return c && c->abi==seam::Abi && c->slot==0 && std::isfinite(c->yaw) && std::abs(c->yaw)<=static_cast<float>(8*3.141592653589793); }
+bool command(const ProxyCommand* c) { return c && c->abi==seam::Abi && c->slot==g.remoteSlot && std::isfinite(c->yaw) && std::abs(c->yaw)<=static_cast<float>(8*3.141592653589793); }
 Vec3 position(const ProxyCommand& c) { return {c.x,c.y,static_cast<float>(static_cast<double>(c.z)+88.0)}; }
 void tickEnter(std::uint64_t tick) {
     require(thread() && !g.inTick,"TICK_AFFINITY_REENTRY");g.inTick=true;g.ticks=tick;g.p1ThisTick=0;
@@ -506,6 +507,7 @@ void observePuppet(void* self) {
     ++g.p1ThisTick;const auto s=stamp();if(!g.hasP1Stamp || s!=g.lastP1Stamp) { ++g.steps;g.lastP1Stamp=s;g.hasP1Stamp=true; }
 }
 std::uintptr_t __fastcall puppetTick(void* self) { guard(observePuppet,self);return reinterpret_cast<Unary>(g.original[profile::puppet_tick])(self); }
+
 void observeActor(void* self) {
     if(reinterpret_cast<std::uintptr_t>(self)!=g.life.actor || !g.life.actor) return;
     require(thread() && g.inTick && !g.stopping,"ACTOR_TICK_AFFINITY");if(g.life.phase==Phase::Live) ++g.actorTicks;
@@ -581,14 +583,16 @@ DWORD observeImpl(Observation* out,std::uint32_t size) {
 }
 DWORD observeCpp(Observation* out,std::uint32_t size) { try { return observeImpl(out,size); } catch(const Error& e) { block(e.reason);return ERROR_INVALID_STATE; } catch(...) { block("OBSERVATION_EXCEPTION");return ERROR_INVALID_STATE; } }
 }
-bool install(Byte* image,DWORD simulationTid,Journal journal) {
-    if(g.installed || !image || GetCurrentThreadId()!=simulationTid) return false;
-    g.base=image;g.tid=simulationTid;g.journal=journal;
-    for(std::size_t i=0;i<profile::Count;++i) if(!prefix(static_cast<profile::Index>(i))) { block("NATIVE_PROXY_PREFIX");return false; }
-    const std::pair<profile::Index,void*> hooks[]={
-        {profile::puppet_tick,reinterpret_cast<void*>(puppetTick)},{profile::actor_tick,reinterpret_cast<void*>(actorTick)},
+bool install(Byte* image,DWORD simulationTid,Journal journal,unsigned remoteSlot,bool hostMode) {
+    if(g.installed || !image || GetCurrentThreadId()!=simulationTid || remoteSlot>=8) return false;
+    g.base=image;g.tid=simulationTid;g.journal=journal;g.remoteSlot=remoteSlot;g.hostMode=hostMode;
+    for(std::size_t i=0;i<profile::Count;++i) { if(hostMode && i==profile::puppet_tick) continue; /* already detoured by the host DLL */ if(!prefix(static_cast<profile::Index>(i))) { block("NATIVE_PROXY_PREFIX");return false; } }
+    std::vector<std::pair<profile::Index,void*>> hooks={
+        {profile::actor_tick,reinterpret_cast<void*>(actorTick)},
         {profile::on_remove,reinterpret_cast<void*>(onRemove)},{profile::pool_return,reinterpret_cast<void*>(poolReturn)},
         {profile::sweep,reinterpret_cast<void*>(sweep)},{profile::drain,reinterpret_cast<void*>(drain)}};
+    // On the host the DLL owns the puppet-tick detour and forwards each call to notePuppetTick().
+    if(!hostMode) hooks.insert(hooks.begin(),{profile::puppet_tick,reinterpret_cast<void*>(puppetTick)});
     for(const auto& [i,hook]:hooks) {
         if(MH_CreateHook(at(i),hook,&g.original[i])!=MH_OK || MH_EnableHook(at(i))!=MH_OK) { block("NATIVE_PROXY_HOOK_INSTALL");g.stopping=true;detach();return false; }
         g.enabled[i]=true;
@@ -596,7 +600,29 @@ bool install(Byte* image,DWORD simulationTid,Journal journal) {
     g.installed=true;emit("native_proxy_installed","\"hooks\":6,\"capacity\":1,\"sector\":259,\"new_injector\":false,\"external_callbacks\":false,\"module_pinned\":true");return true;
 }
 const seam::SeamTable& table() { return Table; }
+void notePuppetTick(void* self) { guard(observePuppet,self); }
 void permitSpawn() { g.spawnPermit.store(1,std::memory_order_release); }
+// New incarnation of the proxy after a world transition (level restart / checkpoint reload: the engine purges the old
+// proxy Actor itself) or after the previous Actor was fully retired in the same world. Only drops weak identities and
+// per-world caches; hooks stay installed and no engine call is made. Refused while an Actor may still be alive.
+bool rearm() {
+    if(!g.installed || !thread()) return false;
+    const auto phase=g.life.phase;
+    if(!(g.stopping || phase==Phase::Retired || phase==Phase::Waiting)) return false;
+    g.life=bounded::Lifetime{};
+    g.stopping=g.inTick=g.inSweep=g.faulted=g.removeRequest=g.baseline=g.area=g.controllerStopped=false;
+    g.p1ThisTick=g.spawnCalls=g.removeCalls=g.revision=g.actorTicks=g.liveSteps=g.postSteps=0;
+    g.steps=g.removeStep=g.handle=g.applied=g.unchanged=g.refused=0;
+    g.hasStamp=g.hasP1Stamp=false;g.expected={};g.expectedYaw=0;g.command={};g.local={};g.sectors.clear();
+#ifdef PSE_FEATURE_P4
+    g.expectedSector=g.plannedSector=0;g.relocate=false;g.buffer.clear();
+#endif
+#ifdef PSE_FEATURE_P8
+    g.art.reset();g.preview.store(0,std::memory_order_release);
+#endif
+    emit("native_proxy_rearmed","\"previous_phase\":%u",static_cast<unsigned>(phase));
+    return true;
+}
 #ifdef PSE_FEATURE_P8
 void stageAnimation(const pse::BridgePlayerSnapshot& s) {
     if(!thread() || !g.inTick || g.stopping || g.faulted || g.controllerStopped) return;

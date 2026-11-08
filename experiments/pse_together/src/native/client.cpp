@@ -65,7 +65,7 @@ struct Context {
     std::atomic<unsigned> prepared{},permit{};
     void* original[profile::Count]{}; bool enabled[profile::Count]{};
     bool inTick{},stopped{},shutdown{},failed{},attested{};
-    unsigned localThisTick{}; std::uint64_t ticks{},localUpdates{},ordinal{},logSeq{},lastFlush{},foreign{};
+    unsigned localThisTick{}; std::uint64_t ticks{},localUpdates{},ordinal{},logSeq{},lastFlush{},foreign{},reconnectKey{},worldSerial{1};
     std::uint32_t buttons{},forwardHeld{},backHeld{}; bool sampled{};
     Session* session{};
 #ifdef PSE_FEATURE_P4
@@ -220,7 +220,7 @@ struct Session {
             log("client_input_dispatched","\"slot\":%u,\"generation\":%u,\"input_seq\":%u,\"sample_ordinal\":%llu,\"sample_tick\":%llu,\"sampled_ns\":%llu,\"generated_ns\":%llu,\"forward\":%.1f,\"fresh\":%s,\"stage\":\"enet_dispatch_not_udp_proof\"",d.slotId,d.generation,d.sequence,d.sampleOrdinal,d.simulationTick,d.sampledSteadyNs,d.generatedSteadyNs,d.forward,d.sampleFresh?"true":"false");
         });
         const auto menu=pse::ui::shared().settings();
-        pse::ClientConfig cfg;cfg.hostAddress=menu.address;cfg.hostPort=*pse::ui::port(menu.portText);cfg.joinToken=menu.token;cfg.participantId="p23_client_"+std::to_string(GetCurrentProcessId());cfg.displayName=menu.displayName;
+        pse::ClientConfig cfg;cfg.hostAddress=menu.address;cfg.hostPort=*pse::ui::port(menu.portText);cfg.joinToken=menu.token;cfg.participantId="p23_client_"+std::to_string(GetCurrentProcessId());cfg.displayName=menu.displayName;cfg.reconnectKey=g.reconnectKey;
         if(!worker.startClient(cfg)) { bridge.unregisterSimulationThread();block("client_worker_start");return false; }
 #ifdef PSE_FEATURE_P4
         started=true;log("client_worker_started","\"target_hz\":60,\"freshness_ms\":100,\"protocol\":275");return true;
@@ -244,6 +244,7 @@ struct Session {
                     #endif
                     if(!mapGate.welcome(e->slotId,e->connectionGeneration,e->mapEpoch,e->mapName)) { block("welcome_map_identity_or_epoch");continue; }
                     slot=e->slotId;gen=e->connectionGeneration;epoch=e->mapEpoch;active=true;readySent=baseline=false;reconnectPending=false;
+                    if(e->reconnectKey) g.reconnectKey=e->reconnectKey; // a later session of this process rejoins the same slot
                     snapshots.reset(gen,epoch);
                     log("client_welcome","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"host_map\":\"%s\",\"local_map\":\"%s\",\"world_synchronized\":false",slot,gen,epoch,mapGate.hostName().c_str(),localMap.name.c_str());
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -452,6 +453,26 @@ void stop(const char* reason) {
     log("client_quiesced","\"reason\":\"%s\",\"pinned\":true,\"player_writes\":0",reason);flushJournal();
 #endif
 }
+// A level restart or checkpoint reload keeps the process and every hook alive, but it is a NEW world: the engine purges the
+// old proxy Actor itself. Close the old network session, reset every per-world latch (self-state authority, respawn gate,
+// proxy adapter) and let a fresh Session rejoin with the saved reconnect key when the next gameplay world is stable.
+void worldTransition(const char* reason) {
+    if(!thread() || g.stopped) return;
+    ++g.worldSerial;
+    log("world_transition","\"reason\":\"%s\",\"world\":%llu",reason,g.worldSerial);
+    if(g.session) g.session->barrier58(reason);
+    pse::native_proxy::exitBarrier(1);
+    if(!restart16.restore(log)) block("p16_restart_restore");
+    input16.invalidate();requestPending16=newLocal16=protect16=false;stagedConfirm16.reset();
+    p7Authority=ss7::Authority{};p7Admitted=false;pse::self_native_p7::invalidate();
+    p7LifetimeClosed=false;p7PinnedActor=p7PinnedNode=0;p7PinnedAllocation=0;
+    inputBound16=false;hostDead16=false;hostDeath16=0;localGeneration16=1;startValid16=false;
+    lastDeath16={};lastDead16={};expectedGeneration16={1,1};
+    // The in-game Together UI stays up: the menu request is kept so the next gameplay world rejoins on its own.
+    if(g.session) g.session->stop(reason);
+    g.session=nullptr; // the stopped Session is retained (never freed): its worker has joined, nothing references it
+    if(!pse::native_proxy::rearm()) block("native_proxy_rearm");
+}
 void __fastcall hookUpdate(void* p) {
 #ifdef PSE_FEATURE_P4
     if(p==primary() && !g.stopped) {
@@ -515,11 +536,15 @@ void __fastcall hookTick(void* self) {
     if(!g.stopped) {
         if(!g.session && g.permit.load(std::memory_order_acquire) && pse::ui::shared().requested.load(std::memory_order_acquire) && !g.failed && gameplay() && g.localThisTick==1) { g.session=new Session;g.session->start(); }
         if(g.session && g.session->started && !g.session->stopped) {
-            g.session->consume();DWORD foregroundPid{};GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
+            g.session->consume();
+            if(g.session->mapGate.state()==map56::ClientGate::State::Invalidated) worldTransition("native_map_invalidated");
+            if(g.session) {
+            DWORD foregroundPid{};GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
             g.session->sample(g.sampled && g.localThisTick==1 && gameplay() && !g.failed && !pse::ui::shared().capture.load() && foregroundPid==GetCurrentProcessId());
 #ifdef PSE_FEATURE_VISUAL_PROXY
             if(seam58.attached()) g.session->phase58(seam58.worldReady(g.ticks));
 #endif
+            }
         }
         if((g.localUpdates==1 && g.localThisTick==1) || g.ticks<=3 || g.ticks%120==0)
             log("tick_status","\"ticks\":%llu,\"state\":%d,\"pending\":%d,\"local_updates\":%llu,\"local_this_tick\":%u",g.ticks,read<int>(instance(),0x24),read<int>(instance(),0x28),g.localUpdates,g.localThisTick);
@@ -555,10 +580,9 @@ void exit58(const char* reason,std::uint32_t code) {
 #endif
 void __fastcall hookStateExit(void* self) {
     if(thread() && self==instance() && read<int>(instance(),0x24)==3 && read<int>(instance(),0x20)!=3) {
-#ifdef PSE_FEATURE_VISUAL_PROXY
-        exit58("StateExit",1);
-#endif
-        stop("StateExit");
+        // Leaving a gameplay world (restart, checkpoint reload, title, next level) is a world transition, not the end of the
+        // process: hooks stay, the next gameplay world starts a fresh Session. Only DirectQuit is terminal.
+        worldTransition("StateExit");
     }
     reinterpret_cast<Unary>(g.original[profile::StateExit])(self);
 }
