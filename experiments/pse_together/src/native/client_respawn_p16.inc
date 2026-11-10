@@ -9,7 +9,7 @@ bool stageLocal16(const pse::BridgeRespawnConfirm& c,std::uint8_t slot,std::uint
 bool confirmLocal16(const pse::BridgeRespawnConfirm& c,std::uint8_t slot,std::uint32_t connection,std::uint32_t epoch){
     rp16::Confirmation confirm{{{slot,connection,epoch},c.deathSequence},c.newGeneration,{}};
     if(!requestPending16||newLocal16||!input16.expects(confirm)||c.mapEpoch!=epoch||c.newEntityId!=0x5500u+slot||
-       c.defaultWeapons!=3||c.ammo!=60)return false;
+       !(c.defaultWeapons&1u))return false;
     // The host picked the spot (a verified free position near its own start) and is authoritative: the client only checks that the
     // point really lies in a sector with a sane floor/ceiling (its own start pose is not recorded in this build).
     const int sector=pse::world::findSector(c.posX,c.posY,c.posZ);
@@ -34,6 +34,6 @@ bool completeLocal16(){
     // authenticated native incarnation (new generation + key gate), so its next admission uses a fresh Authority object; P7 code is unchanged.
     p7Authority=ss7::Authority{};p7Admitted=false;
     requestPending16=false;newLocal16=false;
-    log("p16_client_respawn_committed","\"epoch\":%u,\"generation\":%u,\"death\":%u,\"health\":200,\"weapons\":3,\"pistol\":60,\"heavy_ammo_zero\":true,\"story_equal\":true,\"actor\":\"%p\",\"node\":\"%p\",\"allocation\":%llu",receipt16.epoch,localGeneration16,ownConfirm16.request.death,receipt16.fresh.actor,receipt16.fresh.node,receipt16.fresh.allocation);
+    log("p16_client_respawn_committed","\"epoch\":%u,\"generation\":%u,\"death\":%u,\"health\":200,\"loadout_kept\":true,\"story_equal\":true,\"actor\":\"%p\",\"node\":\"%p\",\"allocation\":%llu",receipt16.epoch,localGeneration16,ownConfirm16.request.death,receipt16.fresh.actor,receipt16.fresh.node,receipt16.fresh.allocation);
     return true;
 }

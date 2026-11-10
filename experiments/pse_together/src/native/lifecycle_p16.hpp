@@ -22,6 +22,7 @@ struct Receipt {
     Graph old{},fresh{};Story story{};Start start{};
     std::uint32_t epoch{},generation{};std::uint64_t probe{};
     std::uintptr_t probeReferenceEvidence{};bool awaitingKeys{},committed{};
+    std::array<Byte,8> owned{};std::array<std::uint16_t,8> ammo{}; // the loadout the player died with: it comes back with the new body
 };
 template<class T>T get(const void* p,std::size_t off=0){return *reinterpret_cast<const T*>(static_cast<const Byte*>(p)+off);}
 inline bool graph(Byte* base,Graph& g){
@@ -83,9 +84,9 @@ inline bool prefixes(Byte* base){
         std::equal(std::begin(keys),std::end(keys),base+0x1ae0c0)&&std::equal(std::begin(pack),std::end(pack),base+0x1b5b80)&&
         std::equal(std::begin(restore),std::end(restore),base+0x1b5ce0);
 }
-inline bool kit(const Graph& g){
+inline bool kit(const Graph& g,const Receipt& r){
     if(get<std::int16_t>(g.actor,0x17a)!=200||(get<unsigned>(g.actor,0x1c0)&0x200u))return false;
-    for(unsigned i=0;i<8;++i)if(get<Byte>(g.player,0xcc+i)!=(i<2?1:0)||get<std::uint16_t>(g.player,0xbc+2*i)!=(i==1?60:0))return false;
+    for(unsigned i=0;i<8;++i)if(get<Byte>(g.player,0xcc+i)!=r.owned[i]||get<std::uint16_t>(g.player,0xbc+2*i)!=r.ammo[i])return false;
     return true;
 }
 // Called only by a Sim-thread owner with current map/provenance/start gates.
@@ -96,7 +97,9 @@ template<class Scope>bool revive(Byte* base,DWORD tid,Graph old,const Start& sta
        (get<std::int16_t>(old.actor,0x17a)>0&&!(get<unsigned>(old.actor,0x1c0)&0x200u))||
        !std::isfinite(start.position.x)||!std::isfinite(start.position.y)||!std::isfinite(start.position.z)||!std::isfinite(start.yaw)||start.sector<0)return false;
     if(get<void*>(get<void*>(old.actor),0x30)!=base+0x1a02b0||get<void*>(get<void*>(base+0x5a10a0),0x18)!=base+0x1d4780)return false;
-    r={};r.old=old;r.story=story(old.player);r.start=start;r.epoch=epoch;r.generation=generation;r.probe=probe;
+    r={};r.old=old;r.story=story(old.player);r.start=start;
+    for(unsigned i=0;i<8;++i){r.owned[i]=get<Byte>(old.player,0xcc+i)?1:0;r.ammo[i]=get<std::uint16_t>(old.player,0xbc+2*i);}
+    r.owned[0]=1; // the machete is never lostr.epoch=epoch;r.generation=generation;r.probe=probe;
     using NativeUnary16=void(__fastcall*)(void*);using NativeGive16=Byte(__fastcall*)(void*,int,Byte);
     using NativeSpawn16=void*(__fastcall*)(void*,int,const Point*,float,int);using NativeReady16=void(__fastcall*)(void*,int);
     using NativeScalars16=void(__fastcall*)(void*,void*);using NativeKeys16=std::uint16_t*(__fastcall*)(void*);
@@ -116,10 +119,10 @@ template<class Scope>bool revive(Byte* base,DWORD tid,Graph old,const Start& sta
     reinterpret_cast<NativeScalars16>(base+0x1b5b80)(receiver,packed.data());
     const auto put=[&](unsigned at,std::uint32_t value,unsigned size){for(unsigned i=0;i<size;++i)packed[at+i]=static_cast<Byte>(value>>(8*i));};
     put(0,r.story.ankhs,2);put(2,r.story.ankhMask,2);put(4,r.story.artifacts,2);put(6,r.story.quest,2);put(8,r.story.abilities,2);put(10,0,2);put(36,r.story.dolls,4);
-    for(unsigned i=0;i<8;++i)put(12+2*i,i==1?60u:0u,2);
+    for(unsigned i=0;i<8;++i){put(12+2*i,r.ammo[i],2);put(28+i,r.owned[i],1);} // the weapons and ammo the player died with
     put(40,get<std::uint32_t>(old.player,0x8c),4);
     reinterpret_cast<NativeScalars16>(base+0x1b5ce0)(receiver,packed.data());
-    if(!sameGraph(base,r.fresh)||!kit(r.fresh)||get<int>(created,0x3c)!=start.sector||
+    if(!sameGraph(base,r.fresh)||!kit(r.fresh,r)||get<int>(created,0x3c)!=start.sector||
        get<float>(created,0x18)!=start.position.x||get<float>(created,0x1c)!=start.position.y||get<float>(created,0x20)!=start.position.z)return false;
     auto* const keyReference=reinterpret_cast<NativeKeys16>(base+0x1ae0c0)(old.player);
     if(reinterpret_cast<Byte*>(keyReference)!=old.player+0x98)return false;
@@ -129,7 +132,7 @@ template<class Scope>bool revive(Byte* base,DWORD tid,Graph old,const Start& sta
     return true;
 }
 inline bool finish(Byte* base,DWORD tid,Receipt& r,std::uint64_t approvedProbe,std::uint64_t review,Journal log){
-    if(GetCurrentThreadId()!=tid||!world(base)||!prefixes(base)||!sameGraph(base,r.fresh)||!kit(r.fresh)||r.committed)return false;
+    if(GetCurrentThreadId()!=tid||!world(base)||!prefixes(base)||!sameGraph(base,r.fresh)||!kit(r.fresh,r)||r.committed)return false;
     if(r.awaitingKeys){
         if(approvedProbe!=r.probe||!review||r.story.keys>15)return false;
         using Keys=std::uint16_t*(__fastcall*)(void*);auto* ref=reinterpret_cast<Keys>(base+0x1ae0c0)(r.fresh.player);

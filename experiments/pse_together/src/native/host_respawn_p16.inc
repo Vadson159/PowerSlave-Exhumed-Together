@@ -27,7 +27,7 @@ void p16DtorReturn(int index,void* actor){
 rp16::Identity who16(unsigned slot){return {static_cast<std::uint8_t>(slot),slot?g.network->generation():1u,g.network->mapEpoch()};}
 void confirm16(const rp16::Confirmation& c){
     pse::BridgeRespawnConfirm out;out.slotId=c.request.who.slot;out.mapEpoch=c.request.who.epoch;out.deathSequence=c.request.death;
-    out.newEntityId=0x5500+out.slotId;out.newGeneration=c.generation;out.defaultWeapons=3;out.ammo=60;
+    out.newEntityId=0x5500+out.slotId;out.newGeneration=c.generation;const auto& rc=receipts16[out.slotId];out.defaultWeapons=0;for(unsigned i=0;i<8;++i)if(rc.owned[i])out.defaultWeapons|=1u<<i;out.ammo=rc.ammo[1];
     const auto& at=receipts16[out.slotId].start;
     out.posX=at.position.x;out.posY=at.position.y;out.posZ=at.position.z;out.yaw=at.yaw;
     if(confirms16.size()>=32){block("p16_confirm_outbox_full");return;}confirms16.push_back(out);
@@ -42,7 +42,7 @@ bool complete16(unsigned slot){
     if(team16.complete(*plans16[slot],safe,true,{},c)!=rp16::Result::Accepted){block("p16_policy_commit");return false;}
     g.entityGeneration[slot]=c.generation;g.p7Dead[slot]=false;
     if(slot==1){g.p7KeysPermitted=false;g.p7KeyProbeSerial=g.p7KeyReviewSerial=0;std::fill(std::begin(g.held),std::end(g.held),0u);}
-    log("p16_respawn_committed","\"slot\":%u,\"epoch\":%u,\"generation\":%u,\"death\":%u,\"health\":200,\"weapons\":3,\"pistol\":60,\"heavy_ammo_zero\":true,\"actor\":\"%p\",\"node\":\"%p\",\"allocation\":%llu,\"keys\":%u,\"story_equal\":true,\"world_reloaded\":false",slot,r.epoch,c.generation,c.request.death,r.fresh.actor,r.fresh.node,r.fresh.allocation,r.story.keys);
+    log("p16_respawn_committed","\"slot\":%u,\"epoch\":%u,\"generation\":%u,\"death\":%u,\"health\":200,\"loadout_kept\":true,\"actor\":\"%p\",\"node\":\"%p\",\"allocation\":%llu,\"keys\":%u,\"story_equal\":true,\"world_reloaded\":false",slot,r.epoch,c.generation,c.request.death,r.fresh.actor,r.fresh.node,r.fresh.allocation,r.story.keys);
     confirm16(c);if(!slot)hostInput16.confirm(c,true);plans16[slot].reset();return true;
 }
 void request16(const rp16::Request& request){

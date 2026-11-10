@@ -203,7 +203,12 @@ if os.environ.get('SMOKE_RESPAWN'):
         if seen('client', 'p16_client_respawn_committed'): break
         act.focus(h); act.send(act.VK['E'], True); time.sleep(0.5); act.send(act.VK['E'], False); time.sleep(1.5)
     time.sleep(2.0); look(client, 'r2_client_respawned.png', 1.0); look(host, 'r2_host_after.png', 1.0)
-    for role in ('host', 'client'):
+    last = None
+    for r in [r for r in events('host', 'p7_native_scalars') if r['slot'] == 1]:
+        k = (r['life_state'], r['weapon_mask'], tuple(r['ammo']))
+        if k != last: print('host P2', r['utc'][14:23], 'life', r['life_state'], 'mask', r['weapon_mask'], 'ammo', r['ammo']); last = k
+    for r in events('client', 'client_loadout_applied')[-3:]: print('client loadout', r['utc'][14:23], 'owned', r['owned'], 'ammo', r['ammo'])
+    for role in ('host', 'client'):
         for r in events(role, 'p16_death_observed', 'p16_respawn_request', 'p16_respawn_committed', 'p16_E_request_sent', 'p16_generation_admitted', 'p16_client_confirm_native', 'p16_client_respawn_committed', 'blocked', 'world_own_health'):
             print(role, {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns')})
 if os.environ.get('SMOKE_FIREBALL'):

@@ -390,7 +390,7 @@ struct Session {
 #ifdef PSE_FEATURE_SNAPSHOT
             } else if(const auto* c=std::get_if<pse::BridgeRespawnConfirm>(&m)) {
                 if(!active||!readySent||!baseline||c->mapEpoch!=epoch||c->slotId>=2||!c->deathSequence||
-                   c->newEntityId!=0x5500u+c->slotId||c->newGeneration!=expectedGeneration16[c->slotId]+1||c->defaultWeapons!=3||c->ammo!=60)continue;
+                   c->newEntityId!=0x5500u+c->slotId||c->newGeneration!=expectedGeneration16[c->slotId]+1||!(c->defaultWeapons&1u))continue;
                 if(c->slotId==slot&&!stageLocal16(*c,slot,gen,epoch))continue;
                 expectedGeneration16[c->slotId]=c->newGeneration;
                 if(c->slotId==slot){hostHealthValid=false;vitalsSynced=false;hostLoadoutValid=false;} // the pre-death health must not hit the fresh body: wait for a new-generation snapshot
