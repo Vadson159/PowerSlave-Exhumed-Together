@@ -15,7 +15,7 @@ template<class T> void codec(const T& value, NetMessageType type) {
         check(!(h.deserialize(reader) && complete(reader,v)),"truncated packet");
     }
     ByteReader reader(wire.data(),wire.size()); MsgHeader h; T v;
-    check(h.deserialize(reader) && h.version == 0x113 && h.msgType == type && complete(reader,v),"wire roundtrip");
+    check(h.deserialize(reader) && h.version == 0x114 && h.msgType == type && complete(reader,v),"wire roundtrip");
     std::vector<std::uint8_t> again; ByteWriter writer(again); v.serialize(writer);
     check(again == std::vector<std::uint8_t>(wire.begin()+11,wire.end()),"exact payload roundtrip");
     auto trailing = wire; trailing.push_back(0); ByteReader tr(trailing.data(),trailing.size());

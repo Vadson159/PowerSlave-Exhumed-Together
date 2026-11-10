@@ -13,12 +13,14 @@
 #include <array>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdarg>
 #include <cwchar>
 #include <share.h>
 #include <pse_together/config.hpp>
 #include "build_profile.hpp"
+#include "world_sync.hpp"
 #include "self_native_p16.hpp"
 #include "lifecycle_p16.hpp"
 #include "respawn_p16.hpp"
@@ -66,7 +68,8 @@ struct Context {
     void* original[profile::Count]{}; bool enabled[profile::Count]{};
     bool inTick{},stopped{},shutdown{},failed{},attested{};
     unsigned localThisTick{}; std::uint64_t ticks{},localUpdates{},ordinal{},logSeq{},lastFlush{},foreign{},reconnectKey{},worldSerial{1};
-    std::uint32_t buttons{},forwardHeld{},backHeld{}; bool sampled{};
+    std::uint32_t buttons{},cmdButtons{},forwardHeld{},backHeld{}; bool sampled{};
+    float yaw{},pitch{},px{},py{},pz{}; int sector{-1}; // this client's own view/pose, sampled with the buttons (v1.14 input)
     Session* session{};
 #ifdef PSE_FEATURE_P4
     void* focusOriginal{};background::FocusLease focusLease;
@@ -112,6 +115,9 @@ struct Session {
     pse::ThreadBridge bridge;
     pse::ENetWorker worker{bridge,pse::ENetWorkerMode::CLIENT};
     bool started{},stopped{},active{},readySent{},baseline{},reconnectPending{};
+    std::uint16_t worldKeysPending{};std::uint32_t worldOnTicks{},lastEnemySequence{};unsigned useHold{};
+    std::array<std::uint16_t,8> hostAmmo{};std::uint8_t hostOwned{};bool hostLoadoutValid{}; // P2's real ammo / owned weapons (host) -> this client's Player
+    int hostHealth{};bool hostHealthValid{},vitalsSynced{}; // Milestone 3: the host decides this player's health (P2 takes real AI damage there)
     std::uint8_t slot{};std::uint32_t gen{},epoch{};
     std::uint64_t lastReconnectNs{};
 #ifdef PSE_FEATURE_SNAPSHOT
@@ -187,6 +193,57 @@ struct Session {
         status58.store((proxies.quiescent() ? 0x100u : 0u)|(st<<16),std::memory_order_release);
     }
 #endif
+    // ---- Milestone 2: doors / lifts / shared keys (world_sync.hpp). Host actions arrive as world events and are replayed
+    // natively; this client's own mover spawns and key pickups are reported to the host as interaction requests.
+    Byte* worldPuppet() const {
+        Byte* n=read<Byte*>(primary(),0xd8);Byte* a=n?read<Byte*>(n,0x28):nullptr;
+        return a && read<Byte*>(a,0x10)==n && read<void*>(a,0x1b8)==primary() && read<Byte*>(a)==g.base+0x52d198 ? a : nullptr;
+    }
+    bool worldReady() const {
+        return active && readySent && baseline && !stopped && !g.failed && gameplay() && mapGate.snapshotEligible(gen,epoch);
+    }
+    bool sendWorld(std::uint8_t type,std::uint32_t target,std::uint32_t generation) {
+        pse::BridgeInteractionRequest r;r.mapEpoch=epoch;r.slotId=slot;r.interactionType=type;r.targetEntityId=target;r.targetGeneration=generation;
+        return pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{r}));
+    }
+    void worldEvent(const pse::BridgeWorldEvent& e) {
+        namespace w=pse::world;
+        if(e.mapEpoch!=epoch) return;
+        if(e.eventType==w::EvKeys) { worldKeysPending|=static_cast<std::uint16_t>(e.eventValue&0xf);return; } // applied when the world is ready
+        if(e.eventType==w::EvMover && worldReady())
+            w::applyMover({static_cast<std::uint8_t>(e.eventValue>>8),static_cast<std::uint8_t>(e.eventValue),static_cast<std::int16_t>(e.targetEntityId)});
+    }
+    void worldSync() {
+        namespace w=pse::world;
+        const bool on=worldReady();
+        w::setActive(on);
+        if(!on) { worldOnTicks=0;return; }
+        if(worldOnTicks==199) w::debugTeleport(worldPuppet());
+        if(++worldOnTicks==300) w::debugSpawn();
+        if(worldOnTicks==450) w::debugKeys(primary());
+        if(worldOnTicks%10==0) w::debugCensusOnFile();
+        w::cullLocalProjectiles(); // the client's AI is a replica: enemy projectiles come from the host only
+        // Own player: local damage is muted, the host's health is applied (red flash through the native Damage call).
+        {
+            Byte* me=worldPuppet();w::setOwnPlayer(me);
+            if(me && hostHealthValid && !requestPending16 && !newLocal16 && !stagedConfirm16) { w::applyHostHealth(me,hostHealth,!vitalsSynced);vitalsSynced=true; }
+            if(me && hostLoadoutValid && !requestPending16 && !newLocal16 && !stagedConfirm16) {
+                // Ammo and owned weapons are the host's (P2 picks things up and fires there); the weapon in hand stays the client's choice.
+                Byte* pl=primary();unsigned wrote=0;
+                for(unsigned i=0;i<8;++i) {
+                    if(read<std::uint16_t>(pl,0xbc+2*i)!=hostAmmo[i]) {*reinterpret_cast<std::uint16_t*>(pl+0xbc+2*i)=hostAmmo[i];++wrote;}
+                    const Byte own=(hostOwned>>i)&1u;if(read<Byte>(pl,0xcc+i)!=own) {*(pl+0xcc+i)=own;++wrote;}
+                }
+                static unsigned logged=0;if(wrote && logged++<20) log("client_loadout_applied","\"fields\":%u,\"owned\":%u,\"ammo\":[%u,%u,%u,%u,%u,%u,%u,%u],\"in_hand\":%d",wrote,hostOwned,hostAmmo[0],hostAmmo[1],hostAmmo[2],hostAmmo[3],hostAmmo[4],hostAmmo[5],hostAmmo[6],hostAmmo[7],read<int>(pl,0x88));
+                const int inHand=read<int>(pl,0x88),pending=read<int>(pl,0x8c);
+                if(inHand>=0&&inHand<8&&!((hostOwned>>inHand)&1u)&&pending==inHand) *reinterpret_cast<int*>(pl+0x8c)=0; // not owned on the host: back to the machete
+            }
+        }
+        if(worldKeysPending) { w::applyKeys(primary(),worldPuppet(),worldKeysPending);worldKeysPending=0; }
+        if(const auto gained=w::popKeysGained()) sendWorld(w::ReqKeys,gained,0);
+        w::Mover m;
+        while(w::popMover(m)) sendWorld(w::ReqMover,static_cast<std::uint32_t>(m.sector),(static_cast<std::uint32_t>(m.cls)<<8)|m.type);
+    }
     bool start() {
         bridge.registerSimulationThread();
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -308,12 +365,35 @@ struct Session {
                 if(!active || !readySent || b->mapEpoch!=epoch || b->mapName!=Domain || b->totalBatches!=1 || b->batchIndex!=0 || !b->entities.empty()) { block("input_baseline_contract");continue; }
                 baseline=true;log("client_input_domain_ready","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"entities\":0,\"world_synchronized\":false",slot,gen,epoch);
 #endif
+            } else if(const auto* we=std::get_if<pse::BridgeWorldEvent>(&m)) {
+                worldEvent(*we);
+            } else if(const auto* ws=std::get_if<pse::BridgeWorldSnapshot>(&m)) {
+                if(ws->mapEpoch==epoch && worldReady() && ws->snapshotSequence>=lastEnemySequence) {
+                    lastEnemySequence=ws->snapshotSequence;
+                    pse::world::Projectile plist[24];int pn=0;
+                    for(const auto& ent:ws->entities) {
+                        if(ent.type!=2||pn>=24) continue;
+                        auto& q=plist[pn++];q={};
+                        q.id=ent.entityId;q.type=ent.subType;q.x=ent.posX;q.y=ent.posY;q.z=ent.posZ;q.vx=ent.velX;q.vy=ent.velY;q.vz=ent.velZ;q.yaw=ent.yaw;
+                        q.sector=static_cast<std::int16_t>(ent.stateFlags);q.anim=static_cast<std::uint16_t>(ent.meta);
+                    }
+                    pse::world::applyProjectiles(plist,pn);
+                    pse::world::Enemy list[64];int cnt=0;
+                    for(const auto& ent:ws->entities) {
+                        if(cnt>=64||ent.type!=1) continue;
+                        auto& o=list[cnt++];o={};
+                        o.id=ent.entityId;o.x=ent.posX;o.y=ent.posY;o.z=ent.posZ;o.vx=ent.velX;o.vy=ent.velY;o.vz=ent.velZ;o.yaw=ent.yaw;o.hp=static_cast<std::int16_t>(ent.health);
+                        o.sector=static_cast<std::int16_t>(ent.stateFlags>>16);o.aiState=static_cast<std::uint16_t>(ent.stateFlags&0xffff);o.anim=ent.subType;o.frame=static_cast<std::uint16_t>(ent.meta);
+                    }
+                    pse::world::applyEnemies(list,cnt);
+                }
 #ifdef PSE_FEATURE_SNAPSHOT
             } else if(const auto* c=std::get_if<pse::BridgeRespawnConfirm>(&m)) {
                 if(!active||!readySent||!baseline||c->mapEpoch!=epoch||c->slotId>=2||!c->deathSequence||
                    c->newEntityId!=0x5500u+c->slotId||c->newGeneration!=expectedGeneration16[c->slotId]+1||c->defaultWeapons!=3||c->ammo!=60)continue;
                 if(c->slotId==slot&&!stageLocal16(*c,slot,gen,epoch))continue;
                 expectedGeneration16[c->slotId]=c->newGeneration;
+                if(c->slotId==slot){hostHealthValid=false;vitalsSynced=false;hostLoadoutValid=false;} // the pre-death health must not hit the fresh body: wait for a new-generation snapshot
                 auto& prior=snapshots.slots[c->slotId];prior.entity=c->newEntityId;prior.generation=c->newGeneration;
                 log("p16_generation_admitted","\"slot\":%u,\"epoch\":%u,\"generation\":%u,\"death\":%u",c->slotId,epoch,c->newGeneration,c->deathSequence);
             } else if(const auto* s=std::get_if<pse::BridgePlayerSnapshot>(&m)) {
@@ -329,7 +409,7 @@ struct Session {
                 if(verdict==snapshot55::Verdict::EntityMismatch || verdict==snapshot55::Verdict::Nonfinite) { block("snapshot_unexplained_entity_or_transform");continue; }
                 if(verdict!=snapshot55::Verdict::Accept) { log("native_snapshot_rejected","\"slot\":%u,\"snapshot_seq\":%u,\"reason\":%u",s->slotId,s->sequence,static_cast<unsigned>(verdict));continue; }
                 lastDeath16[s->slotId]=s->deathSequence;lastDead16[s->slotId]=s->lifeState==pse::LIFE_DEAD;
-                if(s->slotId==slot){hostDeath16=s->deathSequence;hostDead16=s->lifeState==pse::LIFE_DEAD;p7Offer(*s,slot,active&&readySent&&baseline);}
+                if(s->slotId==slot){hostDeath16=s->deathSequence;hostDead16=s->lifeState==pse::LIFE_DEAD;hostHealth=s->health;hostHealthValid=true;hostAmmo=s->ammoByWeapon;hostOwned=static_cast<std::uint8_t>(s->weaponMask);hostLoadoutValid=true;}
                 log("native_snapshot_received","\"slot\":%u,\"snapshot_seq\":%u,\"server_tick\":%u,\"map_epoch\":%u,\"connection_generation\":%u,\"entity_id\":%u,\"entity_generation\":%u,\"pos\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"pitch\":%.9g,\"bits\":[%u,%u,%u,%u,%u],\"player_writes\":0",
                     s->slotId,s->sequence,s->serverTick,s->mapEpoch,s->connectionGeneration,s->entityId,s->entityGeneration,s->posX,s->posY,s->posZ,s->yaw,s->pitch,snapshot55::bits(s->posX),snapshot55::bits(s->posY),snapshot55::bits(s->posZ),snapshot55::bits(s->yaw),snapshot55::bits(s->pitch));
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -376,15 +456,29 @@ struct Session {
             if(const auto request=input16.sample((GetAsyncKeyState('E')&0x8000)!=0,GetTickCount64(),canRequest)){
                 pse::BridgeRespawnRequest out;out.slotId=slot;out.connectionGeneration=gen;out.mapEpoch=epoch;out.deathSequence=request->death;
                 if(pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{out}))){
-                    if(!requestPending16){if(!sn7::quiesceForRespawn()){block("p16_request_quiesce");return;}p7Authority.disconnect();p7Admitted=false;}
+                    if(!requestPending16){p7Authority.disconnect();p7Admitted=false;}
                     requestPending16=true;log("p16_E_request_sent","\"slot\":%u,\"connection\":%u,\"epoch\":%u,\"death\":%u",slot,gen,epoch,out.deathSequence);
                 }
             }
         }
         pse::BridgeClientInputSample s;s.slotId=slot;s.connectionGeneration=gen;s.sampleOrdinal=++g.ordinal;s.sampledSteadyNs=steadyNs();s.simulationTick=g.ticks;
         s.valid=valid && baseline;s.moveForward=s.valid ? (g.forwardHeld?1.0f:0.0f)-(g.backHeld?1.0f:0.0f) : 0.0f;
+        if(s.valid) {
+            // Full input (v1.14): native KEX bits of Player+0 -> wire ButtonFlags + axes; the client's own pose goes along.
+            const auto b=g.buttons;
+            s.moveRight=((b>>7)&1u?1.0f:0.0f)-((b>>6)&1u?1.0f:0.0f);
+            {const int w=read<int>(primary(),0x88);s.selectedWeapon=w>=0&&w<8?static_cast<std::uint8_t>(w):0xff;}
+            s.buttons=((b&(1u<<0))?pse::BUTTON_ATTACK:0u)|((b&(1u<<1))?pse::BUTTON_JUMP:0u)|((b&(1u<<10))?pse::BUTTON_USE:0u)|
+                      ((b&(1u<<8))?pse::BUTTON_WEAPON_NEXT:0u)|((b&(1u<<9))?pse::BUTTON_WEAPON_PREV:0u);
+            // A one-tick impulse (E) must survive the 60 Hz latest-sample cadence: hold it for a few samples.
+            if(b&(1u<<10)) useHold=6;
+            if(useHold) { s.buttons|=pse::BUTTON_USE;--useHold; }
+            if(g.sector>=0 && g.sector<=32767 && std::isfinite(g.yaw) && std::isfinite(g.pitch) && std::isfinite(g.px) && std::isfinite(g.py) && std::isfinite(g.pz)) {
+                s.yaw=g.yaw;s.pitch=g.pitch;s.posX=g.px;s.posY=g.py;s.posZ=g.pz;s.sector=static_cast<std::int16_t>(g.sector);
+            }
+        }
         const bool queued=pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{s}));
-        log("client_input_sampled","\"slot\":%u,\"generation\":%u,\"sample_ordinal\":%llu,\"tick\":%llu,\"sampled_ns\":%llu,\"valid\":%s,\"kex_buttons\":%u,\"held_forward\":%u,\"held_back\":%u,\"forward\":%.1f,\"bridge_queued\":%s",slot,gen,s.sampleOrdinal,g.ticks,s.sampledSteadyNs,s.valid?"true":"false",g.buttons,g.forwardHeld,g.backHeld,s.moveForward,queued?"true":"false");
+        log("client_input_sampled","\"slot\":%u,\"generation\":%u,\"sample_ordinal\":%llu,\"tick\":%llu,\"sampled_ns\":%llu,\"valid\":%s,\"kex_buttons\":%u,\"held_forward\":%u,\"held_back\":%u,\"forward\":%.1f,\"right\":%.1f,\"wire_buttons\":%u,\"yaw\":%.4f,\"pitch\":%.4f,\"pose\":[%.1f,%.1f,%.1f],\"sector\":%d,\"bridge_queued\":%s",slot,gen,s.sampleOrdinal,g.ticks,s.sampledSteadyNs,s.valid?"true":"false",g.buttons,g.forwardHeld,g.backHeld,s.moveForward,s.moveRight,s.buttons,s.yaw,s.pitch,s.posX,s.posY,s.posZ,static_cast<int>(s.sector),queued?"true":"false");
     }
     void stop(const char* reason) {
         if(!started || stopped) return;
@@ -417,6 +511,8 @@ bool clientNeutral(void* p) { return thread() && g.inTick && p==primary() && g.n
 void __fastcall hookClientCommands(void* p) {
     if(clientNeutral(p)) neutralInput();
     reinterpret_cast<Unary>(g.original[profile::Commands])(p);
+    // "+use" style actions are one-frame impulses that the rest of Update may already have consumed: take the freshly built bits here.
+    if(p==primary() && thread() && g.inTick && !g.neutral) g.cmdButtons|=read<std::uint32_t>(p);
     if(clientNeutral(p)) neutralInput();
 }
 void __fastcall hookClientTurning(void* p) {
@@ -494,17 +590,22 @@ void __fastcall hookUpdate(void* p) {
     }
     Byte* node=read<Byte*>(p,0xd8);Byte* actor=node?read<Byte*>(node,0x28):nullptr;
     if(!actor || read<Byte*>(actor,0x10)!=node || read<void*>(actor,0x1b8)!=p || read<Byte*>(actor)!=g.base+0x52d198) { block("local_player_graph");return; }
-    if(read<std::int16_t>(actor,0x17a)<=0 || (read<unsigned>(actor,0x1c0)&0x200u)) return;
+    if(read<std::int16_t>(actor,0x17a)<=0 || (read<unsigned>(actor,0x1c0)&0x200u)) {
+        static std::uint64_t lastDeadLog=0;
+        if(g.ticks-lastDeadLog>=300) { lastDeadLog=g.ticks;log("client_player_dead","\"tick\":%llu,\"health\":%d,\"flags1c0\":%u,\"pos\":[%.1f,%.1f,%.1f],\"sector\":%d",g.ticks,read<std::int16_t>(actor,0x17a),read<unsigned>(actor,0x1c0),read<float>(actor,0x18),read<float>(actor,0x1c),read<float>(actor,0x20),read<int>(actor,0x3c)); }
+        return;
+    }
 #ifdef PSE_FEATURE_P4
     if(g.neutral) neutralInput();
 #endif
-    g.buttons=read<std::uint32_t>(p);g.forwardHeld=read<std::uint32_t>(p,0xc);g.backHeld=read<std::uint32_t>(p,0x10);g.sampled=true;
+    g.buttons=read<std::uint32_t>(p)|g.cmdButtons;g.forwardHeld=read<std::uint32_t>(p,0xc);g.backHeld=read<std::uint32_t>(p,0x10);g.sampled=true;
+    g.yaw=read<float>(actor,0x38);g.pitch=read<float>(actor,0x30);g.px=read<float>(actor,0x18);g.py=read<float>(actor,0x1c);g.pz=read<float>(actor,0x20);g.sector=read<int>(actor,0x3c);
 }
 void __fastcall hookTick(void* self) {
     if(g.stopped) { reinterpret_cast<Unary>(g.original[profile::Tick])(self);return; }
     if(self!=instance() || !thread() || g.inTick) { ++g.foreign;block("tick_affinity_or_nested");reinterpret_cast<Unary>(g.original[profile::Tick])(self);return; }
     if(!g.attested) { g.attested=true;log("simulation_attested","\"expected_tid\":%lu,\"observed_tid\":%lu",g.tid,GetCurrentThreadId()); }
-    g.inTick=true;++g.ticks;g.localThisTick=0;g.sampled=false;g.buttons=g.forwardHeld=g.backHeld=0;
+    g.inTick=true;++g.ticks;g.localThisTick=0;g.sampled=false;g.buttons=g.cmdButtons=g.forwardHeld=g.backHeld=0;
 #ifdef PSE_FEATURE_VISUAL_PROXY
     seam58.tickEnter(g.ticks);
 #endif
@@ -540,10 +641,16 @@ void __fastcall hookTick(void* self) {
             if(g.session->mapGate.state()==map56::ClientGate::State::Invalidated) worldTransition("native_map_invalidated");
             if(g.session) {
             DWORD foregroundPid{};GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
+            {
+                static std::uint64_t lastWhy=~0ull;
+                const std::uint64_t why=(g.sampled?1u:0u)|(g.localThisTick==1?2u:0u)|(gameplay()?4u:0u)|(g.failed?8u:0u)|(pse::ui::shared().capture.load()?16u:0u)|(foregroundPid==GetCurrentProcessId()?32u:0u);
+                if(why!=lastWhy) { lastWhy=why;log("client_input_gate","\"tick\":%llu,\"sampled\":%u,\"local_once\":%u,\"gameplay\":%u,\"failed\":%u,\"ui_capture\":%u,\"foreground\":%u",g.ticks,(why&1)!=0,(why&2)!=0,(why&4)!=0,(why&8)!=0,(why&16)!=0,(why&32)!=0); }
+            }
             g.session->sample(g.sampled && g.localThisTick==1 && gameplay() && !g.failed && !pse::ui::shared().capture.load() && foregroundPid==GetCurrentProcessId());
 #ifdef PSE_FEATURE_VISUAL_PROXY
             if(seam58.attached()) g.session->phase58(seam58.worldReady(g.ticks));
 #endif
+            g.session->worldSync();
             }
         }
         if((g.localUpdates==1 && g.localThisTick==1) || g.ticks<=3 || g.ticks%120==0)
@@ -561,6 +668,10 @@ void __fastcall hookTick(void* self) {
     }
     if(seam58.faults()!=faultsLogged58) { faultsLogged58=seam58.faults();pse::native_proxy::fault();block("seam_native_fault");log("seam_native_fault","\"faults\":%llu,\"seam_status\":%u,\"further_calls\":false",faultsLogged58,seam58.status()); }
 #endif
+    {   // Esc menu: gameplay state, but the local Player Update is skipped. Debounced over a few ticks.
+        static unsigned idleTicks=0;idleTicks=(gameplay() && g.localThisTick==0) ? idleTicks+1 : 0;
+        pse::ui::shared().paused.store(idleTicks>=3,std::memory_order_release);
+    }
     pse::native_ui::tick(!g.stopped && !g.failed && gameplay() && g.session && g.session->active && g.session->readySent && g.session->baseline,g.session?g.session->epoch:0,g.session?g.session->slot:255,g.session?g.session->gen:0);
     g.inTick=false;
 }
@@ -618,6 +729,7 @@ void CALLBACK bootstrap(ULONG_PTR) {
     if(!pse::native_proxy::install(g.base,g.tid,nativeProxyJournal) || seam58.registerTable(&pse::native_proxy::table())!=ERROR_SUCCESS) { block("native_proxy_install");return; }
     log("seam_registered","\"result\":0,\"abi\":\"58b00001\",\"size\":72,\"owner\":\"native_cpp\",\"external_callbacks\":false,\"before_permit\":true");
 #endif
+    if(!pse::world::install(g.base,g.tid,log,false)) {block("world_hook_install");return;}
     if(!pse::native_ui::install(g.base,g.tid,false,log)) {block("p23_ui_install");return;}
     AddVectoredExceptionHandler(0,exceptions);log("bootstrap_ready","\"game_calls\":0,\"hooks\":6,\"module_pinned\":true");
 }

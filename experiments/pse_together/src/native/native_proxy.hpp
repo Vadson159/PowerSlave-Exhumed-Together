@@ -11,6 +11,7 @@ using Journal = void(*)(const char* event, const char* json);
 // hostMode: the host DLL owns the puppet-tick detour and forwards each call to notePuppetTick().
 bool install(unsigned char* image, DWORD simulationTid, Journal journal, unsigned remoteSlot=0, bool hostMode=false);
 void notePuppetTick(void* self); // hostMode only, simulation thread
+void acceptLocalRespawn(); // the local player was respawned natively (P16): the next identity check re-baselines instead of faulting
 bool rearm(); // fresh incarnation after a world transition or a fully retired Actor; no engine calls, hooks stay
 const seam::SeamTable& table();
 void permitSpawn(); // publishes an atomic only; no game calls

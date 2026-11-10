@@ -1,7 +1,7 @@
 import ctypes,sys,time
 from ctypes import wintypes as W
 u=ctypes.WinDLL('user32',use_last_error=True);k=ctypes.WinDLL('kernel32')
-VK={'F8':0x77,'RETURN':0x0D,'ESC':0x1B,'UP':0x26,'DOWN':0x28,'LEFT':0x25,'RIGHT':0x27,'TAB':0x09,'BACKSPACE':0x08,'SPACE':0x20,'BACKSLASH':0xDC,'T':0x54,'W':0x57,'A':0x41,'S':0x53,'D':0x44,'E':0x45,'Y':0x59,'N':0x4E}
+VK={'F8':0x77,'RETURN':0x0D,'ESC':0x1B,'UP':0x26,'DOWN':0x28,'LEFT':0x25,'RIGHT':0x27,'TAB':0x09,'BACKSPACE':0x08,'SPACE':0x20,'BACKSLASH':0xDC,'T':0x54,'W':0x57,'A':0x41,'S':0x53,'D':0x44,'E':0x45,'Y':0x59,'N':0x4E,'CONTROL':0x11,'F':0x46}
 for c in '0123456789':VK[c]=ord(c)
 def hwnd_of(pid):
     r=[]
@@ -34,6 +34,17 @@ def mouse_move(dx,dy=0,steps=20):
     # Relative mouse motion (SDL raw input) delivered in small steps; the window must have the foreground.
     for _ in range(steps):
         i=IN(0,UN(mi=MI(int(dx/steps),int(dy/steps),0,0x0001,0,0)));u.SendInput(1,ctypes.byref(i),ctypes.sizeof(IN));time.sleep(0.01)
+def cursor_to(h):
+    # SendInput mouse buttons go to the window under the OS cursor: park it in the middle of the game window first.
+    r=W.RECT();u.GetWindowRect(h,ctypes.byref(r));u.SetCursorPos((r.left+r.right)//2,(r.top+r.bottom)//2)
+def fire(seconds):
+    # Hold the left mouse button (continuous attack).
+    for fl,wait in ((0x0002,seconds),(0x0004,0)):
+        i=IN(0,UN(mi=MI(0,0,0,fl,0,0)));u.SendInput(1,ctypes.byref(i),ctypes.sizeof(IN));time.sleep(wait)
+def click(hold=0.15):
+    # Left mouse button (attack) through SendInput; the window must have the foreground.
+    for fl in (0x0002,0x0004):
+        i=IN(0,UN(mi=MI(0,0,0,fl,0,0)));u.SendInput(1,ctypes.byref(i),ctypes.sizeof(IN));time.sleep(hold)
 def tap(vk,hold=0.06):
     post(vk,True);time.sleep(hold);post(vk,False)
 def text(s):

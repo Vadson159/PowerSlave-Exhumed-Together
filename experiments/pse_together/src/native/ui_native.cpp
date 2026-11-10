@@ -60,6 +60,7 @@ struct Context {
     ui::OpeningText openingText;
     ui::Menu form;
     std::string draft,status="F8: Together menu";
+    std::size_t activityKey{};std::uint64_t showUntil{};bool activityInit{}; // chat / notices stay on screen a few seconds after they change
     Void textStart{},textStop{};Flag textActive{},relative{};SetFlag relativeSet{};
     WindowById windowById{};GetWMInfo windowInfo{};
     std::atomic<IDXGISwapChain*> chain{};std::atomic<HWND> hwnd{};
@@ -236,7 +237,7 @@ void draw(IDXGISwapChain* chain) {
     std::lock_guard lock(c->uiMutex);
     // Draw a compact status/chat HUD even when the menu is closed.
     PatBlt(c->dc,0,0,Width,Height,BLACKNESS);
-    int panelHeight=100;
+    int panelHeight=100;bool pauseHint=false;
     if(c->menu) {
         panelHeight=430;text(16,12,L"POWERSLAVE EXHUMED TOGETHER",RGB(255,210,100));
         text(16,40,c->form.host?L"Create cooperative game":L"Connect to cooperative game");
@@ -252,21 +253,31 @@ void draw(IDXGISwapChain* chain) {
             text(16,y,L"P"+std::to_wstring(p->slot+1)+L" "+wide(p->displayName)+L"  "+(p->slot==0?L"HOST ":L"")+state+L"  "+std::to_wstring(p->ping)+L"ms");y+=34;
         }
     } else {
-        text(16,10,L"F8 Menu   \\ Players   T Chat",RGB(255,210,100));
-        int y=40;const auto& notices=view.notices();if(!notices.empty()){text(16,y,wide(notices.back()),RGB(130,240,180));y+=28;}
-        const auto& lines=view.messages();const std::size_t count=ui::nowMs()-c->mapAt.load()<100?2:4;
+        // In the game the panel is hidden: the hint line (F8 / players / chat) appears only while the game's own Esc menu is open.
+        // New chat lines and notices stay up for a few seconds; the composer (T) keeps the panel while typing.
+        const bool pause=ui::shared().paused.load(std::memory_order_acquire);
+        const auto& notices=view.notices();const auto& lines=view.messages();const auto now=ui::nowMs();
+        const std::size_t key=notices.size()*1315423911u+(notices.empty()?0:std::hash<std::string>{}(notices.back()))+(lines.empty()?0:static_cast<std::size_t>(lines.back().sequence)*2654435761u);
+        if(key!=c->activityKey) {c->activityKey=key;if(c->activityInit)c->showUntil=now+8000;c->activityInit=true;}
+        const bool recent=now<c->showUntil;
+        if(!pause && !recent && !c->composer)return; // nothing to show: no panel at all
+        int y=10;pauseHint=pause;
+        if(pause) {text(16,y,L"F8 Menu   \\ Players   T Chat",RGB(255,210,100));y=40;}
+        if(!notices.empty()){text(16,y,wide(notices.back()),RGB(130,240,180));y+=28;}
+        const std::size_t count=ui::nowMs()-c->mapAt.load()<100?2:4;
         const auto start=lines.size()>count?lines.size()-count:0;
         for(std::size_t i=start;i<lines.size();++i) {text(16,y,wide(lines[i].displayName+": "+lines[i].message));y+=46;}
         if(c->composer) {text(16,y,wide("> "+c->draft+"_"),RGB(120,240,255));y+=52;}
-        panelHeight=(std::max)(100,y+8);
+        panelHeight=(std::max)(pause?100:60,y+8);
+        if(pause && view.players()[view.local()<8?view.local():0]==std::nullopt)text(16,panelHeight-30,wide(c->status),RGB(255,190,130));
     }
-    if(c->menu || view.players()[view.local()<8?view.local():0]==std::nullopt)text(16,c->menu?374:panelHeight-30,wide(c->status),RGB(255,190,130));
+    if(c->menu)text(16,374,wide(c->status),RGB(255,190,130));
     GdiFlush();
     DXGI_SWAP_CHAIN_DESC desc{};if(FAILED(chain->GetDesc(&desc)))return;
     ComPtr<ID3D11Texture2D> back;ComPtr<ID3D11RenderTargetView> rtv;
     if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&back))) || FAILED(c->device->CreateRenderTargetView(back.Get(),nullptr,&rtv)))return;
     D3D11_TEXTURE2D_DESC bd{};back->GetDesc(&bd);if(bd.Width<1 || bd.Height<1)return;
-    const int yOffset=c->menu||c->board?16:(std::max)(16,static_cast<int>(bd.Height)-panelHeight-16);
+    const int yOffset=c->menu||c->board||pauseHint?16:(std::max)(16,static_cast<int>(bd.Height)-panelHeight-16);
     const float left=-1+32.0f/static_cast<float>(bd.Width),top=1-2.0f*static_cast<float>(yOffset)/static_cast<float>(bd.Height);
     const float right=left+2.0f*Width/static_cast<float>(bd.Width),bottom=top-2.0f*static_cast<float>(panelHeight)/static_cast<float>(bd.Height);
     const float v=static_cast<float>(panelHeight)/Height;
@@ -336,9 +347,23 @@ HRESULT WINAPI createDevice(IDXGIAdapter* adapter,D3D_DRIVER_TYPE type,HMODULE s
     }
 }
 } // namespace
+// The player name defaults to the Windows user name (PSE_PLAYER_NAME overrides it, e.g. for two test instances on one PC).
+std::string defaultName() {
+    std::string out;char env[64]{};
+    if(GetEnvironmentVariableA("PSE_PLAYER_NAME",env,sizeof(env)))out=env;
+    else {
+        wchar_t user[128]{};DWORD length=128;
+        if(GetUserNameW(user,&length)) {
+            char utf8[256]{};const int n=WideCharToMultiByte(CP_UTF8,0,user,-1,utf8,sizeof(utf8),nullptr,nullptr);
+            if(n>1)out.assign(utf8,static_cast<std::size_t>(n-1));
+        }
+    }
+    while(!out.empty() && (out.size()>31 || !ui::name(out)))eraseUtf8(out); // longer than the wire limit or malformed: cut at a character boundary
+    return ui::name(out)?out:std::string("Player");
+}
 bool install(unsigned char* base,DWORD tid,bool host,Logger logger) {
     if(c || GetCurrentThreadId()!=tid || !base || !logger)return false;
-    c=new Context;c->base=base;c->tid=tid;c->log=logger;c->form.host=host;
+    c=new Context;c->base=base;c->tid=tid;c->log=logger;c->form.host=host;c->form.displayName=defaultName();
     ui::shared().host=host;ui::shared().menu=c->form;
     ui::shared().eventLogger.store(logger,std::memory_order_release);
     HMODULE sdl=GetModuleHandleW(L"SDL2.dll"),d3d=GetModuleHandleW(L"d3d11.dll");if(!sdl || !d3d)return false;

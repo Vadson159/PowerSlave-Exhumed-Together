@@ -1,0 +1,300 @@
+Ran list workspace directory
+Ran search travel in PowerslaveEX source
+Analyzed travelObject.h:L1-41
+Analyzed travelObject.cpp:L1-148
+Canceled search player state saving in PowerslaveEX
+Checked task Search player state saving in PowerslaveEX
+Killed task Search player state saving in PowerslaveEX
+Ran check if rg is available · Exited with code 1
+Ran search player state in kex3_anubis source
+Analyzed player.cpp:L980-1050
+Ran find bScheduleNextMapWarp usages
+Analyzed player.cpp:L1170-1210
+Analyzed player.cpp:L1140-1175
+Ran search kexPlayer references
+Analyzed game.cpp:L480-520
+Ran search map loading functions
+Analyzed game.cpp:L1080-1160
+Ran search PersistentData
+Analyzed game.h:L180-210
+Canceled list files in PowerSlave_Exhumed_Together_mod
+Killed task List files in PowerSlave_Exhumed_Together_mod
+Ran list top level of mod folder
+Analyzed AGENTS.md:L1-34
+Ran list pse_together files
+Ran list src files in pse_together
+Ran list files in src\native
+Canceled search for travel object and offsets in mod repo
+Killed task Search for travel object and offsets in mod repo
+Analyzed weapon_pickup_p16.hpp:L1-24
+Analyzed weapon_pickup_p16.cpp:L1-100
+Ran search for offsets in src\native
+Ran search Travel, Persistent, Map in src\native
+Analyzed map_reader.hpp:L1-44
+Ran find map_identity.hpp
+Analyzed map_identity.hpp:L1-100
+Canceled search TravelObject in workspace
+Killed task Search TravelObject in workspace
+Ran list files in docs\evidence\ghidra_2022
+Ran list JSON files in ghidra_2022
+Analyzed G_INVENTORY.json:L1-100
+Ran search G_SLAVE_SYMBOLS.json
+Ran get addresses of kexSlaveTravel symbols
+Canceled search for vftable addresses in docs\evidence
+Killed task Search for vftable addresses in docs\evidence
+Analyzed G_FUNC_1401b01d0.json:L1-60
+Ran find decompiler_output in G_FUNC_1401b01d0.json
+Ran inspect keys in G_FUNC_1401b01d0.json · Exited with code 1
+Ran get property names of G_FUNC_1401b01d0.json
+Ran read pseudocode of FUN_1401b01d0
+Ran check if game exe exists
+Ran check if pefile module is available in python
+Ran inspect kexSlaveTravelObject vtable
+Ran check if capstone is available
+Ran disassemble kexSlaveTravelObject methods
+Ran disassemble kexSlaveTravelObject::OnTouch body
+Ran calculate RIP targets
+Ran check GameInstance file offset
+Ran read GameInstance vtable ptr · Exited with code 1
+Ran print PE sections
+Ran find xrefs to GameInstance in .text
+Ran find exact RIP xrefs to GameInstance
+Ran test RIP calculation on 0x140207408
+Ran find GameInstance symbols in G_SLAVE_SYMBOLS.json · Exited with code 1
+Created inspect_game.py
+Ran run inspect_game.py · Exited with code 1
+Edited inspect_game.py
+Ran run inspect_game.py
+Edited inspect_game.py
+Ran search relevant symbols
+Edited inspect_game.py
+Ran dump kexSlaveGameInstanceLocal methods
+Edited inspect_game.py
+Ran disassemble selected GameInstance methods
+Edited inspect_game.py
+Ran find calls to Player()
+Edited inspect_game.py
+Ran find RIP references to GameInstance and Player
+Checked task Find RIP references to GameInstance and Player
+Edited inspect_game.py
+Ran find accesses to offset 0x15c
+Edited inspect_game.py
+Ran disassemble around 0x1401dfb00 and 0x1401e0590
+Edited inspect_game.py
+Ran disassemble kexPlayer::Ready preamble
+Ran search P2 handling in mod src
+Analyzed host.cpp:L80-140
+Ran search GuardedPlayer
+Ran search storage usages in host.cpp
+Analyzed host.cpp:L830-900
+Ran search profile sites
+Ran search profile definitions
+Edited inspect_game.py
+Ran disassemble 0x1401dfa70
+Edited inspect_game.py
+Ran disassemble 0x1401b6a00
+Edited inspect_game.py
+Ran dump jump table targets
+Edited inspect_game.py
+Ran disassemble case 4 at 0x1401b6ac9
+Edited inspect_game.py
+Ran disassemble RestorePersistentData at 0x1401b5ce0
+Edited inspect_game.py
+Ran find accesses to 0x218
+Edited inspect_game.py
+Ran disassemble around 0x1401b6750 and 0x1401b5140
+Edited inspect_game.py
+Ran disassemble SavePersistentData at 0x1401b5b80
+Edited inspect_game.py
+Ran disassemble rest of SavePersistentData
+
+На основе анализа бинарного файла **PowerSlave Exhumed** (`anubis_Shipping_Steam_x64.exe`, SHA-256 `b8f13103...`), декомпиляции процедур перехода между картами и исходников Kaiser KEX/PowerslaveEX, сформулирована полная доказательная гипотеза.
+
+---
+
+### 1. Архитектура и гипотеза сохранения состояния между картами
+
+#### Как это работает для P1 в движке:
+1. **Инлайн-синглтон (In-Place Retention):**
+   Объект `kexPlayer` для P1 не создаётся динамически и не сериализуется во временные буферы при штатном переходе. Он внедрён непосредственно внутрь глобального синглтона `kexSlaveGameInstanceLocal` (`GameInstance` по VA **`0x140af33a0`**) со смещением **`+0x40`** (VA **`0x140af33e0`** в секции `.data`/BSS).
+2. **Поведение при выгрузке карты:**
+   При переходе уровня (`GS_CHANGELEVEL`, процедура `EnterState` Case 4 по адресу `0x1401b6ac9`) движок вызывает `kexWorld::UnloadMap` (`0x1401b6090`). Этот вызов уничтожает секторную геометрию и всех акторов (`kexActor` / `kexPuppet`), **но не освобождает и не зануляет память `0x140af33e0`**!
+3. **Обход сброса (Bypass Reset):**
+   В коде `0x1401b6ad1` проверяется флаг перезапуска уровня / загрузки сейва (`cmp byte ptr [GameInstance + 0x278], 0`). При нормальном переходе через портал/выход флаг равен `0`, и движок переходит по `je 0x1401b6b19`, **минуя** вызовы `Reset` (`0x1401dfa70`) и `RestorePersistentData` (`0x1401b5ce0`).
+4. **Спавн на новом уровне:**
+   После загрузки новой карты (`0x1401b6bd8`) спавнится новая кукла игрока (`kexPuppet`), связывается с `0x140af33e0` и вызывается `kexPlayer::Ready()` (`0x1401e04e0`). `Ready()` сбрасывает только физические переменные обзора и ключи (`keys = 0`), но **не трогает** оружие (`+0xcc`), патроны (`+0xbc`) и артефакты (`+0x90`).
+
+#### Сохраняет ли KEX инвентарь только для P1?
+**Да, исключительно для P1.**
+- Метод движка `kexSlaveGameInstanceLocal::Player()` по адресу **`0x1401b5520`** состоит ровно из:
+  ```asm
+  lea rax, [rcx + 0x40]
+  ret
+  ```
+  Он не принимает индекс игрока. Сразу за структурой `kexPlayer` (+0x40..+0x1df) с адреса `+0x1e0` начинаются строки имени карты и метаданные. Слота для P2 в оригинальном движке физически не существует.
+- В моде кукла P2 привязана к фиктивному блоку памяти `g.storage.bytes` (`GuardedPlayer`). При выгрузке карты кукла P2 уничтожается, а при спавне на новом уровне (`host.cpp`, строка 839) вызывается:
+  ```cpp
+  std::fill(std::begin(g.storage.bytes), std::end(g.storage.bytes), Byte{0});
+  ...
+  reinterpret_cast<Unary>(at(profile::Reset))(player()); // 0x1401dfa70
+  ```
+  Это принудительно обнуляет и сбрасывает весь инвентарь P2 до дефолтного (нож/пистолет).
+
+---
+
+### 2. Ключевые адреса и структуры
+
+#### А. Объект перемещения: `kexSlaveTravelObject`
+* **RTTI Type Descriptor:** `0x140a51e78`
+* **vftable:** `0x140530588`
+* **`Spawn` (Method 7):** `0x140207600` — считывает дефиниции (`mapDestination`, `giveArtifacts`, `destinationPosition`).
+* **`Tick` (Method 4):** `0x1402072b0` — декрементирует `reTriggerTime` (`+0x1bc`).
+* **`OnTouch` (Method 8):** `0x1402072e0` — инициирует смену уровня:
+  * `0x14020741c`: `mov byte ptr [Player + 0x15c], 1` — устанавливает флаг `bScheduleNextMapWarp`.
+  * `0x140207423..0x140207444`: копирует `destinationPosition` в `Player + 0x150` (`vec3`).
+  * `0x140207461`: вызов `GameInstance->RequestExit(mapName)` (`0x1401b54d0`).
+  * `0x1402075bd`: `or dword ptr [Player + 0x90], giveArtifacts` — выдача артефакта за прохождение карты.
+
+#### Б. Смещения инвентаря в `kexPlayer` (база P1 = `0x140af33e0`):
+| Поле | Смещение в `kexPlayer` | Тип | Описание |
+| :--- | :--- | :--- | :--- |
+| `ankahs` | `+0x84` | `int16_t` | Количество собранных анхов |
+| `ankahFlags` | `+0x86` | `int16_t` | Битовая маска найденных анхов |
+| `currentWeapon` | `+0x88` | `int32_t` | Текущий выбранный слот оружия (0..7) |
+| `artifacts` | `+0x90` | `uint32_t` | Битовая маска артефактов (сандалии, маска и т.д.) |
+| `questItems` | `+0x94` | `int16_t` | Квестовые предметы |
+| `abilities` | `+0x9a` | `int16_t` | Способности |
+| `teamDolls` | `+0xa4` | `uint32_t` | Куклы разработчиков (Team Dolls) |
+| `ammo[8]` | `+0xbc` | `int16_t[8]` | Запас патронов для 8 типов (16 байт) |
+| `weapons[8]` | `+0xcc` | `uint8_t[8]` | Флаги владения оружием (8 слотов, 8 байт) |
+| `node` | `+0xd8` | `void*` | Указатель на `kexNode` (`node + 0x28 == puppet actor`) |
+| `destinationPosition` | `+0x150` | `float[3]` | Координаты спавна на новой карте (X, Y, Z) |
+| `bScheduleNextMapWarp`| `+0x15c` | `uint8_t` | Флаг телепортации на точку варпа |
+| `health` (в Actor) | `Actor + 0x17a` | `int16_t` | Текущее HP живого актора куклы |
+
+#### В. Процедуры упаковки/распаковки Persistent Data:
+* **`SavePersistentData` (`0x1401b5b80`):**
+  Упаковывает инвентарь из `kexPlayer` (`rcx + 0x40`) в буфер `persistentData_t` (`rdx`, базовый адрес в игре: `GameInstance + 0x218` = **`0x140af35b8`**).
+* **`RestorePersistentData` (`0x1401b5ce0`):**
+  Распаковывает данные из `persistentData_t` обратно в поля `kexPlayer`.
+
+Структура `persistentData_t` (размер 0x2c байт):
+```cpp
+struct persistentData_t {
+    int16_t  ankahs;        // +0x00
+    int16_t  ankahFlags;    // +0x02
+    int16_t  artifacts;     // +0x04
+    int16_t  questItems;    // +0x06
+    int16_t  abilities;     // +0x08
+    int16_t  health;        // +0x0a (считывается из Actor + 0x17a)
+    int16_t  ammo[8];       // +0x0c .. +0x1b (16 байт)
+    uint8_t  weapons[8];    // +0x1c .. +0x23 (8 байт)
+    uint32_t teamDolls;     // +0x24
+    uint32_t currentWeapon; // +0x28
+};
+```
+
+---
+
+### 3. Схема сохранения и восстановления инвентаря P2 на C++
+
+Для сохранения инвентаря P2 при смене уровня необходимо:
+1. Запомнить состояние P2 перед выгрузкой карты в структуре хоста.
+2. При вызове `spawnP2()` на новой карте после штатного `Reset` внедрить сохранённые патроны, оружие и артефакты обратно в `g.storage.bytes` и здоровье в нового актора.
+
+#### Структура снимка состояния P2:
+```cpp
+// include/p2_travel.hpp
+#pragma once
+#include <array>
+#include <cstdint>
+
+struct P2TravelState {
+    bool valid{false};
+    std::array<std::uint8_t, 8>  weapons{};
+    std::array<std::uint16_t, 8> ammo{};
+    std::uint32_t artifacts{0};
+    std::int16_t  health{100};
+    std::uint32_t currentWeapon{0};
+    std::int16_t  ankahs{0};
+    std::int16_t  abilities{0};
+};
+```
+
+#### Реализация перехвата и восстановления в `host.cpp`:
+
+```cpp
+// В Context g добавляем:
+P2TravelState p2Travel{};
+
+// 1. Сохранение инвентаря P2 перед выгрузкой уровня (например, в hookStateExit или при сигнале смены карты):
+void captureP2TravelState() {
+    if (!g.p2.actor || !player()) return;
+
+    // Считываем оружие (8 слотов) и патроны (8 типов)
+    for (unsigned i = 0; i < 8; ++i) {
+        g.p2Travel.weapons[i] = read<std::uint8_t>(player(), 0xcc + i);
+        g.p2Travel.ammo[i]    = read<std::uint16_t>(player(), 0xbc + i * 2);
+    }
+
+    g.p2Travel.artifacts     = read<std::uint32_t>(player(), 0x90);
+    g.p2Travel.currentWeapon = read<std::uint32_t>(player(), 0x88);
+    g.p2Travel.ankahs        = read<std::int16_t>(player(), 0x84);
+    g.p2Travel.abilities     = read<std::int16_t>(player(), 0x9a);
+
+    // Здоровье считывается из живого актора куклы
+    std::int16_t hp = read<std::int16_t>(g.p2.actor, 0x17a);
+    g.p2Travel.health = (hp > 0) ? hp : 100; // не переносить мертвое состояние
+
+    g.p2Travel.valid = true;
+    log("p2_travel_captured", "\"artifacts\":%u,\"weapon\":%u,\"hp\":%d",
+        g.p2Travel.artifacts, g.p2Travel.currentWeapon, g.p2Travel.health);
+}
+
+// 2. Восстановление инвентаря P2 сразу после спавна на новом уровне в spawnP2():
+void restoreP2TravelState() {
+    if (!g.p2Travel.valid || !player()) return;
+
+    // Восстанавливаем арсенал и патроны в storage P2
+    for (unsigned i = 0; i < 8; ++i) {
+        own<std::uint8_t>(0xcc + i, g.p2Travel.weapons[i]);
+        own<std::uint16_t>(0xbc + i * 2, g.p2Travel.ammo[i]);
+    }
+
+    own<std::uint32_t>(0x90, g.p2Travel.artifacts);
+    own<std::int16_t>(0x84, g.p2Travel.ankahs);
+    own<std::int16_t>(0x9a, g.p2Travel.abilities);
+
+    // Восстанавливаем здоровье новому заспавненному актору куклы
+    if (g.p2.actor) {
+        *reinterpret_cast<std::int16_t*>(g.p2.actor + 0x17a) = g.p2Travel.health;
+    }
+
+    // Восстанавливаем выбранное оружие через нативный GiveWeapon (0x1401e06d0),
+    // чтобы инициировать модель оружия и анимацию в движке
+    using GiveWeaponFn = std::uint8_t(__fastcall*)(void*, int, std::uint8_t);
+    auto giveWeapon = reinterpret_cast<GiveWeaponFn>(g.base + 0x1e06d0);
+    if (g.p2Travel.currentWeapon > 0 && g.p2Travel.weapons[g.p2Travel.currentWeapon]) {
+        giveWeapon(player(), g.p2Travel.currentWeapon, 1);
+    }
+
+    log("p2_travel_restored", "\"weapons\":0x%x,\"hp\":%d",
+        g.p2Travel.weapons[1], g.p2Travel.health);
+}
+```
+
+#### Интеграция в конвейер спавна:
+Внутри `host.cpp` в функции `spawnP2()`:
+```cpp
+    // Вызов штатного сброса и спавна куклы:
+    reinterpret_cast<Unary>(at(profile::Reset))(player());
+    ...
+    actor = reinterpret_cast<Spawn>(at(profile::Spawn))(g.base + 0x5a10a0, 0, &v, yaw, sector);
+    ...
+    reinterpret_cast<Ready>(at(profile::WeaponReady))(player() + 0xe0, 0);
+
+    // СРАЗУ ПОСЛЕ ЭТОГО внедряем сохраненный инвентарь:
+    restoreP2TravelState();
+```
+
+Это полностью устраняет потерю арсенала и патронов P2 при любых переходах между картами кампании.

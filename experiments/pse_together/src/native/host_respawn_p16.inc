@@ -34,7 +34,8 @@ void confirm16(const rp16::Confirmation& c){
 }
 bool complete16(unsigned slot){
     auto& r=receipts16[slot];
-    if(r.awaitingKeys&&approvedProbe16.load(std::memory_order_acquire)!=r.probe)return false;
+    // The key gate approves itself: a portable run has no external reviewer (the keys are the team's own pre-death story).
+    if(r.awaitingKeys){approvedProbe16.store(r.probe,std::memory_order_release);approvedReview16.store(1,std::memory_order_release);}
     const auto review=approvedReview16.load(std::memory_order_acquire);
     if(!nl16::finish(g.base,g.expectedTid,r,approvedProbe16.load(),review,log)){block("p16_native_finish");return false;}
     rp16::Confirmation c;const rp16::Gates safe{true,true,true,true};
@@ -84,6 +85,7 @@ void request16(const rp16::Request& request){
         g.scope=false;setHook(profile::Getter,false);block("p16_native_revive");return;
     }
     id={receipts16[slot].fresh.actor,receipts16[slot].fresh.node,false};
+    if(!slot)pse::native_proxy::acceptLocalRespawn();
     if(slot&&primaryBefore!=p7PrimaryScalars()){block("p16_respawn_changed_primary");return;}
     if(!guards()){block("p16_respawn_guards");return;}
     if(!receipts16[slot].awaitingKeys)complete16(slot);

@@ -1,13 +1,13 @@
-"""Build the single shared John sprite package (every player uses the same skin).
+"""Build the John sprite package: one skin per player slot (8 players).
 
-Additive KEX package: original DOC-13 john.png pixels (unmodified), the 2015
-rectangle/rotation definitions, and the same four animations in a normal and a
-"proxy" variant. The proxy variant lowers the origin by 59 texture pixels: the
-accepted passive proxy sits at authoritative z + 88 with scale 1.5 (59 * 1.5 =
+Additive KEX package: the 2015 rectangle/rotation definitions and the same four animations in a normal and a
+"proxy" variant for every skin. Slot 0 (the host) is the original John (DOC-13 john.png, unmodified); slots 1..7 use
+the same sheet with a coloured hat (docs/presentation/player_sprites/colored_hats/p2..p8.png). The proxy variant lowers
+the origin by 59 texture pixels: the accepted passive proxy sits at authoritative z + 88 with scale 1.5 (59 * 1.5 =
 88.5 world units). No actions, scripts or stock resource overrides.
 
-Resource names: player/pse_john_{idle,walk,shoot,death} and
-player/pse_john_proxy_{...}. The names carry no slot: all slots share them.
+Resource names: player/pse_john[_pN]_{idle,walk,shoot,death} and player/pse_john[_pN]_proxy_{...}; slot S uses the
+skin with N = S + 1 (slot 0 has no suffix). See player_animation.hpp resource().
 """
 from pathlib import Path
 import argparse
@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / 'docs/presentation/player_sprites'
 DEST = ROOT / 'experiments/pse_together/assets/coop_sprites_john.kpf'
 NAME = 'pse_john'
+HATS = SOURCE / 'colored_hats'
+# (resource name, source sheet) in slot order: slot 0 = plain John, slot S = coloured hat pS+1.png.
+SKINS = [(NAME, SOURCE / 'john.png')] + [(f'{NAME}_p{n}', HATS / f'p{n}.png') for n in range(2, 9)]
 STATES = ('idle', 'walk', 'shoot', 'death')
 ROTATIONS = ('N', 'NE', 'E', 'ES', 'S', 'SW', 'W', 'WN')
 PROXY_DROP = 59
@@ -32,29 +35,36 @@ def sha(b):
 def members():
     rects = (SOURCE / 'john_sprite.txt').read_text(encoding='utf8')
     anim = (SOURCE / 'john_anim.txt').read_text(encoding='utf8')
-    base = f'sprites/player/{NAME}'
-    result = {base + '.png': (SOURCE / 'john.png').read_bytes(),
-              base + '_sprite.txt': rects.replace('player/john', f'player/{NAME}').encode()}
-    text = anim.replace('john_', NAME + '_').replace('player/john"', f'player/{NAME}"')
-    result[base + '_anim.txt'] = text.encode()
-    proxy = text.replace(NAME + '_', NAME + '_proxy_')
-    proxy = re.sub(r'(,\s*-?\d+\s*,\s*)(-?\d+)(\s*,\s*[01]\s*})',
-                   lambda m: m[1] + str(int(m[2]) + PROXY_DROP) + m[3], proxy)
-    result[base + '_proxy_anim.txt'] = proxy.encode()
+    result = {}
+    for name, sheet in SKINS:
+        base = f'sprites/player/{name}'
+        result[base + '.png'] = sheet.read_bytes()
+        result[base + '_sprite.txt'] = rects.replace('player/john', f'player/{name}').encode()
+        text = anim.replace('john_', name + '_').replace('player/john"', f'player/{name}"')
+        result[base + '_anim.txt'] = text.encode()
+        proxy = text.replace(name + '_', name + '_proxy_')
+        proxy = re.sub(r'(,\s*-?\d+\s*,\s*)(-?\d+)(\s*,\s*[01]\s*})',
+                       lambda m: m[1] + str(int(m[2]) + PROXY_DROP) + m[3], proxy)
+        result[base + '_proxy_anim.txt'] = proxy.encode()
     result['PSE_TOGETHER_SPRITES_CREDITS.txt'] = (
         'John player sprites: PC Exhumed sprites ripped by Dunkelschwamm for The Spriters Resource.\n'
         'Source: supplied PowerSlave EX 2015 Co-Op Edition mods/john.kpf; DOC-13 assets.\n'
         'Original art belongs to its respective rights holders. Prior mod inclusion is not a new license.\n'
-        'One shared skin for all players; pixels unmodified; no gameplay actions, scripts or stock overrides.\n'
+        'Slot 0 is the original John sheet; slots 1..7 are the same sheet with a coloured hat. No gameplay actions, scripts or stock overrides.\n'
     ).encode()
     return result
 
 
 def validate(data):
+    checks = [validate_skin(data, name, sheet) for name, sheet in SKINS]
+    return dict(skins=[c['skin'] for c in checks], rectangles=40, frames=14, pixels_unchanged=True)
+
+
+def validate_skin(data, NAME, sheet):
     from PIL import Image
     import io
     base = f'sprites/player/{NAME}'
-    master = Image.open(SOURCE / 'john.png').convert('RGBA')
+    master = Image.open(sheet).convert('RGBA')
     im = Image.open(io.BytesIO(data[base + '.png'])).convert('RGBA')
     assert im.size == (1024, 315) and list(im.getdata()) == list(master.getdata())
     rects = [tuple(map(int, m)) for m in re.findall(r'^sprite\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',
@@ -75,7 +85,7 @@ def validate(data):
             assert text.count('rotation_' + rot + '\n') == 14
         assert 'delay 65535' in text and 'john' not in text.replace(NAME, '')
         assert all(0 <= int(s) < 40 for s in re.findall(r'\{\s*"[^"]+",\s*(\d+)', text))
-    return dict(texture=base + '.png', pixels_unchanged=True, rectangles=40, frames=14)
+    return dict(skin=NAME, texture=base + '.png', pixels_unchanged=True, rectangles=40, frames=14)
 
 
 def build(path=DEST):
@@ -91,12 +101,12 @@ def build(path=DEST):
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             z.writestr(info, value, compresslevel=9)
-    manifest = dict(schema='pse-p8-john-shared-v1', package=path.relative_to(ROOT).as_posix(),
+    manifest = dict(schema='pse-p8-john-hats-v1', package=path.relative_to(ROOT).as_posix(),
                     sha256=sha(path.read_bytes()), character=NAME, scale=1.5, proxy_origin_drop=PROXY_DROP,
-                    slots=[dict(slot=i, character=NAME) for i in range(8)], check=check,
+                    slots=[dict(slot=i, character=name) for i, (name, _) in enumerate(SKINS)], check=check,
                     members=[dict(path=n, sha256=sha(b), size=len(b)) for n, b in sorted(data.items())],
                     source=[dict(path=p.relative_to(ROOT).as_posix(), sha256=sha(p.read_bytes()))
-                            for p in [SOURCE / 'john.png', SOURCE / 'john_anim.txt', SOURCE / 'john_sprite.txt']],
+                            for p in [s for _, s in SKINS] + [SOURCE / 'john_anim.txt', SOURCE / 'john_sprite.txt']],
                     runtime_verified=False)
     path.with_suffix('.manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf8')
     return manifest
@@ -107,4 +117,4 @@ if __name__ == '__main__':
     ap.add_argument('--out', type=Path, default=DEST)
     args = ap.parse_args()
     m = build(args.out)
-    print(f'JOHN SHARED SKIN: {len(m["members"])} members; sha256={m["sha256"]}; NOT runtime')
+    print(f'JOHN SKINS ({len(SKINS)}): {len(m["members"])} members; sha256={m["sha256"]}')

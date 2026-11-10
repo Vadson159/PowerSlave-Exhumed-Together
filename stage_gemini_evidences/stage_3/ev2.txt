@@ -1,0 +1,239 @@
+Ran find G_FUNC_1401a1370 file
+Ran list Ghidra decompilation evidence files
+Ran find relevant JSON files
+Analyzed read_1401a1370.py:L1-11
+Ran check FUN_1401a1370 decompilation
+Ran read full pseudocode of FUN_1401a1370
+Ran find decompiled JSONs for related functions
+Checked task Find decompiled JSONs for related functions
+Ran search keywords in workspace markdown and python files
+Checked task Search keywords in workspace markdown and python files
+Checked task Search keywords in workspace markdown and python files
+Checked task Search keywords in workspace markdown and python files
+Ran grep in 04_ACTORS_AI.md · Exited with code 1
+Ran grep in 04_ACTORS_AI.md with utf-8
+Ran grep in damage and multiplayer AI docs
+Ran decompile 6 key functions
+Ran search addresses in filenames
+Ran inspect G_FUNC_1401a1170 and G_INSPECT_1401d3460
+Ran read ACTOR_OBJECTNODE_LIFETIME_AUDIT.md
+Ran check decompiled 1401d3460
+Ran find callers of 140195000
+Ran find callers of 1401a02b0
+Canceled search for mummy references
+Checked task Search for mummy references
+Checked task Search for mummy references
+Killed task Search for mummy references
+Ran list top-level directories
+Ran find mummy in PowerslaveEX source
+Ran read mummy.txt definition
+Ran read mummy_anim.txt
+Ran list monster defs
+Ran check anubis and bastet death anims
+Ran check anubis_death in anubis_anim.txt
+Ran find action implementations in C++ source
+Ran find action line numbers in actionDef.cpp
+Ran show kexActionDestroy and kexActionTossActor
+Ran find A_GibDeath and A_MummyDeath
+Ran read A_GibDeath and A_MummyDeath in p_enemy.txt
+Ran list all sequences in mummy_anim.txt
+Ran find kexActorDef definition in source
+Ran find deathAnim parsing in source
+Ran look around deathAnim in actor.h
+Ran look more around deathAnim in actor.h
+Ran read ai.h
+Ran find Damage implementation in C++ source
+Ran read kexActor::Damage in actor.cpp
+Ran find damage methods in actor.cpp
+Ran read InflictDamage in actor.cpp
+Ran read kexActor::Remove in actor.cpp
+Ran find kexGameObject::Remove
+Ran read kexGameObject::Remove in gameObject.cpp
+Ran find OnRemove calls in source
+Ran read game.cpp OnRemove loop
+Ran grep Actor offsets in docs
+Ran check 0x1c0 in 17_MULTIPLAYER_AI.md
+Ran find 0x1c0 in Ghidra JSONs
+Ran check 0x1c0 in AI tick pseudocode
+Ran check 0x1c0 in 1401dbd00
+Ran check death and gib anims across all monsters
+Ran check mantis and set death anims
+Ran check end of set death anim
+Ran check expireAmount handling in actor.cpp
+
+### Архитектурный отчёт: Жизненный цикл смерти монстров в PowerSlave Exhumed (KEX Engine 2022)
+
+---
+
+### 1. Что происходит при падении здоровья до 0 или ниже (порог расчленения)
+
+Функция нанесения урона: **`0x1401a1370`** (`kexActor::InflictDamage`).  
+Сигнатура: `void InflictDamage(kexActor* victim, kexActor* inflictor, int damageType, short damageAmount)`
+
+```c
+// Дизассемблированная логика 0x1401a1370:
+if ((victim->flags & 0x20) != 0) { // AF_SHOOTABLE (0x20)
+    victim->flashTicks = 1;        // +0x134 = 1
+    victim->flags |= 0x10;         // AF_FLASH (0x10)
+    
+    // Проверка: если уже играет анимация смерти — игнорировать урон
+    if (victim->curAnim != def->deathAnim && 
+        victim->curAnim != def->deathWaterAnim && 
+        victim->curAnim != def->gibAnim) 
+    {
+        if (damageType == 2) FUN_1401a0c70(victim); // Огонь / лава
+
+        if (victim->health > 0) {
+            victim->health -= damageAmount; // +0x17a (int16)
+            
+            // vtable[9] (+0x48): OnDamage (kexSlaveAI::OnDamage -> 0x140195050)
+            victim->vtable->OnDamage(victim, inflictor);
+
+            if (victim->health < 1) { // Здоровье <= 0
+                // Формула порога расчленения (Gib Threshold):
+                int gibThreshold = -2 - (def->maxHealth >> 4); // def + 0x50: maxHealth
+                bool isGib = (victim->health < gibThreshold);
+                
+                // Тип урона 1 (взрыв) или 2 (разрыв) принудительно вызывает расчленение:
+                if (damageType == 1 || damageType == 2) {
+                    isGib = true;
+                }
+
+                // Снятие флага уязвимости (больше урон не принимается)
+                victim->flags &= ~0x20; // flags &= ~AF_SHOOTABLE
+
+                // Выбор целевой анимации смерти:
+                uintptr_t anim = def->deathAnim; // def + 0xb8
+                if ((victim->flags & 0x400) && def->deathWaterAnim != 0) { // 0x400: AF_INWATER
+                    anim = def->deathWaterAnim; // def + 0xc0
+                } else if (isGib && def->gibAnim != 0) {
+                    anim = def->gibAnim; // def + 0xc8
+                }
+
+                // 0x1401a1170: Установка анимации и немедленное исполнение Action-хуков кадра 0
+                FUN_1401a1170(victim, anim);
+
+                // vtable[10] (+0x50): OnDeath
+                victim->vtable->OnDeath(victim, inflictor);
+            }
+        }
+    }
+}
+```
+
+#### Ключевые выводы по порогу гибели:
+1. **Порог расчленения:** $-2 - \lfloor\frac{\text{maxHealth}}{16}\rfloor$. Если конечное здоровье ниже этого значения либо тип урона `damageType == 1` (взрыв) / `damageType == 2` (критический/лавовый), активируется ветка расчленения.
+2. **Флаги и состояние:** При гибели здоровье обнуляется (`+0x17a <= 0`), флаг уязвимости `0x20` (`AF_SHOOTABLE`) снимается в `+0x16c`, а в `kexSlaveAI::OnDamage` (`0x140195050`) стейт переводится в `AIS_DEAD` (`+0x1b8 = 5`).
+
+---
+
+### 2. Мумии: Анимация падения vs разрыв на куски (`mummy_death`)
+
+В ходе анализа файлов определений монстров (`res/defs/actors/monsters/mummy.txt`) и анимационных скриптов (`res/sprites/monsters/mummy_anim.txt`) выявлен критический факт:
+
+> [!IMPORTANT]
+> **У Мумии (и большинства регулярных монстров в PowerSlave Exhumed) ВООБЩЕ НЕТ анимации падения трупом.**  
+> В оригинальном дизайне мумии при гибели всегда разрываются на куски бинтов и плоти. Единственная зарегистрированная анимация смерти у мумии — это `monsters/mummy_death`. Длинные анимации падения трупом (30 кадров) присутствуют только у боссов (Сет `set_death`, Селкис `selkis_death`).
+
+#### Как работают осколки (Gibs):
+Спавн осколков **встроен прямо в анимационную последовательность** `mummy_death`:
+```text
+mummy_death
+{
+    frame
+    {
+        action A_GibDeath(0.0)                                          // 1. Спавн крови/мяса Fx_Gibs01
+        action A_MummyDeath()                                           // 2. Звук смерти (mumdeath01..03.wav)
+        action A_TossActor("Obj_Mummy_Gib01", 0, 0, 32, 8, 8, 4, 16)    // 3. Вызов cActorFactory->Spawn
+        action A_TossActor("Obj_Mummy_Gib02", 0, 0, 32, 8, 8, 4, 16)
+        action A_TossActor("Obj_Mummy_Gib03", 0, 0, 32, 8, 8, 4, 16)
+        action A_TossActor("Obj_Mummy_Gib03", 0, 0, 32, 8, 8, 4, 16)
+        action A_TossActor("Obj_Mummy_Gib04", 0, 0, 32, 8, 8, 4, 16)
+        action A_TossActor("Obj_Mummy_Gib04", 0, 0, 32, 8, 8, 4, 16)
+        action A_Destroy()                                              // 4. Вызов actor->Remove() (0x1401a02b0)
+        delay 1
+    }
+}
+```
+
+- Осколки (`Obj_Mummy_Gib01..04`) — это легковесные временные объекты (`expires 1`), спавнящиеся нативным `cActorFactory->Spawn`. Они разлетаются по физике со случайным импульсом, постепенно уменьшаются в размерах (`scale -= scale / 32`) и сами удаляются движком.
+- Сам монстр на этом же 0-м кадре исполняет действие `A_Destroy()`, которое вызывает нативный `kexActor::Remove()` (`0x1401a02b0`).
+
+---
+
+### 3. Сравнение вариантов А, Б, В для сетевой синхронизации
+
+Хост присылает клиенту пакет: *«Монстр с индексом X погиб (тип смерти / урон)»*.
+
+```mermaid
+flowchart TD
+    Host["Хост: Монстр погиб"] --> Net["Пакет: MonsterDeath(ID, DeathType)"]
+    Net --> Client["Клиент получает событие"]
+    Client --> VarB["Рекомендуемый Вариант Б:
+    ChangeAnim(deathAnim) + AI State = DEAD"]
+    VarB --> Actions["Выполнение экшенов кадра 0:
+    - Звук смерти
+    - Разлёт осколков (A_TossActor)
+    - Нативный A_Destroy() -> Remove()"]
+    Actions --> Safe["Безопасный перенос в removal-queue
+    UAF / Dangling Pointer = 0"]
+```
+
+| Критерий | **Вариант А: Вызвать `TakeDamage` (`0x1401a1370`)** | **Вариант Б: `ChangeAnim` (`0x1401a1170`) + стейт** | **Вариант В: Прямой `Remove` (`0x1401a02b0`)** |
+| :--- | :--- | :--- | :--- |
+| **Визуальный ряд** | Полный (звук, кровь, разлёт осколков мумии). | **Полный** (звук, кровь, разлёт осколков мумии). | **Отсутствует.** Враг мгновенно исчезает в воздухе (`AF_HIDDEN`). |
+| **Аудио** | Воспроизводится штатный звук. | **Воспроизводится** штатный звук. | Тишина (звук срезается). |
+| **Побочные эффекты (Side Effects)** | **ВЫСОКИЙ РИСК:**<br>1. При смерти боссов вызываются ачивки Steam (`ACH_DEFEAT_*`) локально на клиенте в `0x140195050`.<br>2. Если передать `inflictor != NULL`, код полезет менять таргеты и refcount `ObjectNode`. | **ОТСУТСТВУЮТ:**<br>Изолирован от кода ачивок и AI-таргетинга. Запускает только визуально-физическую презентацию гибели. | **ОТСУТСТВУЮТ.** |
+| **Риск UAF / Dangling Pointer** | **Низкий** (но есть риск задеть чужие ноды через `inflictor`). | **НАИНИЗШИЙ (САМЫЙ БЕЗОПАСНЫЙ):**<br>Анимация сама вызывает нативный `A_Destroy()`, ставящий актор в штатную очередь очистки движка. | **СРЕДНИЙ / ВЫСОКИЙ:**<br>Прямой вызов `Remove` вне естественного цикла может нарушить ссылки, если другие объекты держат `ObjectNode` актора. |
+| **Контроль хоста** | Непрямой (зависит от переданного урона). | **ПОЛНЫЙ:** Хост может явно указать нужную анимацию (`deathAnim`, `gibAnim`, `deathWaterAnim`). | Нет (смерть отсутствует как фаза). |
+
+---
+
+### 4. Рекомендованный протокол исполнения (Вариант Б)
+
+Для клиента безопасным и визуально идентичным синглплееру решением является **Вариант Б** с заполнением минимального набора флагов.
+
+#### Точный адресный вызов на клиенте:
+
+1. **Обнулить здоровье и снять флаг уязвимости:**
+   ```cpp
+   // Снимаем AF_SHOOTABLE (0x20), чтобы предотвратить локальные коллизии урона
+   *(uint32_t*)((uintptr_t)actor + 0x16c) &= ~0x20;
+   *(int16_t*)((uintptr_t)actor + 0x17a) = 0; // Health = 0
+   ```
+
+2. **Перевести AI в состояние смерти:**
+   ```cpp
+   // AIS_DEAD = 5 (предотвращает тики логики преследования/атаки на клиенте)
+   *(int32_t*)((uintptr_t)actor + 0x1b8) = 5;
+   ```
+
+3. **Получить указатель на анимацию смерти из `ActorDef`:**
+   ```cpp
+   uintptr_t actorDef = *(uintptr_t*)((uintptr_t)actor + 0x170); // def (+0x170)
+   
+   // Смещения в ActorDef:
+   // +0xb8: deathAnim (стандартная смерть / разрыв мумии)
+   // +0xc0: deathWaterAnim (смерть в воде)
+   // +0xc8: gibAnim (принудительный разрыв, если задан отдельно)
+   uintptr_t targetAnim = *(uintptr_t*)(actorDef + 0xb8);
+   if (bInWater && *(uintptr_t*)(actorDef + 0xc0) != 0) {
+       targetAnim = *(uintptr_t*)(actorDef + 0xc0);
+   }
+   ```
+
+4. **Вызвать функцию смены стейта / анимации (`0x1401a1170`):**
+   ```cpp
+   typedef void (*t_ChangeAnim)(void* actor, uintptr_t anim);
+   t_ChangeAnim ChangeAnim = (t_ChangeAnim)0x1401a1170;
+   
+   ChangeAnim(actor, targetAnim);
+   ```
+
+#### Что произойдет в результате этого вызова:
+- Функция `0x1401a1170` запишет `actor->curAnim = targetAnim` (`+0x108`) и сбросит таймеры.
+- Немедленно выполнятся все действия первого кадра анимации:
+  1. Сыграет звук мумии `A_MummyDeath()`.
+  2. Нативная фабрика спавнит разлетающиеся куски `Obj_Mummy_Gib01..04`.
+  3. Вызовется `A_Destroy()`, который безопасно вызовет `0x1401a02b0` (`kexActor::Remove()`), выставив флаг `bStale = 1` (`actor + 0x40`) и скрыв актор.
+- Память монстра корректно уйдёт в нативную removal-queue (`0x140af3380`) и очистится сборщиком мусора KEX на границе тика без каких-либо повисших указателей (UAF).

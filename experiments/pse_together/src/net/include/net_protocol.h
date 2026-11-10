@@ -18,7 +18,7 @@ namespace pse {
 // ============================================================================
 
 constexpr uint32_t NET_MAGIC = 0x50534558; // 'P','S','E','X'
-constexpr uint16_t NET_PROTOCOL_VERSION = 0x0113; // P23 decision 2026-11-06; no downgrade.
+constexpr uint16_t NET_PROTOCOL_VERSION = 0x0114; // v1.14 (Milestone 2): INPUT carries the full client pose; v1.13 was P23.
 constexpr uint32_t MAX_PLAYERS = 8;
 constexpr uint8_t HOST_SLOT_ID = 0; // P1
 constexpr size_t MAX_PACKET_SIZE = 4096;
@@ -156,8 +156,10 @@ enum ButtonFlags : uint32_t {
     BUTTON_ATTACK = 1u << 0,
     BUTTON_JUMP   = 1u << 1,
     BUTTON_USE    = 1u << 2, // 'E' key
-    BUTTON_CROUCH = 1u << 3,
-    BUTTON_SPRINT = 1u << 4
+    BUTTON_CROUCH = 1u << 3, // PowerSlave has no crouch: reserved, never sent
+    BUTTON_SPRINT = 1u << 4,
+    BUTTON_WEAPON_PREV = 1u << 5,
+    BUTTON_WEAPON_NEXT = 1u << 6
 };
 
 // ============================================================================
@@ -501,6 +503,10 @@ struct MsgInputCommand {
     float    moveRight = 0.0f;
     uint32_t buttons = 0;
     uint8_t  selectedWeapon = 0;
+    // v1.14: the client's own position and sector (client simulates itself, the host mirrors it on P2).
+    // sector < 0: no pose in this command (neutral/stale sample), the host must ignore pitch/yaw/pos.
+    float    posX = 0.0f, posY = 0.0f, posZ = 0.0f;
+    int16_t  sector = -1;
 
     void serialize(ByteWriter& w) const {
         w.writeUint8(slotId);
@@ -513,6 +519,10 @@ struct MsgInputCommand {
         w.writeFloat(moveRight);
         w.writeUint32(buttons);
         w.writeUint8(selectedWeapon);
+        w.writeFloat(posX);
+        w.writeFloat(posY);
+        w.writeFloat(posZ);
+        w.writeUint16(static_cast<uint16_t>(sector));
     }
 
     bool deserialize(ByteReader& r) {
@@ -526,6 +536,10 @@ struct MsgInputCommand {
         if (!r.readFloat(moveRight)) return false;
         if (!r.readUint32(buttons)) return false;
         if (!r.readUint8(selectedWeapon)) return false;
+        if (!r.readFloat(posX)) return false;
+        if (!r.readFloat(posY)) return false;
+        if (!r.readFloat(posZ)) return false;
+        { uint16_t raw = 0; if (!r.readUint16(raw)) return false; sector = static_cast<int16_t>(raw); }
         return true;
     }
 };

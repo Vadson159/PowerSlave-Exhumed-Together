@@ -36,6 +36,8 @@ struct BridgeInputCommand {
     float    moveRight = 0.0f;
     uint32_t buttons = 0;
     uint8_t  selectedWeapon = WEAPON_PISTOL;
+    float    posX = 0.0f, posY = 0.0f, posZ = 0.0f; // client pose (v1.14); sector < 0 = none
+    int16_t  sector = -1;
 
     // Bridge-internal (never serialized): rising button edges and press counts
     // accumulated by the network worker across every wire command coalesced into
@@ -56,6 +58,7 @@ struct BridgeInputCommand {
         dto.moveRight = net.moveRight;
         dto.buttons = net.buttons;
         dto.selectedWeapon = net.selectedWeapon;
+        dto.posX = net.posX; dto.posY = net.posY; dto.posZ = net.posZ; dto.sector = net.sector;
         return dto;
     }
 
@@ -71,6 +74,7 @@ struct BridgeInputCommand {
         net.moveRight = moveRight;
         net.buttons = buttons;
         net.selectedWeapon = selectedWeapon;
+        net.posX = posX; net.posY = posY; net.posZ = posZ; net.sector = sector;
         return net;
     }
 };
@@ -87,6 +91,13 @@ struct BridgeClientInputSample {
     uint64_t simulationTick = 0;
     bool valid = false;
     float moveForward = 0.0f;
+    // Full client input (v1.14): buttons use the wire ButtonFlags, axes are -1..1, angles/pos are the client actor's own.
+    float moveRight = 0.0f;
+    uint32_t buttons = 0;
+    float yaw = 0.0f, pitch = 0.0f;
+    float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
+    int16_t sector = -1;
+    uint8_t selectedWeapon = 0xff; // the client's active weapon (Player+0x88); 0xff = unknown. The host's P2 follows it.
 };
 
 // 2. Player State Snapshot DTO (Best-Effort, 30 Hz)

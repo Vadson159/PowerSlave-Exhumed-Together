@@ -1,0 +1,347 @@
+Ran list Ghidra evidence directory
+Ran search for G_FUNC_1401bccb0
+Ran search for 1401bea70
+Ran list all G_FUNC json files
+Ran find mover files
+Ran search docs for door/mover/switch
+Ran find md files in docs
+Ran find anubis_Shipping_Steam_x64.exe
+Ran inspect G_FUNC_1401bccb0 properties · Exited with code 1
+Ran inspect JSON keys
+Ran print function info and pseudocode head
+Ran print entire pseudocode of FUN_1401bccb0
+Ran search world.cpp for kexSlaveMover
+Ran read UseWallSpecial from world.cpp
+Ran find calls and 1405a10a0 in assembly · Exited with code 1
+Ran find calls and 1405a10a0 in assembly · Exited with code 1
+Created inspect_1401bccb0.py
+Ran run inspect_1401bccb0.py · Exited with code 1
+Created check_asm_type.py
+Ran run check_asm_type.py
+Edited inspect_1401bccb0.py
+Ran run inspect_1401bccb0.py
+Created dump_asm_1401bccb0.py
+Ran run dump_asm_1401bccb0.py
+Created find_xrefs.py
+Ran run find_xrefs.py
+Created check_pe.py
+Ran run check_pe.py · Exited with code 1
+Created read_pe.py
+Ran run read_pe.py
+Created inspect_1401d4e20.py
+Ran run inspect_1401d4e20.py
+Ran search for ObjectFactory
+Canceled search for SpawnMover in cpp/h files
+Checked task Search for SpawnMover in cpp/h files
+Killed task Search for SpawnMover in cpp/h files
+Ran search SpawnMover in source code folders
+Ran read actorFactory.h
+Ran read SpawnMover in actorFactory.cpp
+Created inspect_1401bea70.py
+Ran run inspect_1401bea70.py
+Ran search for SectorSpecial in world.cpp
+Created dump_asm_1401d4e20.py
+Ran run dump_asm_1401d4e20.py
+Created read_mover_h.py
+Ran run read_mover_h.py
+Ran read SetSector in mover.cpp
+Ran read kexDoor::Spawn in mover.cpp
+Ran read rest of kexDoor::Spawn
+Ran search for mapSector_t definition
+Ran read mapSector_t in world.h
+Ran read lines 25 to 80 of world.h
+Ran read SendRemoteTrigger in world.cpp
+Ran find SendRemoteTrigger implementation
+Ran read ReadSectors in world.cpp
+Ran read lines 210 to 240 of world.cpp
+Created find_sectors_xrefs.py
+Ran run find_sectors_xrefs.py
+Created find_readsectors.py
+Ran run find_readsectors.py
+Created find_readsectors_func.py
+Ran run find_readsectors_func.py
+Created find_rip_ref.py
+Ran run find_rip_ref.py
+Ran check string around ReadSectors
+Created find_rip_ref2.py
+Ran run find_rip_ref2.py
+Ran check capstone · Exited with code 1
+Ran read execute_rizin_command schema
+Used MCP tool: rea/execute_rizin_command
+Ran search Ghidra logs for 1401d0
+Created inspect_1401d3230.py
+Ran run inspect_1401d3230.py
+Created inspect_1401d3d70.py
+Ran run inspect_1401d3d70.py
+Created inspect_sector_offsets.py
+Ran run inspect_sector_offsets.py
+Ran read mapFace_s in world.h
+Ran read lines 118 to 175 of world.h
+Ran read MoveSector in world.cpp
+Ran read lines 890 to 955 of MoveSector
+Ran read lines 956 to 1010 of MoveSector
+Ran read kexDoor::Tick in mover.cpp
+Ran read lines 240 to 280 of mover.cpp
+Ran read kexMover::Remove in mover.cpp
+Created check_faces_stride.py
+Ran run check_faces_stride.py
+Ran check actorFactory.h methods
+Created find_mover_classes.py
+Ran run find_mover_classes.py
+Created find_string_vas.py
+Ran run find_string_vas.py
+
+# Рабочая гипотеза: Механизм создания моверов дверей и лифтов (KEX 2022)
+
+> **Статус документа:** Рабочая гипотеза для верификации на стенде (M1 Network Replication). Выводы получены путем перекрестного анализа бинарного файла `anubis_Shipping_Steam_x64.exe` (Ghidra/PE-дампы) и исходников `PowerslaveEX` (`actorFactory.cpp`, `mover.cpp`, `world.cpp`).
+
+---
+
+## 1. Краткое резюме гипотезы
+
+Механизм управления подвижными секторами (двери, лифты, опускающиеся/поднимающиеся платформы) в KEX Engine 2022 унаследован из архитектуры `kexActorFactory::SpawnMover`. Двери и лифты **не являются статическими свойствами сектора** — при активации (по нажатию `Use` или при пересечении триггера) создается динамический объект-мыслитель (`kexSlaveMoverDoor`, `kexSlaveMoverLift` и др.), который регистрируется в глобальном списке мыслителей (`cThinkerList`) и покадрово в методе `Tick()` вызывает `kexWorld::MoveSector(...)`, физически сдвигая вершины геометрии, обновляя GPU-буферы и пересчитывая плоскости `plane.d`.
+
+Для сетевой репликации дверей/переключателей на клиенте наиболее чистым подходом является **событийная репликация**: при получении сетевого пакета хоста клиент вызывает виртуальный метод `SpawnMover` глобальной фабрики `0x1405a10a0` с соответствующим типом и индексом сектора. Однако прямой вызов функции из фонового сетевого потока категорически недопустим из-за неблокирующей модификации глобального связного списка мыслителей; вызов должен диспетчеризироваться строго в основном потоке симуляции игрового тика.
+
+---
+
+## 2. Анализ и дизассемблерные свидетельства
+
+### 2.1. Точки входа и глобальные структуры
+* **База образа (ImageBase):** `0x140000000`
+* **Глобальный экземпляр фабрики (`kexActorFactory` / `kexSlaveObjectFactory`):**
+  * **VA:** `0x1405a10a0` (RVA: `0x5a10a0`, секция `.data`)
+  * **Таблица виртуальных методов (vftable):** `0x14052c078` (RVA: `0x52c078`, секция `.rdata`)
+* **Виртуальный метод `SpawnMover` (Слот `+0x28` / Index 5):**
+  * **VA:** `0x1401d4e20` (RVA: `0x1d4e20`, секция `.text`)
+* **Секторный массив и счетчик:**
+  * Указатель на массив секторов: `DAT_140a45968` (VA `0x140a45968`)
+  * Количество секторов: `DAT_140a45970` (VA `0x140a45970`)
+  * Размер структуры сектора (stride): `0x88` (136 байт)
+
+---
+
+### 2.2. Сигнатура `SpawnMover` (`FUN_1401d4e20`)
+
+Дизассемблирование пролога и проверок в `0x1401d4e20`:
+```assembly
+.text:0x1401d4e20  mov     qword ptr [rsp+18h], rbx
+.text:0x1401d4e25  push    rbp
+.text:0x1401d4e26  push    rdi
+.text:0x1401d4e27  push    r14
+.text:0x1401d4e29  sub     rsp, 30h
+.text:0x1401d4e2d  mov     r14d, r8d             ; R14D = type (R8D)
+.text:0x1401d4e30  mov     rdi, rdx              ; RDI  = className (RDX)
+.text:0x1401d4e33  cmp     r9d, -1               ; R9D  = sectorIndex
+.text:0x1401d4e37  jle     loc_fail              ; if (sectorIndex <= -1) return NULL;
+.text:0x1401d4e3d  mov     rax, [140a45970h]     ; RAX  = numSectors
+.text:0x1401d4e44  cmp     r9d, eax
+.text:0x1401d4e47  jge     loc_fail              ; if (sectorIndex >= numSectors) return NULL;
+.text:0x1401d4e4d  movsxd  rbx, r9d
+.text:0x1401d4e6e  imul    rbp, rbx, 88h         ; смещение в массиве секторов (stride 0x88)
+.text:0x1401d4e75  add     rbp, [140a45968h]     ; RBP = &sectors[sectorIndex]
+.text:0x1401d4e7c  test    byte ptr [rbp+14h], 4 ; проверка флага SF_SPECIAL (0x04)
+.text:0x1401d4e80  jnz     loc_fail              ; if (sector->flags & SF_SPECIAL) return NULL;
+```
+
+Инициализация объекта и регистрация в тикере:
+```assembly
+.text:0x1401d4f7a  mov     rdi, [140aeafa0h]     ; RDI = global thinker head
+.text:0x1401d4f81  mov     [rbx+0b8h], r14d      ; mover->m_type = type
+.text:0x1401d4f88  mov     [rbx+0c0h], rbp       ; mover->m_sector = &sectors[sectorIndex]
+.text:0x1401d4f8f  call    FUN_1401d5820         ; выделить узел thinker (list node)
+.text:0x1401d4f99  mov     rcx, [rdi+8]          ; вставка узла в двусвязный список DAT_140aeafa0
+.text:0x1401d4fa8  mov     [rcx], rax            ; (без захвата спинлока/мьютекса!)
+...
+.text:0x1401d4fc6  mov     rcx, [rbx]            ; RCX = mover->vtable
+.text:0x1401d4fcd  mov     rdx, [rcx+38h]        ; RDX = mover->CallSpawn (vtable[7])
+.text:0x1401d4fd1  mov     rcx, rbx              ; RCX = this (mover)
+.text:0x1401d4fd4  call    rdx                   ; mover->CallSpawn()
+.text:0x1401d4fdb  mov     rax, rbx              ; возврат указателя на созданный kexSlaveMover*
+```
+
+#### Расшифровка аргументов `SpawnMover`:
+* **RCX (`this`):** Указатель на экземпляр `kexActorFactory` (в бинарнике это статический объект по адресу `0x1405a10a0`).
+* **RDX (`className`):** `const char*` — имя RTTI-класса мовера. Допустимые имена в KEX 2022:
+  * `"kexSlaveMoverDoor"` (VA: `0x14052aec0`)
+  * `"kexSlaveMoverLift"` (VA: `0x14052afd0`)
+  * `"kexSlaveMoverLiftImmediate"` (VA: `0x14052af18`)
+  * `"kexSlaveMoverFloor"` (VA: `0x14052af80`)
+  * `"kexSlaveMoverDropPad"` (VA: `0x14052b6a8`)
+  * `"kexSlaveMoverFloatingPlatform"` (VA: `0x14052b758`)
+* **R8 (`type`):** `int32_t` — тип триггера / события из структуры `mapEvent_t::type`:
+  * `1` — обычная дверь (открывается вверх, ждет 90 тиков, закрывается).
+  * `3..6` — двери с цветными ключами.
+  * `8..9` — опускающиеся двери (закрываются навсегда / секреты).
+  * `21` (`0x15`), `24` (`0x18`) — платформы/лифты.
+  * `23` (`0x17`) — опускающийся пол (floor).
+* **R9 (`sectorIndex`):** `int32_t` — целевой сектор (из `mapEvent_t::sector`).
+* **Возвращаемое значение (RAX):** `kexSlaveMover*` (или `nullptr`, если сектор некорректен или уже занят).
+
+---
+
+### 2.3. Места вызова в движке
+1. **`kexWorld::UseWallSpecial` (`0x1401bccb0`):**
+   ```assembly
+   0x1401bcd98  mov   rax, [1405a10a0h]       ; RAX = vtable
+   0x1401bcd9f  lea   rdx, [14052aec0h]       ; "kexSlaveMoverDoor"
+   0x1401bcda6  movsx r9d, word ptr [rbx+2]   ; sectorIndex (из event->sector)
+   0x1401bcdab  lea   rcx, [1405a10a0h]       ; this
+   0x1401bcdb2  call  qword ptr [rax+28h]     ; CALL SpawnMover
+   ```
+2. **`kexWorld::EnterSectorSpecial` (`0x1401bea70`):**
+   При наступании на триггерный сектор вызывает `SpawnMover` со строками `"kexSlaveMoverLift"` (`0x14052afd0`) и `"kexSlaveMoverFloor"` (`0x14052af80`).
+
+---
+
+## 3. Смещения структуры сектора (Stride 0x88) и геометрия высот
+
+В `anubis_Shipping_Steam_x64.exe` массив секторов размещен по указателю `*DAT_140a45968`. Структура `mapSector_t` имеет размер 136 байт (`0x88`):
+
+| Смещение | Тип | Поле | Назначение |
+|---|---|---|---|
+| `+0x00` | `int16_t` | `faceStart` | Индекс первой грани сектора |
+| `+0x02` | `int16_t` | `faceEnd` | Индекс последней настенной грани сектора |
+| `+0x04` | `int16_t` | `lightLevel` | Уровень освещенности |
+| `+0x06` | `int16_t` | `ceilingHeight` | Номинальная базовая высота потолка (из карты) |
+| `+0x08` | `int16_t` | `floorHeight` | Номинальная базовая высота пола (из карты) |
+| `+0x0C` | `float` | `ceilingSlope` | Уклон потолка |
+| `+0x10` | `float` | `floorSlope` | Уклон пола |
+| `+0x14` | `uint16_t` | `flags` | Флаги сектора (`0x0004` = `SF_SPECIAL` — сектор движется!) |
+| `+0x18` | `float[6]` | `bounds` | Bounding Box сектора (`kexBBox`, 24 байта) |
+| `+0x30` | `int32_t` | `event` | Индекс события `mapEvent_t` (-1 если нет) |
+| `+0x60` | `void*` | `objectThinker` | Указатель на активный объект мовера (или NULL) |
+| `+0x68` | `mapFace_t*`| `floorFace` | Указатель на грань пола (`&faces[faceEnd + 2]`) |
+| `+0x70` | `mapFace_t*`| `ceilingFace` | Указатель на грань потолка (`&faces[faceEnd + 1]`) |
+| `+0x78` | `void*` | `actorList` | Список акторов внутри сектора |
+
+### Где физически хранится текущая высота и плоскость?
+Поля `ceilingHeight` (`+0x06`) и `floorHeight` (`+0x08`) в структуре сектора являются **статическими целочисленными константами карты** (они используются мовером как конечные цели `destHeight`).
+
+**Текущая физическая высота в динамике определяется плоскостью граней:**
+1. Переходим по указателю: `floorFace = *(mapFace_t**)(sector + 0x68)` или `ceilingFace = *(mapFace_t**)(sector + 0x70)`.
+2. В структуре `mapFace_t` плоскость `kexPlane plane` расположена со смещения `+0x0C`:
+   * `+0x0C`: `float normal.x`
+   * `+0x10`: `float normal.y`
+   * `+0x14`: `float normal.z`
+   * `+0x18`: `float plane.d` (коэффициент смещения плоскости $Ax + By + Cz + D = 0$).
+3. Для горизонтального пола ($\vec{N} = (0, 0, 1)$): текущая высота $Z = -D$.
+4. В коде инициализации мовера (`kexDoor::Spawn`):
+   ```cpp
+   baseHeight = -sector->ceilingFace->plane.d;
+   currentHeight = baseHeight;
+   ```
+
+> [!WARNING]
+> **Прямая модификация `plane.d` или `floorHeight` опасна!**  
+> Движок KEX Engine при движении сектора (`kexWorld::MoveSector`) не просто меняет $D$, а физически модифицирует $Z$-координаты вершин в массиве `vertices`, добавляет задачи обновления в кольцевой буфер GPU (`kexRenderScene::bufferUpdateList`), двигает вершины смежных портальных стен и обновляет `bounds`. Если просто записать число в память по смещению `+0x18`, визуальная геометрия на экране останется на старом месте!
+
+---
+
+## 4. Предлагаемый C++ прототип хелпера для клиента
+
+```cpp
+#pragma once
+#include <cstdint>
+#include <string_view>
+
+namespace PSE::MoverReplication
+{
+    // Сигнатура SpawnMover из anubis_Shipping_Steam_x64.exe (RVA 0x1d4e20)
+    using fnSpawnMover_t = void* (__fastcall*)(
+        void*        thisFactory,
+        const char*  className,
+        int32_t      type,
+        int32_t      sectorIndex
+    );
+
+    // Смещения относительно базового адреса модуля anubis
+    inline constexpr uintptr_t RVA_ACTOR_FACTORY = 0x5a10a0; // Экземпляр фабрики
+    inline constexpr uintptr_t RVA_SPAWN_MOVER   = 0x1d4e20; // Прямой адрес метода
+    inline constexpr uintptr_t RVA_SECTORS_PTR   = 0xa45968; // DAT_140a45968
+    inline constexpr uintptr_t RVA_SECTOR_COUNT  = 0xa45970; // DAT_140a45970
+    inline constexpr size_t    SECTOR_STRIDE     = 0x88;
+    inline constexpr uint16_t  SF_SPECIAL        = 0x0004;
+
+    struct SectorProbe
+    {
+        uint16_t flags;
+        float    ceilingHeightPlane;
+        float    floorHeightPlane;
+        bool     isMoving;
+    };
+
+    class MoverClientHelper
+    {
+    public:
+        // Вызывать СТРОГО В ГЛАВНОМ ПОТОКЕ (Game Tick Hook)!
+        static void* Client_SpawnMover(uintptr_t baseAddr, std::string_view className, int32_t type, int32_t sectorIndex)
+        {
+            if (sectorIndex < 0) return nullptr;
+
+            uint32_t numSectors = *reinterpret_cast<uint32_t*>(baseAddr + RVA_SECTOR_COUNT);
+            if (static_cast<uint32_t>(sectorIndex) >= numSectors) return nullptr;
+
+            uintptr_t sectorsBase = *reinterpret_cast<uintptr_t*>(baseAddr + RVA_SECTORS_PTR);
+            uintptr_t sectorAddr = sectorsBase + (sectorIndex * SECTOR_STRIDE);
+
+            // Проверка: если сектор уже находится в движении, SpawnMover вернет nullptr
+            uint16_t flags = *reinterpret_cast<uint16_t*>(sectorAddr + 0x14);
+            if (flags & SF_SPECIAL)
+            {
+                // Сектор уже движется (локальная симуляция или повторный пакет)
+                return nullptr;
+            }
+
+            void* factory = reinterpret_cast<void*>(baseAddr + RVA_ACTOR_FACTORY);
+            auto pfnSpawnMover = reinterpret_cast<fnSpawnMover_t>(baseAddr + RVA_SPAWN_MOVER);
+
+            return pfnSpawnMover(factory, className.data(), type, sectorIndex);
+        }
+
+        // Вспомогательная диагностика состояния сектора
+        static SectorProbe GetSectorState(uintptr_t baseAddr, int32_t sectorIndex)
+        {
+            SectorProbe probe{};
+            uintptr_t sectorsBase = *reinterpret_cast<uintptr_t*>(baseAddr + RVA_SECTORS_PTR);
+            uintptr_t sectorAddr = sectorsBase + (sectorIndex * SECTOR_STRIDE);
+
+            probe.flags = *reinterpret_cast<uint16_t*>(sectorAddr + 0x14);
+            probe.isMoving = (probe.flags & SF_SPECIAL) != 0;
+
+            uintptr_t floorFace = *reinterpret_cast<uintptr_t*>(sectorAddr + 0x68);
+            uintptr_t ceilingFace = *reinterpret_cast<uintptr_t*>(sectorAddr + 0x70);
+
+            if (floorFace)
+                probe.floorHeightPlane = -(*reinterpret_cast<float*>(floorFace + 0x18));
+            if (ceilingFace)
+                probe.ceilingHeightPlane = -(*reinterpret_cast<float*>(ceilingFace + 0x18));
+
+            return probe;
+        }
+    };
+}
+```
+
+---
+
+## 5. Потенциальные риски и подводные камни
+
+1. **Потокобезопасность (Thread Safety):**
+   * Внутри `SpawnMover` (по смещению `0x1401d4f99`) узел мыслителя мовера вставляется в глобальный двусвязный список `DAT_140aeafa0`. Эта операция **не защищена мьютексом**. Если вызвать `SpawnMover` из сетевого потока ENet, произойдет повреждение указателей и краш движка в цикле `Tick()`.
+   * **Решение:** Сетевые пакеты о моверах должны складываться в потокобезопасную очередь (`ThreadSafeQueue<MoverEvent>`) и исполняться в хуке начала тика мира (например, перед `kexWorld::Tick`).
+
+2. **Защита от повторного запуска (`SF_SPECIAL = 0x04`):**
+   * Если клиент уже начал открывать дверь по локальному взаимодействию, флаг `0x04` уже выставлен. Приход сетевого пакета от хоста в этот момент приведет к тому, что `SpawnMover` просто вернет `NULL` и проигнорирует команду.
+   * **Риск:** Если хост уже закрывает дверь, а клиент все еще считает её открывающейся, произойдет рассинхронизация фаз.
+
+3. **Коллизии и реверс дверей (Door Crushing / Blocking):**
+   * В логике `kexDoor::Tick` заложено: если дверь опускается (`DS_DOWN`) и на пути оказывается игрок или монстр (`!CheckActorHeight(...)`), дверь переключается обратно в `DS_UP` и поднимается на `destHeight = raiseHeight`.
+   * **Риск:** Если на клиенте игрок встал под дверь, а на хосте дверь свободна — на клиенте дверь откроется заново, а на хосте закроется. Локальная автономная симуляция разойдется с сервером.
+
+4. **Отсутствие анимации выключателей и звуков щелчка:**
+   * Сам по себе `SpawnMover` инициирует исключительно физическое движение сектора. Переключение текстур кнопок/рубильников на стенах (`FUN_1401bd1b0` / `UseWallSwitch`), воспроизведение звука `sounds/switch.wav` и взведение битмаски переключателей (`DAT_140a45ac0`) происходят в `UseWallSpecial` **до** вызова `SpawnMover`.
+   * **Решение:** Для переключателей необходимо либо дополнительно вызывать хелпер переключения текстуры грани, либо реплицировать событие переключателя отдельно от мовера.
+
+5. **Скриптовые триггеры карты (Delayed Map Scripts):**
+   * Некоторые триггеры секторов (например, типы 50, 52, 63 в `0x1401bea70`) вызывают скрипты `CallDelayedMapScript(tag, actor)`. Вызов `SpawnMover` для них бессмысленен, так как они управляются скриптовой виртуальной машиной KEX.

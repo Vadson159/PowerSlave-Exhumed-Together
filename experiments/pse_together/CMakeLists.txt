@@ -50,7 +50,7 @@ target_compile_options(pse_session PRIVATE ${PSE_STRICT})
 add_library(pse_together SHARED
   src/native/dll_main.cpp src/native/host.cpp src/native/client.cpp
   src/native/native_proxy.cpp src/native/self_native_p16.cpp
-  src/native/weapon_pickup_p16.cpp src/native/ui_native.cpp src/native/gameplay_p14.cpp)
+  src/native/weapon_pickup_p16.cpp src/native/ui_native.cpp src/native/gameplay_p14.cpp src/native/world_sync.cpp)
 target_compile_features(pse_together PRIVATE cxx_std_20)
 target_compile_definitions(pse_together PRIVATE UNICODE _UNICODE)
 target_compile_options(pse_together PRIVATE ${PSE_STRICT})

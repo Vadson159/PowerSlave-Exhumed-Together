@@ -5,7 +5,7 @@
 #include <stdexcept>
 
 namespace pse::ui {
-static_assert(NET_PROTOCOL_VERSION == 0x0113, "P23 must never compile against a frozen protocol");
+static_assert(NET_PROTOCOL_VERSION == 0x0114, "P23 must never compile against a frozen protocol");
 struct Request {
     std::uint64_t sequence{}; std::uint32_t generation{}; std::string message;
     bool valid() const { return sequence && generation && chat(message); }

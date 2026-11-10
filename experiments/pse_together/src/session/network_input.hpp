@@ -8,6 +8,8 @@ namespace m12a {
 using Logger = void(*)(const char*, const char*, ...);
 // Set by the host DLL: receives the verified respawn request of the remote player (simulation thread only).
 extern void (*respawnHandler)(const pse::BridgeRespawnRequest&);
+// Set by the host DLL: world requests of the remote player (mover spawned / key picked up on the client), simulation thread only.
+extern void (*worldRequestHandler)(const pse::BridgeInteractionRequest&);
 struct InputTimeout {
     std::uint64_t ticks=6;
     std::uint64_t wallMs=150;
@@ -25,6 +27,14 @@ public:
     void stop(const char* reason);
     bool wantsPlayer() const { return active && ready && !stopped; }
     std::uint32_t nativeButtons() const { return buttons; }
+    // Rising edges (attack/jump/use/weapon) seen since the last call, as native button bits: a one-tick tap must reach P2 even if
+    // the latest-state coalescing swallowed the held state. Consumed once per P2 update.
+    std::uint32_t takeNativeEdges() { const auto e = pendingEdges; pendingEdges = 0; return e; }
+    // The remote player's own view and position (v1.14). valid only while commands keep arriving.
+    struct Pose { float yaw{}, pitch{}, x{}, y{}, z{}; int sector{-1}; bool valid{}; };
+    const Pose& pose() const { return remotePose; }
+    // The remote player's active weapon (0..7) from its latest command; 0xff = unknown.
+    std::uint8_t selectedWeapon() const { return remoteWeapon; }
     std::uint32_t generation() const { return gen; }
     std::uint32_t sequence() const { return lastSeq; }
     std::uint64_t acceptedAt() const { return lastInputTick; }
@@ -32,6 +42,10 @@ public:
     // Optional, first-level diagnostic contract; configure before start().
     bool configureNativeSnapshots(std::uint32_t levelEpoch);
     bool publishNativeSnapshot(pse::BridgePlayerSnapshot snapshot);
+    // Reliable world event to the connected client (doors, keys). False when no client is ready in this world.
+    // Best-effort world snapshot (enemies) to the connected client; dropped when the queue is full or no client is ready.
+    bool publishWorldSnapshot(std::vector<pse::EntitySnapshot>&& entities);
+    bool publishWorldEvent(std::uint16_t type,std::uint32_t source,std::uint32_t target,std::int32_t value);
     std::uint32_t mapEpoch() const { return epoch; }
     // DOC56 opt-in: native map identity bound to a non-constant epoch; configure before start().
     bool configureNativeMap(const map56::Identity& identity,std::uint32_t levelEpoch);
@@ -64,5 +78,9 @@ private:
     map56::HostGate gate;
     std::string nativeDomain;
     bool nativeMap{};
+    std::uint32_t worldSequence{}, worldSnapshotSequence{};
+    std::uint32_t pendingEdges{};
+    Pose remotePose{};
+    std::uint8_t remoteWeapon{0xff};
 };
 } // namespace m12a

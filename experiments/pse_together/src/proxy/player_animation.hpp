@@ -15,8 +15,9 @@ inline const char* name(Pose p) {
 }
 inline std::array<char,64> resource(unsigned slot,Pose pose,bool proxy) {
     std::array<char,64> out{};
-    // Every slot shares one skin (John). The slot only gates the valid range.
-    if(slot<8) std::snprintf(out.data(),out.size(),"player/pse_john_%s%s",proxy?"proxy_":"",name(pose));
+    // One skin per slot: the host (slot 0) is plain John, slot S wears the coloured hat sheet pS+1 (build_john_sprites.py).
+    if(slot==0) std::snprintf(out.data(),out.size(),"player/pse_john_%s%s",proxy?"proxy_":"",name(pose));
+    else if(slot<8) std::snprintf(out.data(),out.size(),"player/pse_john_p%u_%s%s",slot+1,proxy?"proxy_":"",name(pose));
     return out;
 }
 class Animation {

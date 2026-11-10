@@ -1,0 +1,497 @@
+Ran list directory contents
+Canceled list docs directory
+Killed task List docs directory
+Ran find cpp files in mod
+Killing task Find cpp files in mod
+Ran list mod src directory · Exited with code 1
+Ran list PowerSlave_Exhumed_Together_mod root
+Ran list experiments
+Analyzed inspect_ai.py:L1-22
+Ran list ghidra_2022 directory
+Ran find json files in ghidra_2022
+Ran search 140194ce0 in mod directory
+Ran list all G_FUNC files
+Ran find path to G_FUNC_1401a1170.json
+Ran locate specific G_FUNC files
+Ran print pseudocode of 140194ce0
+Ran inspect FUN_14019f2d0
+Ran inspect FUN_14019f2d0 lines 100-250
+Ran inspect FUN_1401a1940
+Ran inspect FUN_1401a1170
+Ran search 140194ce0 in experiments/*.py
+Analyzed inspect_ai_tick.py:L1-13
+Analyzed inspect_ai_damage.py:L1-13
+Ran inspect AI function cluster
+Ran inspect 140195050 and 140195580
+Ran print complete pseudocode of 140194ce0
+Ran find cpp in pse_together
+Ran search patterns in client.cpp
+Ran search in native_proxy.cpp
+Ran search actor_tick in src/native
+Analyzed proxy_profile.hpp:L1-23
+Ran inspect 1401db8a0
+Ran inspect 1401a1370
+Ran find xrefs to 140194ce0
+Ran search 140194ce0 across docs · Exited with code 1
+Ran inspect FUNCTION_CATALOG.json entries
+Ran count functions in catalog
+Ran keys of FUNCTION_CATALOG.json
+Ran find records in FUNCTION_CATALOG.json
+Canceled search 527610 in repo
+Killed task Search 527610 in repo
+Ran find exe and dll files · Exited with code 1
+Ran find game binaries outside docs
+Ran search enemy source files
+Analyzed actor.h:L1-150
+Analyzed p_enemy.txt:L1-100
+Ran find functions in actor.cpp
+Analyzed actor.cpp:L75-140
+Analyzed actor.cpp:L345-375
+Analyzed actor.cpp:L490-540
+Ran find enemy classes in PowerslaveEX source
+Analyzed actorFactory.cpp:L1-100
+Ran search kexAI in PowerslaveEX source
+Analyzed ai.h:L1-100
+Analyzed ai.cpp:L1-100
+Analyzed ai.cpp:L100-220
+Ran read kexAI::UpdateMovement in ai.cpp
+Ran search replication mechanisms
+Ran read native_proxy.cpp update lines
+Ran search PSE_FEATURE_P8 in src/native
+Analyzed native_proxy.cpp:L290-340
+Ran search Binding::apply in native
+Ran search player_art in pse_together · Exited with code 1
+Analyzed sprite_binding.hpp:L1-61
+Ran read mapActor_t in world.h
+Analyzed world.h:L150-185
+Ran search puppet_tick and actorTick in native_proxy.cpp
+Analyzed native_proxy.cpp:L500-535
+Ran find virtual methods in gameObject.h
+
+Error: API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable. (Error ID: b09b1e01-c0aa-4b32-9ddd-b03f429dd17d-142)
+
+Ran find subclasses of kexAI
+Analyzed anubis.txt:L1-50
+Ran find collision checks in cmodel.cpp
+Analyzed cmodel.cpp:L590-670
+Ran find Draw/Render in actor.h
+Ran find node and render files
+Ran find Actor/Sprite rendering in renderScene.cpp · Exited with code 1
+Ran find renderScene.cpp
+Ran find Actor/Sprite in renderScene.cpp
+Analyzed renderScene.cpp:L915-960
+Ran search interpolants in native_proxy.cpp
+Ran find bNoTargetEnemy in ai.cpp
+Analyzed ai.cpp:L340-360
+
+Error: API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable. (Error ID: b09b1e01-c0aa-4b32-9ddd-b03f429dd17d-169)
+
+Ran read UpdateSprite in actor.cpp
+Ran search bounds in actor.cpp
+Analyzed native_proxy.cpp:L380-440
+Ran find spawn details in native_proxy.cpp
+Analyzed native_proxy.cpp:L345-380
+
+### 1. Архитектурная гипотеза
+
+В PowerSlave Exhumed (Kex3 Engine) все монстры (Анубисы, Мумии, Пауки, Сетки, Осы и т.д.) являются экземплярами одного нативного класса — **`kexAI`**, наследуемого от базового класса **`kexActor`**. Различия между видами монстров задаются исключительно данными (`kexDict* definition`, смещение `Actor + 0x170`), содержащими ссылки на кадры, звуки и параметры поведения.
+
+Принцип репликации монстров:
+```
+           [ ХОСТ (Authoritative) ]
+      kexAI::Tick (0x140194ce0) РАБОТАЕТ
+      - Поиск целей (0x140195580)
+      - Навигация/атака (0x1401971e0)
+      - Урон и здоровье (0x1401a1370)
+                     │
+         [ Сетевой пакет снапшота ]
+         (MapRecordIndex, Pos, Yaw, Pose, Health)
+                     │
+                     ▼
+           [ КЛИЕНТ (Dumb Screen) ]
+      1. kexAI::Tick (0x140194ce0) — ЗАХУКАН (логика решений отсечена).
+      2. kexActor::InflictDamage (0x1401a1370) — ЗАХУКАН (локальный урон заблокирован).
+      3. Позиция (0x18) и угол (0x38) задаются интерполятором клиента.
+      4. Анимация переключается через kexActor::ChangeAnim (0x1401a1170).
+      5. Сектор обновляется через kexActor::LinkSector (0x1401d3d70).
+```
+
+---
+
+### 2. Реверс-инжиниринг ключевых функций
+
+#### А. Анализ функции ИИ-тика: `0x140194ce0` (`kexAI::Tick`)
+В декомпилированном листинге 2022 года функция имеет следующий вид:
+```c
+ulonglong FUN_140194ce0(longlong param_1) {
+    // 1. Проверка удаления / инвалидации
+    if (*(char *)(param_1 + 0x40) != '\0') { ... }
+
+    // 2. Конечный автомат ИИ (если монстр жив: iVar5 != 5 / AIS_DEAD)
+    iVar5 = *(int *)(param_1 + 0x1b8);
+    if (iVar5 != 5) {
+        // ChangeStateFromAnim: синхронизация стейта с текущей анимацией
+        lVar9 = *(longlong *)(param_1 + 0x170); // pActorDef
+        lVar6 = *(longlong *)(param_1 + 0x108); // current anim
+        if (lVar6 == *(longlong *)(lVar9 + 0x178)) *(int*)(param_1 + 0x1b8) = 1; // AIS_CHASE
+        else if (lVar6 == *(longlong *)(lVar9 + 0xb0)) *(int*)(param_1 + 0x1b8) = 0; // AIS_IDLE
+        else if (lVar6 == *(longlong *)(lVar9 + 0x188)) *(int*)(param_1 + 0x1b8) = 3; // AIS_MELEE
+        else if (lVar6 == *(longlong *)(lVar9 + 0x180)) *(int*)(param_1 + 0x1b8) = 2; // AIS_PAIN
+
+        // 3. Таймер принятия решений
+        fVar11 = *(float *)(param_1 + 0x1c0) - *(float *)(param_1 + 0x1bc); // curThinkTime -= thinkTime
+        *(float *)(param_1 + 0x1c0) = fVar11;
+        if (fVar11 <= 0.0) {
+            // Если цель мертва — сброс на spawnAnim
+            ...
+            if (iVar5 == 0)      FUN_140195580(param_1); // LookForTarget()
+            else if (iVar5 == 1) FUN_1401971e0(param_1); // ChaseTarget() (навигация, спавн файрболов/атак)
+            else if (iVar5 == 3) { /* FaceTarget (поворот к цели) */ }
+            *(float *)(param_1 + 0x1c0) += 1.0f;
+        }
+    }
+
+    // 4. ДЕЛЕГИРОВАНИЕ В БАЗОВЫЙ ТИК АКТОРА:
+    uVar8 = FUN_14019f2d0(param_1); // kexActor::Tick(param_1)
+    return uVar8;
+}
+```
+**Вывод по `0x140194ce0`:**
+Функция целиком состоит из двух частей:
+1. Принятие решений, агро, поворот и атака (строки до вызова базового класса).
+2. Вызов `FUN_14019f2d0` (`kexActor::Tick`), где происходит физическое перемещение (`UpdateMovement`), гравитация и смена кадров спрайта (`UpdateSprite` / `0x1401a1940`).
+
+#### Б. Анализ функции установки анимации: `0x1401a1170` (`kexActor::ChangeAnim`)
+```c
+void FUN_1401a1170(longlong param_1, longlong param_2) {
+    // param_1 = kexActor* this
+    // param_2 = spriteAnim_t* changeAnim
+    if (param_2 != 0) {
+        *(short *)(param_1 + 0x178) = 0;       // frameID = 0 (сброс на начальный кадр)
+        *(float *)(param_1 + 0x114) = 0.0f;    // ticks = 0 (сброс времени внутри кадра)
+        *(longlong *)(param_1 + 0x108) = param_2; // anim = changeAnim (активная анимация)
+
+        // Выполнение действий (actions/triggers) 0-го кадра анимации
+        ...
+    }
+}
+```
+**Вывод по `0x1401a1170`:**
+Это атомарный метод смены анимационной последовательности. Он сбрасывает счетчики кадров в 0 и прописывает указатель на новую анимацию. Именно его использует движок при любых переходах состояний.
+
+#### В. Сопутствующие критические функции:
+* **`0x1401a1370` (`kexActor::InflictDamage`):** Вычитает HP (`*(short*)(actor + 0x17a)`), ставит флаг вспышки урона `AF_FLASH` (`actor + 0x134 = 1`), вызывает виртуальные `OnDamage` (`vtable + 0x48`) и `OnDeath` (`vtable + 0x50`), а при смерти переключает на `deathAnim` (`0x1401a1170`).
+* **`0x1401a1940` (`kexActor::UpdateSprite`):** Продвигает кадры анимации внутри `anim` по дельте времени (60 Гц), меняя `frameID` (`+0x178`) и зацикливая анимацию.
+
+---
+
+### 3. Ответы на исследовательские вопросы
+
+#### 1. Какой хук или флаг лучше всего использовать на клиенте, чтобы заблокировать логику монстров?
+* **Нативного флага нет:** В структуре `kexActor::flags` (`+0x16c`) нет флага «Disable AI». Флаги вроде `AF_NOADVANCEFRAMES` или снятие `AF_MOVEABLE` не останавливают поиск целей и стрельбу проджектайлами в `kexAI::Tick`.
+* **Рекомендуемый хук:** **Detour на `0x140194ce0` (`kexAI::Tick`).**
+  На клиенте при вызове для мобов мы **полностью пропускаем** блок решений `kexAI` (не вызываем `LookForTarget` и `ChaseTarget`).
+  *Что вызывать вместо оригинального тика?*
+  Вызывать нативную `0x1401a1940` (`kexActor::UpdateSprite`) для плавной локальной смены кадров спрайта, но **НЕ** вызывать `0x14019f2d0` (`kexActor::Tick`), чтобы локальная гравитация и физика не спорили с координатами хоста.
+* **Второй обязательный хук:** **Detour на `0x1401a1370` (`kexActor::InflictDamage`).**
+  На клиенте любой входящий локальный урон по мобам должен глушиться (`return`), чтобы выстрелы клиента не приводили к локальному рассинхрону здоровья и ложной смерти врага до подтверждения с хоста.
+
+#### 2. Если отключить ИИ-тик, продолжает ли движок обновлять рендеринг актора?
+* **ДА, продолжает.** В Kex Engine рендеринг (`kexRenderScene::PrepareSprites` -> `DrawSprite`) выполняется в отдельном графическом проходе и никак не зависит от того, вызвался ли `kexAI::Tick`. Рендерер просто берет координаты `actor->Origin()`, угол `actor->Yaw()` и текущий кадр `actor->Frame()` из памяти актора.
+* **Два критических условия видимости:**
+  1. **Анимация спрайта:** Чтобы монстр не скользил «замороженной статуей», в хуке тика вызывается `0x1401a1940` (`UpdateSprite`).
+  2. **Секторная привязка:** При обновлении координат от хоста клиент **обязан** обновлять сектор монстра через нативную функцию `kexActor::LinkSector` (`0x1401d3d70`). Если монстр перейдет в соседнюю комнату, но останется привязан к старому сектору, движок отсечет его по PVS, и монстр исчезнет с экрана.
+
+#### 3. Какая нативная функция отвечает за принудительную смену позы/анимации монстра?
+* Функция: **`0x1401a1170` (`kexActor::ChangeAnim`)**.
+* Сигнатура: `void __fastcall kexActor_ChangeAnim(void* actor, void* animPtr)`.
+* **Откуда брать `animPtr`?**
+  Каждый монстр хранит указатели на свои базовые анимации в структуре своего описания `*(longlong*)(actor + 0x170)`:
+  * `+0xb0` — `spawnAnim` (стойка / Idle)
+  * `+0x178` — `chaseAnim` (ходьба / бег)
+  * `+0x180` — `painAnim` (получение урона)
+  * `+0x188` — `meleeAnim` / `rangeAttackAnim` (ата
+
+Error: The stream was interrupted. Please continue the task you were working on. (Error ID: b09b1e01-c0aa-4b32-9ddd-b03f429dd17d-181)
+
+Продолжаем с места прерывания. Ниже представлен полный аналитический отчет ведущего инженера по реверс-инжинирингу.
+
+---
+
+### 1. Архитектурная гипотеза и устройство сущностей
+
+В PowerSlave Exhumed (Kex3 Engine) все монстры (Анубисы, Мумии, Пауки, Селкис, Сет, Осы и т.д.) являются экземплярами **единого нативного класса `kexAI`**, наследуемого от базового класса `kexActor`. Индивидуальные параметры (здоровье, радиус, скорость, ссылки на анимации) задаются через словарь описания сущности `kexDict* definition`, на который указывает поле **`Actor + 0x170`**.
+
+Для каждого монстра, расставленного дизайнером на уровне, существует постоянная запись спавна `mapActor_t` в массиве карты. Поле **`Actor + 0x180`** указывает на эту запись. Поскольку хост и клиент загружают один и тот же файл карты (`.kpf`), порядковый индекс записи карты `mapActor` является **100% детерминированным глобальным идентификатором монстра (`EntityId`)**, не требующим согласования при спавне.
+
+#### Архитектурная схема:
+```
+           [ ХОСТ (Authoritative) ]
+      kexAI::Tick (0x140194ce0) РАБОТАЕТ
+      - Поиск целей (0x140195580)
+      - Навигация/атака (0x1401971e0)
+      - Полный симулятор физики и урона
+                     │
+         [ Сетевой пакет снапшота ]
+         (MapRecordIndex, Pos[3], Yaw, PoseID, Health)
+                     │
+                     ▼
+           [ КЛИЕНТ (Dumb Screen) ]
+      1. kexAI::Tick (0x140194ce0) — ЗАХУКАН (логика решений монстра отсечена).
+      2. kexActor::InflictDamage (0x1401a1370) — ЗАХУКАН (локальный урон заглушен).
+      3. Позиция (0x18) и Yaw (0x38) выставляются интерполятором клиента.
+      4. Анимация переключается через kexActor::ChangeAnim (0x1401a1170).
+      5. Сектор актуализируется через kexActor::LinkSector (0x1401d3d70).
+```
+
+---
+
+### 2. Анализ функций `0x140194ce0` и `0x1401a1170`
+
+#### А. Функция ИИ-тика монстров: `0x140194ce0` (`kexAI::Tick`)
+Анализ декомпилированного кода подтверждает точное соответствие исходникам Kex Engine:
+```c
+ulonglong FUN_140194ce0(longlong param_1) { // param_1 = kexAI* (this)
+    // 1. Проверка на удаление актора
+    if (*(char *)(param_1 + 0x40) != '\0') { ... }
+
+    // 2. Конечный автомат ИИ (если монстр жив: state != 5 / AIS_DEAD)
+    iVar5 = *(int *)(param_1 + 0x1b8);
+    if (iVar5 != 5) {
+        // ChangeStateFromAnim: синхронизация стейта с анимацией из def (Actor + 0x170)
+        lVar9 = *(longlong *)(param_1 + 0x170); // pActorDef
+        lVar6 = *(longlong *)(param_1 + 0x108); // anim (текущая анимация)
+        if (lVar6 == *(longlong *)(lVar9 + 0x178)) *(int*)(param_1 + 0x1b8) = 1; // AIS_CHASE
+        else if (lVar6 == *(longlong *)(lVar9 + 0xb0)) *(int*)(param_1 + 0x1b8) = 0; // AIS_IDLE
+        else if (lVar6 == *(longlong *)(lVar9 + 0x188)) *(int*)(param_1 + 0x1b8) = 3; // AIS_MELEE
+        else if (lVar6 == *(longlong *)(lVar9 + 0x180)) *(int*)(param_1 + 0x1b8) = 2; // AIS_PAIN
+
+        // 3. Таймер принятия решений
+        fVar11 = *(float *)(param_1 + 0x1c0) - *(float *)(param_1 + 0x1bc); // curThinkTime -= thinkTime
+        *(float *)(param_1 + 0x1c0) = fVar11;
+        if (fVar11 <= 0.0) {
+            if (iVar5 == 0)      FUN_140195580(param_1); // LookForTarget() (сканирование радиуса агро)
+            else if (iVar5 == 1) FUN_1401971e0(param_1); // ChaseTarget() (поиск пути, выстрелы файрболами)
+            else if (iVar5 == 3) { /* FaceTarget (доворот к игроку через atan2f) */ }
+            *(float *)(param_1 + 0x1c0) += 1.0f;
+        }
+    }
+
+    // 4. ДЕЛЕГИРОВАНИЕ В БАЗОВЫЙ ТИК АКТОРА:
+    uVar8 = FUN_14019f2d0(param_1); // kexActor::Tick(param_1)
+    return uVar8;
+}
+```
+* **Анатомия функции:**
+  1. Верхняя половина — **автономный мозг монстра**: захват игрока в таргет (`LookForTarget`), расчет траектории преследования и запуск проджектайлов (`ChaseTarget`).
+  2. Финал — безусловный вызов `0x14019f2d0` (`kexActor::Tick`), где происходит физическое интегрирование скорости (`UpdateMovement`), гравитация и смена кадров спрайта (`UpdateSprite` / `0x1401a1940`).
+
+#### Б. Функция установки анимации: `0x1401a1170` (`kexActor::ChangeAnim`)
+```c
+void FUN_1401a1170(longlong param_1, longlong param_2) {
+    // param_1 = kexActor* this (RCX)
+    // param_2 = spriteAnim_t* changeAnim (RDX)
+    if (param_2 != 0) {
+        *(short *)(param_1 + 0x178) = 0;          // frameID = 0 (сброс на начальный кадр)
+        *(float *)(param_1 + 0x114) = 0.0f;       // ticks = 0 (сброс субкадрового таймера)
+        *(longlong *)(param_1 + 0x108) = param_2; // anim = changeAnim (указатель на новую анимацию)
+
+        // Итерация по actions кадра 0 (триггеры звуков/событий кадра)
+        ...
+        plVar2 = *(longlong **)(*(longlong *)(lVar1 + 8) + uVar4 * 8);
+        (**(code **)(*plVar2 + 0x20))(plVar2, param_1); // action->Execute(this)
+    }
+}
+```
+* **Анатомия функции:**
+  Метод атомарно заменяет текущую анимационную последовательность монстра, сбрасывает счетчики воспроизведения в 0 и активирует триггеры первого кадра.
+
+---
+
+### 3. Ответы на ключевые вопросы
+
+#### 1. Какой хук или флаг лучше всего использовать на клиенте?
+* **Флагов движка недостаточно:** В битовой маске `actor->flags` (`Actor + 0x16c`) нет флага отключения логики ИИ. Снятие флагов вроде `AF_MOVEABLE` отключает физику движения, но монстр продолжит поворачиваться к игроку, спавнить файрболы и переключать стейты.
+* **Решение:** Необходима связка из двух хуков:
+  1. **Detour на `0x140194ce0` (`kexAI::Tick`):**
+     На клиенте мы **полностью отсекаем ветку ИИ-решений** (никогда не вызываем `ChaseTarget` и `LookForTarget`). Чтобы спрайт не застыл, вызывается нативный тикер кадров спрайта `0x1401a1940` (`kexActor::UpdateSprite`). При этом вызов общего тика `0x14019f2d0` блокируется, чтобы локальная гравитация и физика не конфликтовали с сетевыми координатами хоста.
+  2. **Detour на `0x1401a1370` (`kexActor::InflictDamage`):**
+     На клиенте входящий урон по монстрам глушится (ранний `return`). Здоровье и смерть монстров симулируются исключительно хостом, предотвращая рассинхронизацию HP от выстрелов клиента.
+
+#### 2. Продолжает ли движок обновлять рендеринг актора при отключении ИИ-тика?
+* **Да, продолжает.** Графический пайплайн Kex Engine (`kexRenderScene::PrepareSprites` -> `DrawSprite`) выполняется в независимом потоке/проходе рендера. Он считывает `actor->Origin()`, `actor->Yaw()` и `actor->Frame()` напрямую из структуры актора.
+* **Два обязательных условия для корректной картинки:**
+  1. *Анимация:* В хуке тика необходимо вызывать `0x1401a1940` (`UpdateSprite`), иначе монстр будет перемещаться как статичная фигура без переключения кадров.
+  2. *Секторная видимость (PVS):* При перемещении координат монстра клиент обязан вызывать нативную функцию `kexActor::LinkSector` (`0x1401d3d70`). Если монстр пересечет портал в другой сектор, но останется привязан к старому, движок отсечет его по окклюзии, и монстр исчезнет.
+
+#### 3. Какая функция отвечает за принудительную смену позы монстра?
+* Нативная функция: **`0x1401a1170` (`kexActor::ChangeAnim`)**.
+* **Адреса анимаций:** Клиенту не нужно искать строки в таблицах ресурсов во время боя. Описатель монстра `*(Actor + 0x170)` уже содержит кэшированные указатели на ключевые анимации:
+  * `+0xb0` — `spawnAnim` (стойка / Idle)
+  * `+0x178` — `chaseAnim` (ходьба / бег)
+  * `+0x180` — `painAnim` (получение урона)
+  * `+0x188` — `meleeAnim` / `attackAnim` (атака ближняя/дальняя)
+  * `+0xb8` — `deathAnim` (смерть)
+  * `+0xc0` — `deathWaterAnim` (смерть в воде)
+  * `+0xc8` — `gibAnim` (разрыв на куски)
+
+  Хост может передавать компактный 1-байтный `enum PoseId { Idle=0, Walk=1, Pain=2, Attack=3, Death=4, Gib=5 }`, а клиент берет соответствующий указатель из смещения `Actor + 0x170` и передает его в `0x1401a1170`.
+
+#### 4. Подводные камни с коллизиями врагов на клиенте
+В коллизионной модели движка (`kexCModel::MoveActor`) проверяется флаг твердости **`AF_SOLID`** (`Actor + 0x16c`):
+* **Проблема физического упора:** Если на клиенте у монстра оставлен `AF_SOLID`, локальный игрок будет физически упираться в его хитбокс. Однако из-за пинга (50–100 мс) положение монстра на клиенте отстает от хоста. Игрок может «застрять» в пустом пространстве или срезать угол там, где на хосте монстр уже перегородил проход, что вызовет рывки и коррекцию позиции игрока хостом.
+* **Секторная рассинхронизация коллизий:** Коллизия с акторами проверяется только внутри секторов, где зарегистрирован актор (`sector->actorList`). Если при получении координат монстра не вызывается `LinkSector`, игрок будет сталкиваться с невидимым «фантомом» в старом секторе.
+* **Трупы врагов:** На хосте при смерти монстра функция `InflictDamage` автоматически сбрасывает `flags &= ~(AF_SOLID | AF_SHOOTABLE)`. Клиент при получении флага смерти обязан немедленно снять бит `AF_SOLID` у локального актора, иначе труп монстра навсегда останется непроходимым барьером.
+
+---
+
+### 4. Псевдокод клиентских хуков и репликации
+
+```cpp
+#include <cstdint>
+
+// Оффсеты полей структуры kexActor / kexAI
+namespace ActorOffset {
+    constexpr uint32_t Origin        = 0x18;  // float[3] (x, y, z)
+    constexpr uint32_t Yaw           = 0x38;  // float
+    constexpr uint32_t SectorIndex   = 0x3c;  // int
+    constexpr uint32_t InterpolantPos= 0x50;  // kexInterpolatedVec3
+    constexpr uint32_t InterpolantRot= 0x78;  // kexInterpolatedAngles
+    constexpr uint32_t AnimCurrent   = 0x108; // spriteAnim_t*
+    constexpr uint32_t Flags         = 0x16c; // uint32 (AF_SOLID, AF_SHOOTABLE, etc.)
+    constexpr uint32_t SpeciesDef    = 0x170; // kexDict* / Definition
+    constexpr uint32_t FrameIndex    = 0x178; // short
+    constexpr uint32_t Health        = 0x17a; // short
+    constexpr uint32_t MapRecordPtr  = 0x180; // mapActor_t* (индекс спавна на карте)
+    constexpr uint32_t AIState       = 0x1b8; // int (aiState_t)
+}
+
+// Указатели на нативные функции движка
+typedef uint64_t (__fastcall* t_kexAI_Tick)(void* self);
+typedef void     (__fastcall* t_kexActor_ChangeAnim)(void* self, void* anim);
+typedef void     (__fastcall* t_kexActor_UpdateSprite)(void* self);
+typedef void     (__fastcall* t_kexActor_LinkSector)(void* self, int sectorIndex);
+typedef void     (__fastcall* t_kexActor_InflictDamage)(void* self, void* inflictor, int type, short amount);
+typedef void     (__fastcall* t_Interpolant_Reset)(void* interpolant);
+
+t_kexAI_Tick          Original_kexAI_Tick          = (t_kexAI_Tick)(g_BaseAddress + 0x194ce0);
+t_kexActor_ChangeAnim Native_kexActor_ChangeAnim   = (t_kexActor_ChangeAnim)(g_BaseAddress + 0x1a1170);
+t_kexActor_UpdateSprite Native_UpdateSprite        = (t_kexActor_UpdateSprite)(g_BaseAddress + 0x1a1940);
+t_kexActor_LinkSector Native_LinkSector            = (t_kexActor_LinkSector)(g_BaseAddress + 0x1d3d70);
+t_kexActor_InflictDamage Original_InflictDamage    = (t_kexActor_InflictDamage)(g_BaseAddress + 0x1a1370);
+t_Interpolant_Reset   Native_InterpolantReset      = (t_Interpolant_Reset)(g_BaseAddress + 0x1d3e60);
+
+// 1. ХУК ИИ-ТИКА (0x140194ce0)
+uint64_t __fastcall Hooked_kexAI_Tick(void* self) {
+    if (g_Network.IsClientMode()) {
+        // Проверяем, что актор жив и не удаляется
+        if (*(char*)((uintptr_t)self + 0x40) == 0) {
+            // Продвигаем только анимационные кадры спрайта на клиенте (60 FPS локально)
+            Native_UpdateSprite(self);
+            
+            // Сбрасываем скорость, чтобы локальная физика не смещала монстра
+            *(float*)((uintptr_t)self + 0x1c) = 0.0f; // vel.x
+            *(float*)((uintptr_t)self + 0xe4) = 0.0f; // vel.y
+            *(float*)((uintptr_t)self + 0x1d) = 0.0f; // vel.z
+        }
+        return 0; // ИИ логику хоста (поиск целей, атаки, броски файрболов) НЕ вызываем
+    }
+    return Original_kexAI_Tick(self);
+}
+
+// 2. ХУК УРОНА (0x1401a1370)
+void __fastcall Hooked_kexActor_InflictDamage(void* self, void* inflictor, int type, short amount) {
+    if (g_Network.IsClientMode()) {
+        // Проверяем, является ли цель монстром (kexAI)
+        if (IsMonsterActor(self)) {
+            // На клиенте локальный урон по мобам глушится.
+            // При необходимости можно только запустить локальный визуальный эффект (искры/кровь).
+            return;
+        }
+    }
+    Original_InflictDamage(self, inflictor, type, amount);
+}
+
+// 3. ПРИМЕНЕНИЕ СЕТЕВОГО КАДРА ОТ ХОСТА
+void Client_ApplyMonsterSnapshot(void* actor, const MonsterNetPacket& pkt) {
+    uintptr_t a = (uintptr_t)actor;
+
+    // А. Обновление координат и сброс интерполятора при телепортации
+    float* pos = (float*)(a + ActorOffset::Origin);
+    bool teleport = (DistanceSquared(pos, pkt.position) > 256.0f * 256.0f);
+    
+    pos[0] = pkt.position[0];
+    pos[1] = pkt.position[1];
+    pos[2] = pkt.position[2];
+    *(float*)(a + ActorOffset::Yaw) = pkt.yaw;
+
+    if (teleport) {
+        Native_InterpolantReset((void*)(a + ActorOffset::InterpolantPos));
+        Native_InterpolantReset((void*)(a + ActorOffset::InterpolantRot));
+    }
+
+    // Б. Синхронизация сектора для корректного PVS и рендера
+    int currentSector = *(int*)(a + ActorOffset::SectorIndex);
+    if (currentSector != pkt.sectorIndex) {
+        Native_LinkSector(actor, pkt.sectorIndex);
+    }
+
+    // В. Синхронизация здоровья и стейта твердости при смерти
+    *(short*)(a + ActorOffset::Health) = pkt.health;
+    if (pkt.health <= 0) {
+        // Снимаем AF_SOLID и AF_SHOOTABLE, чтобы игрок не упирался в труп
+        *(uint32_t*)(a + ActorOffset::Flags) &= ~(0x4 | 0x40); // ~(AF_SOLID | AF_SHOOTABLE)
+    }
+
+    //
+
+Error: The stream was interrupted. Please continue the task you were working on. (Error ID: b09b1e01-c0aa-4b32-9ddd-b03f429dd17d-183)
+
+Продолжаем и завершаем реализацию клиентского модуля и анализ рисков.
+
+---
+
+### Завершение псевдокода: смена анимации при получении кадра
+
+```cpp
+    // Г. Принудительная смена позы/анимации монстра по указателю из def (+0x170)
+    void* def = *(void**)(a + ActorOffset::SpeciesDef);
+    if (def != nullptr) {
+        void* targetAnim = nullptr;
+        switch (pkt.pose) {
+            case Pose::Idle:   targetAnim = *(void**)((uintptr_t)def + 0xb0);  break; // spawnAnim
+            case Pose::Walk:   targetAnim = *(void**)((uintptr_t)def + 0x178); break; // chaseAnim
+            case Pose::Pain:   targetAnim = *(void**)((uintptr_t)def + 0x180); break; // painAnim
+            case Pose::Attack: targetAnim = *(void**)((uintptr_t)def + 0x188); break; // meleeAnim / attackAnim
+            case Pose::Death:  targetAnim = *(void**)((uintptr_t)def + 0xb8);  break; // deathAnim
+            case Pose::Gib:    targetAnim = *(void**)((uintptr_t)def + 0xc8);  break; // gibAnim
+        }
+
+        void* currentAnim = *(void**)(a + ActorOffset::AnimCurrent);
+        if (targetAnim != nullptr && targetAnim != currentAnim) {
+            Native_kexActor_ChangeAnim(actor, targetAnim);
+        }
+    }
+}
+```
+
+---
+
+### 5. Потенциальные риски десинхронизации и их нивелирование
+
+| Риск | Механизм возникновения в Kex Engine | Решение / Архитектурная страховка |
+| :--- | :--- | :--- |
+| **Исчезновение монстра (PVS Occlusion)** | Монстр перешел через дверной проем / портал в соседний сектор на хосте. Координаты обновились, но `actor->Sector()` остался старым. Рендерер посчитал сектор невидимым и отсек спрайт. | При каждом перемещении проверять `currentSector != pkt.sectorIndex` и вызывать нативную **`kexActor::LinkSector (0x1401d3d70)`**, которая перелинковывает `areaLink` и списки секторов. |
+| **Дрожание позиции (Local vs Remote Physics)** | Если на клиенте вызвать общий тик `0x14019f2d0`, локальная гравитация и скольжение по полу начнут бороться с поступающими сетевыми координатами. | В хуке `0x140194ce0` **не вызывать** базовый физический тик актора. Обновлять координаты строго из сетевого буфера интерполяции, вызывая только **`UpdateSprite (0x1401a1940)`** для локальной смены кадров. |
+| **Растягивание интерполяции (Stretching)** | Движок интерполирует рендер-позицию `+0x6c` между предыдущей `+0x60` и текущей `+0x18`. При спавне или резком перемещении монстр «размажется» через полкарты. | При дельте позиции $> 256$ единиц сбрасывать интерполяторы вызовом **`0x1401d3e60`** (`interpolant_reset`) для оффсетов `+0x50` (позиция) и `+0x78` (углы). |
+| **«Ложные трупы» от выстрелов клиента** | Клиент стреляет во врага. Локальный движок регистрирует коллизию снаряда и вызывает `InflictDamage (0x1401a1370)`. Монстр падает замертво на клиенте, но жив на хосте. | **Detour на `0x1401a1370`**: полностью глушить урон по мобам на клиенте. Клиент отправляет выстрел на хост; смерть запускается только тогда, когда хост пришлет пакет со статусом `health <= 0` и `Pose::Death`. |
+| **Застревание игрока в хитбоксе (AF_SOLID)** | Игрок на клиенте врезается в монстра, которого на хосте уже оттолкнули или убили. | Для трупов немедленно снимать флаг `AF_SOLID` (`actor + 0x16c &= ~0x4`). Для живых монстров сохранять `AF_SOLID`, полагаясь на интерполятор позиции и приоритет коррекции позиции игрока от хоста. |
+
+---
+
+### Итоговый чеклист внедрения:
+1. **Точка идентификации:** Использовать индекс карты `Actor + 0x180` как статический `EntityID`.
+2. **Точка глушения ИИ:** Хук на `0x140194ce0` (`kexAI::Tick`) $\rightarrow$ пропуск блока решений, вызов `0x1401a1940` (`UpdateSprite`).
+3. **Точка глушения урона:** Хук на `0x1401a1370` (`kexActor::InflictDamage`) $\rightarrow$ ранний `return` для мобов на клиенте.
+4. **Смена позы:** Вызов `0x1401a1170` (`ChangeAnim`) по смещениям анимаций из `Actor + 0x170`.
+5. **Секторная привязка:** Вызов `0x1401d3d70` (`LinkSector`) при смене сектора хоста.

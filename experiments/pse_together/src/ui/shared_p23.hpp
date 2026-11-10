@@ -16,6 +16,7 @@ struct Shared {
     Menu menu;
     std::deque<std::string> chatOut;
     std::atomic<bool> interfaceEnabled{},permitted{}, requested{}, capture{}, ready{}, stopping{};
+    std::atomic<bool> paused{}; // the game's Esc menu is open: gameplay state, but the local Player is not updated (set by the Sim tick)
     bool host{};
     void publish(const Model& m) {
         std::optional<Chat> message;

@@ -55,3 +55,6 @@ docs/research/runtime/
 docs/research/ghidra_projects/
 # Вендорный ENet имеет собственный .git — не вкладывать (версия записана в docs/S0.2 отчёте)
 tools/enet-prototype/third_party/enet/
+
+# Установки для смоука (копии игры, профили, скриншоты)
+play_m*/

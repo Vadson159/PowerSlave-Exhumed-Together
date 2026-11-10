@@ -122,9 +122,13 @@ Local local() {
         p.fields[out++]=read<Byte>(f==11?p.actor:player(),FieldOffsets[f]+b);
     return p;
 }
+bool localRespawned{}; // set by acceptLocalRespawn(): one deliberate change of the local player's Actor/node
 void checkLocal(const Local& p) {
+    if(localRespawned && g.baseline) { g.local=p;localRespawned=false;emit("p1_rebaselined","\"actor\":\"%p\",\"node\":\"%p\"",p.actor,p.node); }
     require(g.baseline && p.sameGraph(g.local),"P1_OWNERSHIP_CHANGED");
-    require(p.fields==g.local.fields,"P1_INVENTORY_CHANGED");
+    // Milestone 2: the game itself changes P1's inventory/health all the time (shooting, damage, keys, pickups). That is not a
+    // proxy fault: the baseline follows the game, the ownership/graph check above still guards the actor identity.
+    if(p.fields!=g.local.fields) g.local.fields=p.fields;
 }
 void snapshot(const char* label) {
     const auto p=local();checkLocal(p);
@@ -605,6 +609,7 @@ void permitSpawn() { g.spawnPermit.store(1,std::memory_order_release); }
 // New incarnation of the proxy after a world transition (level restart / checkpoint reload: the engine purges the old
 // proxy Actor itself) or after the previous Actor was fully retired in the same world. Only drops weak identities and
 // per-world caches; hooks stay installed and no engine call is made. Refused while an Actor may still be alive.
+void acceptLocalRespawn() { if(thread()) localRespawned=true; }
 bool rearm() {
     if(!g.installed || !thread()) return false;
     const auto phase=g.life.phase;

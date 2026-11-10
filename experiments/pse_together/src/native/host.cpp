@@ -29,6 +29,7 @@
 #include "build_profile.hpp"
 #include "seam.hpp"
 #include "native_proxy.hpp"
+#include "world_sync.hpp"
 #ifdef PSE_FEATURE_P8
 #include "sprite_binding.hpp"
 #endif
@@ -98,7 +99,7 @@ struct Context {
 #endif
 #ifdef PSE_ROLE_HOST
     m12a::Session* network{}; // retained, never a CRT global destructor
-    std::uint64_t p2Tick{}, motionTick{};
+    std::uint64_t p2Tick{}, motionTick{}, p2Teleports{}, p2TeleportRefused{};
     std::uint32_t appliedSequence{}, appliedGeneration{}, appliedButtons{};
     Vec3 motionBefore{};
     void* focusOriginal{}; // one additional process-lifetime trampoline, never freed
@@ -161,6 +162,7 @@ bool live(const Identity& id, Byte* p) {
 Vec3 position(Byte* a) { return {read<float>(a, 0x18), read<float>(a, 0x1c), read<float>(a, 0x20)}; }
 bool finite(Vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 bool p16Pending(unsigned slot);
+void debugKillP2(std::uint64_t worldTicks); // smoke only: PSE_DEBUG_KILL_P2=<world tick> kills the remote player natively
 bool p16Restore();
 void tick16();
 int p16DtorEntry(void* actor);
@@ -322,6 +324,73 @@ void captureNativeSnapshots() {
             slot,s.sequence,s.serverTick,s.mapEpoch,s.connectionGeneration,s.entityId,s.entityGeneration,v.x,v.y,v.z,yaw,pitch,snapshot55::bits(v.x),snapshot55::bits(v.y),snapshot55::bits(v.z),snapshot55::bits(yaw),snapshot55::bits(pitch),queued ? "true" : "false",id.actor,id.node,read<Byte*>(id.actor,0x1b8),g.secondaryUpdates,g.secondaryPuppetTicks);
     }
 }
+// ---- Milestone 2: doors / lifts / shared keys (see world_sync.hpp) ---------------------------------------------------
+// The client's own actions arrive as requests (mover spawned on the client, key picked up on the client) and are replayed
+// here; whatever the host or P2 does locally is sent to the client. Keys are shared: P1, P2 and the client always hold the union.
+std::deque<pse::BridgeInteractionRequest> worldRequests;
+std::uint16_t pendingClientKeys{},sharedKeysSent{};std::uint32_t sharedKeysGen{};std::uint64_t worldOnTicks{};
+void worldSyncHost() {
+    namespace w=pse::world;
+    const bool on=gameplay() && !g.failed && !g.shutdown && !g.worldExit && g.network && g.network->running() && g.network->snapshotEligible() &&
+        g.phase==Phase::Live && live(g.p1,primary()) && live(g.p2,player()) && guards();
+    w::setActive(on);
+    if(!on) { worldRequests.clear();pendingClientKeys=0;sharedKeysGen=0;sharedKeysSent=0;worldOnTicks=0;return; }
+    ++worldOnTicks;
+    while(!worldRequests.empty()) {
+        const auto r=worldRequests.front();worldRequests.pop_front();
+        if(r.interactionType==w::ReqMover) w::applyMover({static_cast<std::uint8_t>(r.targetGeneration>>8),static_cast<std::uint8_t>(r.targetGeneration),static_cast<std::int16_t>(r.targetEntityId)});
+        else if(r.interactionType==w::ReqKeys) pendingClientKeys|=static_cast<std::uint16_t>(r.targetEntityId&0xfu);
+    }
+    w::popKeysGained(); // P1/P2 pickups are caught by the union below
+    const auto k1=read<std::uint16_t>(primary(),0x98),k2=read<std::uint16_t>(player(),0x98);
+    const auto merged=static_cast<std::uint16_t>((k1|k2|pendingClientKeys)&0xfu);pendingClientKeys=0;
+    if(merged!=(k1&0xfu)) w::applyKeys(primary(),g.p1.actor,merged);
+    if(merged!=(k2&0xfu)) *reinterpret_cast<std::uint16_t*>(player()+0x98)=static_cast<std::uint16_t>((k2&~0xfu)|merged);
+    if(merged!=sharedKeysSent || g.network->generation()!=sharedKeysGen)
+        if(g.network->publishWorldEvent(w::EvKeys,0,0,merged)) { sharedKeysSent=merged;sharedKeysGen=g.network->generation();log("world_keys_sent","\"keys\":%u",merged); }
+    {
+        // Milestone 3: the host owns AI and damage; the client only mirrors. Enemies go out at 20 Hz; enemy projectiles are fast, so while
+        // any exist they go out EVERY tick (first in the snapshot = first batch) - a fireball must be seen in flight to be dodged.
+        static w::Projectile projectiles[16];
+        const int pc=w::collectProjectiles(projectiles,16);
+        const bool enemyTick=worldOnTicks%3==0;
+        if(enemyTick || pc>0) {
+            static w::Enemy enemies[128];
+            const int n=enemyTick ? w::collectEnemies(enemies,128) : 0;
+            std::vector<pse::EntitySnapshot> out;out.reserve(static_cast<std::size_t>(n)+static_cast<std::size_t>(pc));
+            for(int i=0;i<pc;++i) {
+                const auto& p=projectiles[i];pse::EntitySnapshot s;
+                s.entityId=p.id;s.generation=1;s.type=2;s.subType=p.type;s.posX=p.x;s.posY=p.y;s.posZ=p.z;s.velX=p.vx;s.velY=p.vy;s.velZ=p.vz;s.yaw=p.yaw;
+                s.stateFlags=static_cast<std::uint32_t>(static_cast<std::uint16_t>(p.sector));s.meta=p.anim;
+                out.push_back(s);
+            }
+            for(int i=0;i<n;++i) {
+                const auto& e=enemies[i];pse::EntitySnapshot s;
+                s.entityId=e.id;s.generation=1;s.type=1;s.subType=e.anim;s.posX=e.x;s.posY=e.y;s.posZ=e.z;s.velX=e.vx;s.velY=e.vy;s.velZ=e.vz;s.yaw=e.yaw;
+                s.health=e.hp;s.stateFlags=static_cast<std::uint32_t>(e.aiState)|(static_cast<std::uint32_t>(static_cast<std::uint16_t>(e.sector))<<16);s.meta=e.frame;
+                out.push_back(s);
+            }
+            g.network->publishWorldSnapshot(std::move(out));
+        }
+    }
+    w::Mover m;
+    while(w::popMover(m)) g.network->publishWorldEvent(w::EvMover,m.cls,static_cast<std::uint32_t>(m.sector),(m.cls<<8)|m.type);
+    if(worldOnTicks==240) w::census("host_world_live");
+    if(worldOnTicks==200) w::debugTeleport(g.p1.actor);
+    if(worldOnTicks==300) w::debugSpawn();
+    if(worldOnTicks==400) w::debugKeys(primary());
+    if(worldOnTicks==500) w::debugKillEnemy();
+    if(worldOnTicks>=230 && worldOnTicks%10==0) {w::debugPullEnemy(g.p2.actor);w::debugCensusOnFile();}
+    if(worldOnTicks>=230) w::debugFireball(g.p2.actor);
+    if(worldOnTicks==300) {   // smoke only: PSE_DEBUG_P2_GRANT="weapon,ammo" gives host P2 a weapon and its ammo (to watch it reach the client)
+        char v[32]{};int wp=-1,am=0;
+        if(GetEnvironmentVariableA("PSE_DEBUG_P2_GRANT",v,sizeof(v)) && sscanf_s(v,"%d,%d",&wp,&am)>=1 && wp>=0 && wp<8) {
+            *(player()+0xcc+wp)=1;*reinterpret_cast<std::uint16_t*>(player()+0xbc+2*wp)=static_cast<std::uint16_t>(am);
+            log("debug_p2_grant","\"weapon\":%d,\"ammo\":%d",wp,am);
+        }
+    }
+    debugKillP2(worldOnTicks);
+}
 #endif
 LocalState localState() {
     LocalState s;
@@ -468,6 +537,35 @@ void* __fastcall hookGetter(void* p) {
     if (thread() && g.inTick && g.scope && p == instance()) { ++g.resolverHits; return player(); }
     return reinterpret_cast<Getter>(g.original[profile::Getter])(p);
 }
+#ifdef PSE_ROLE_HOST
+// v1.14: the client simulates itself; P2 mirrors its view and position so the host's P2 uses doors, shoots and is seen by AI
+// exactly where and how the client really stands. Called right before P2's native Update.
+void applyRemotePose() {
+    {   // P2's weapon in hand follows the client's (the engine switches through its own lower/raise animation via the pending field)
+        const auto want=g.network->selectedWeapon();Byte* pl=player();
+        if(want<8) {
+            const int active=read<int>(pl,0x88),pending=read<int>(pl,0x8c);
+            if(want!=active && pending==active && read<Byte>(pl,0xcc+want)==1) *reinterpret_cast<int*>(pl+0x8c)=want;
+        }
+    }
+    const auto& pose=g.network->pose();
+    if(!pose.valid || !live(g.p2,player())) return;
+    Byte* a=g.p2.actor;
+    if(std::isfinite(pose.yaw) && std::isfinite(pose.pitch)) {
+        *reinterpret_cast<float*>(a+0x38)=pose.yaw;*reinterpret_cast<float*>(a+0x30)=pose.pitch;
+    }
+    const Vec3 v=position(a);
+    const float dx=pose.x-v.x,dy=pose.y-v.y,dz=pose.z-v.z;
+    if(dx*dx+dy*dy>64.0f || std::fabs(dz)>8.0f) {
+        const bool ok=pse::world::teleport(a,pose.x,pose.y,pose.z,pose.sector);
+        if(ok) ++g.p2Teleports; else if(++g.p2TeleportRefused%120==1) log("p2_pose_refused","\"target\":[%.1f,%.1f,%.1f],\"sector\":%d,\"p2\":[%.1f,%.1f,%.1f],\"refused\":%llu",pose.x,pose.y,pose.z,pose.sector,v.x,v.y,v.z,g.p2TeleportRefused);
+    }
+    if(g.ticks%60==0) {
+        const Vec3 w=position(a);
+        log("p2_pose_applied","\"tick\":%llu,\"target\":[%.1f,%.1f,%.1f],\"p2\":[%.1f,%.1f,%.1f],\"yaw\":%.4f,\"p2_yaw\":%.4f,\"sector\":%d,\"p2_sector\":%d,\"teleports\":%llu",g.ticks,pose.x,pose.y,pose.z,w.x,w.y,w.z,pose.yaw,read<float>(a,0x38),pose.sector,read<int>(a,0x3c),g.p2Teleports);
+    }
+}
+#endif
 void __fastcall hookUpdate(void* p) {
     // Prevent a duplicate/foreign primary call BEFORE executing native Update.
     if (p==primary()) {
@@ -532,7 +630,8 @@ void __fastcall hookUpdate(void* p) {
     g.p2Tick = g.ticks;
     g.appliedSequence = g.network->sequence();
     g.appliedGeneration = g.network->generation();
-    g.appliedButtons = g.network->nativeButtons();
+    applyRemotePose();
+    g.appliedButtons = g.network->nativeButtons() | g.network->takeNativeEdges();
     g.motionBefore = position(g.p2.actor);
     const auto commandsBefore = g.commandCalls;
 #endif
@@ -760,6 +859,10 @@ void p16Grant(const pse::weapon_p16::Grant& r){
     log("p16_weapon_grant_receipt","\"slot\":%u,\"weapon\":%u,\"generation\":%u,\"epoch\":%u,\"player\":\"%p\",\"puppet\":\"%p\",\"pickup\":\"%p\",\"node\":\"%p\",\"persistent\":%s,\"ammo_before\":[%u,%u,%u,%u,%u,%u,%u,%u],\"ammo_after_equal\":true",r.slot,r.weapon,g.entityGeneration[r.slot],g.network->mapEpoch(),r.player,r.puppet,r.pickup,r.node,r.persistent?"true":"false",r.ammo[0],r.ammo[1],r.ammo[2],r.ammo[3],r.ammo[4],r.ammo[5],r.ammo[6],r.ammo[7]);
 }
 #include "host_respawn_p16.inc"
+void debugKillP2(std::uint64_t worldTicks){
+    static const int at=[]{char v[16]{};return GetEnvironmentVariableA("PSE_DEBUG_KILL_P2",v,sizeof(v))?std::atoi(v):0;}();
+    if(at>0&&worldTicks==static_cast<std::uint64_t>(at)){unsigned empty=0;fixture16.compare_exchange_strong(empty,2);}
+}
 bool installWeapon16(){
     static bool installed{};if(installed)return true;
     installed=pse::weapon_p16::install(g.base,g.expectedTid,{p16WeaponEligible,p16Roster,p16Event,p16Grant});return installed;
@@ -939,6 +1042,7 @@ void __fastcall hookTick(void* self) {
 
 #ifdef PSE_FEATURE_SNAPSHOT
     captureNativeSnapshots();
+    worldSyncHost();
 #endif
     proxyPhase();proxyTickLeave();
     // Always retain the first real P1 update, even after a long menu/startup.
@@ -946,6 +1050,10 @@ void __fastcall hookTick(void* self) {
     if ((g.localUpdates == 1 && g.localThisTick == 1) || g.ticks <= 3 || (g.ticks % 120 == 0 && g.ticks <= 2400)) {
         log("tick_status", "\"ticks\":%llu,\"state\":%d,\"pending\":%d,\"local_updates\":%llu,\"local_this_tick\":%u,\"phase\":%d,\"p2_updates\":%llu",
             g.ticks, read<int>(instance(),0x24), read<int>(instance(),0x28), g.localUpdates, g.localThisTick, static_cast<int>(g.phase), g.secondaryUpdates);
+    }
+    {   // Esc menu: gameplay state, but the local Player Update is skipped. Debounced over a few ticks.
+        static unsigned idleTicks=0;idleTicks=(gameplay() && g.localThisTick==0) ? idleTicks+1 : 0;
+        pse::ui::shared().paused.store(idleTicks>=3,std::memory_order_release);
     }
     pse::native_ui::tick(!g.failed && gameplay() && g.network && g.network->snapshotEligible(),g.network?g.network->mapEpoch():0,0,1);
     g.inTick = false;
@@ -994,6 +1102,7 @@ void CALLBACK bootstrapApc(ULONG_PTR) {
         const auto i=static_cast<profile::Index>(n);
         if (i != profile::Getter && !setHook(i, true)) return;
     }
+    if(!pse::world::install(g.base,g.expectedTid,log,true)) {block("world_hook_install");return;}
     if(!pse::native_ui::install(g.base,g.expectedTid,true,log)) {block("p23_ui_install");return;}
     if(!installHostProxy()) { block("host_proxy_install"); return; }
     AddVectoredExceptionHandler(0, exceptions);
@@ -1019,10 +1128,11 @@ bool hashMatches(const wchar_t* exe) {
 
 // Called by the diagnostic loader before ResumeThread. Only adapter-owned memory,
 // documented OS APIs, hashing and a same-process primary-thread APC are used here.
-namespace m12a { static void p16Receive(const pse::BridgeRespawnRequest& request); }
+namespace m12a { static void p16Receive(const pse::BridgeRespawnRequest& request); static void worldReceive(const pse::BridgeInteractionRequest& request); }
 extern "C" DWORD WINAPI host_M11Prepare(const wchar_t* logPath, DWORD primaryTid) {
     if (g.prepared.exchange(1) != 0) return ERROR_ALREADY_INITIALIZED;
     m12a::respawnHandler = &m12a::p16Receive;
+    m12a::worldRequestHandler = &m12a::worldReceive;
     wchar_t exe[32768]{}, dll[32768]{}, fullLog[32768]{}, installRoot[32768]{};
     // P27: pe-play (PSE_GUARD_ROOT) selects the portable install-root policy; otherwise the unchanged lab policy.
     const bool portable = pse::portable::root(installRoot, 32768);
@@ -1049,6 +1159,10 @@ extern "C" DWORD WINAPI host_M11PermitTest() { pse::native_ui::permit();g.permit
 namespace m12a {static void p16Receive(const pse::BridgeRespawnRequest& request){
     if(!thread()||!g.inTick){block("p16_request_affinity");return;}
     if(requests16.size()>=128){block("p16_request_capacity");return;}requests16.push_back(request);
+}}
+namespace m12a {static void worldReceive(const pse::BridgeInteractionRequest& request){
+    if(!thread()||!g.inTick){block("world_request_affinity");return;}
+    if(worldRequests.size()<256) worldRequests.push_back(request);
 }}
 extern "C" DWORD WINAPI host_PSE_P16_PermitRestore(std::uint64_t probe,std::uint64_t review){
     if(!probe||!review)return ERROR_INVALID_PARAMETER;approvedReview16.store(0,std::memory_order_release);approvedProbe16.store(probe,std::memory_order_release);approvedReview16.store(review,std::memory_order_release);return ERROR_SUCCESS;

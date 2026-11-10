@@ -272,7 +272,17 @@ void ENetWorker::dispatchClientInput() {
     net.commandSequence = ++m_clientInputSequence;
     net.clientTick = static_cast<uint32_t>(m_clientHasSample ? m_clientSample.simulationTick : 0);
     net.moveForward = fresh ? m_clientSample.moveForward : 0.0f;
-    // All other gameplay fields stay neutral/default. No weapon/button mapping.
+    net.selectedWeapon = 0xff;
+    if (fresh) {
+        net.selectedWeapon = m_clientSample.selectedWeapon;
+        // v1.14: the whole client input and its own pose. A stale sample stays neutral with sector = -1 (no pose).
+        net.moveRight = m_clientSample.moveRight;
+        net.buttons = m_clientSample.buttons;
+        net.yaw = m_clientSample.yaw;
+        net.pitch = m_clientSample.pitch;
+        net.posX = m_clientSample.posX; net.posY = m_clientSample.posY; net.posZ = m_clientSample.posZ;
+        net.sector = m_clientSample.sector;
+    }
     m_clientNode->sendPacket(CHANNEL_UNRELIABLE_SEQUENCED,
         encodePacket(MSG_INPUT_COMMAND, net.commandSequence, net), false);
     m_packetsSent.fetch_add(1, std::memory_order_relaxed);

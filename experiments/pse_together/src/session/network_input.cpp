@@ -9,7 +9,17 @@
 
 namespace m12a {
 void (*respawnHandler)(const pse::BridgeRespawnRequest&)=nullptr;
+void (*worldRequestHandler)(const pse::BridgeInteractionRequest&)=nullptr;
 namespace {
+// Native KEX button bits of Player+0 (kexPlayerCmd): 0 attack, 1 jump, 2 forward, 3 back, 6/7 strafe L/R, 8 weapon right,
+// 9 weapon left, 10 use. Wire bits are pse::ButtonFlags; the axes carry movement.
+constexpr std::uint32_t NativeAttack = 1u << 0, NativeJump = 1u << 1, NativeForward = 1u << 2, NativeBack = 1u << 3,
+    NativeStrafeLeft = 1u << 6, NativeStrafeRight = 1u << 7, NativeWeaponNext = 1u << 8, NativeWeaponPrev = 1u << 9, NativeUse = 1u << 10;
+constexpr std::uint32_t nativeActions(std::uint32_t wire) {
+    return ((wire & pse::BUTTON_ATTACK) ? NativeAttack : 0u) | ((wire & pse::BUTTON_JUMP) ? NativeJump : 0u) |
+           ((wire & pse::BUTTON_USE) ? NativeUse : 0u) | ((wire & pse::BUTTON_WEAPON_NEXT) ? NativeWeaponNext : 0u) |
+           ((wire & pse::BUTTON_WEAPON_PREV) ? NativeWeaponPrev : 0u);
+}
 constexpr std::size_t OutboxCap = 8192;
 // Diagnostic control domain, not a claim to replicate or load a KEX map remotely.
 constexpr char ControlDomain[] = "M12A_INPUT_ONLY";
@@ -64,6 +74,21 @@ bool Session::publishNativeSnapshot(pse::BridgePlayerSnapshot snapshot) {
     // Best effort never enters the reliable event outbox or causes a resync.
     return pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{std::move(snapshot)}));
 }
+bool Session::publishWorldEvent(std::uint16_t type,std::uint32_t source,std::uint32_t target,std::int32_t value) {
+    bridge.assertSimulationThread();
+    if(!snapshotEligible())return false;
+    pse::BridgeWorldEvent e;
+    e.mapEpoch=epoch;e.eventSequence=++worldSequence;e.eventType=type;e.sourceEntityId=source;e.targetEntityId=target;e.eventValue=value;
+    enqueue(std::move(e));
+    return true;
+}
+bool Session::publishWorldSnapshot(std::vector<pse::EntitySnapshot>&& entities) {
+    bridge.assertSimulationThread();
+    if(!snapshotEligible() || entities.empty())return false;
+    pse::BridgeWorldSnapshot w;
+    w.snapshotSequence=++worldSnapshotSequence;w.serverTick=static_cast<std::uint32_t>(nowTick);w.mapEpoch=epoch;w.entities=std::move(entities);
+    return pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{std::move(w)}));
+}
 bool Session::start(std::uint16_t port) {
     bridge.registerSimulationThread();
     pse::HostConfig config;
@@ -117,7 +142,7 @@ void Session::flush() {
 }
 void Session::neutral(const char* reason) {
     log("network_neutral", "\"reason\":\"%s\",\"tick\":%llu,\"slot\":1,\"generation\":%u,\"input_seq\":%u,\"previous_buttons\":%u", reason, nowTick, gen, lastSeq, buttons);
-    buttons = 0;
+    buttons = 0; pendingEdges = 0; remotePose.valid = false;
 }
 void Session::baseline() {
     pse::BridgeWorldBaseline b;
@@ -215,17 +240,25 @@ void Session::consume(pse::BridgeMessage& message) {
             return;
         }
         hasSeq = true; lastSeq = c->sequence; lastInputTick = nowTick; lastInputMs = GetTickCount64();
-        // Wire buttons are NOT native KEX button bits. M1.2a maps only the
-        // forward/back axis to the already accepted digital command seam.
-        buttons = c->moveForward > 0.5f ? 4u : c->moveForward < -0.5f ? 8u : 0u;
-        log("network_input_accepted", "\"slot\":1,\"generation\":%u,\"input_seq\":%u,\"client_tick\":%u,\"tick\":%llu,\"forward\":%.6f,\"native_buttons\":%u,\"wire_buttons_ignored\":%u", gen, lastSeq, c->clientTick, nowTick, c->moveForward, buttons, c->buttons);
+        // v1.14: full input. Wire buttons are pse::ButtonFlags, movement comes from the axes; both map to native KEX bits.
+        buttons = nativeActions(c->buttons) |
+            (c->moveForward > 0.5f ? NativeForward : c->moveForward < -0.5f ? NativeBack : 0u) |
+            (c->moveRight > 0.5f ? NativeStrafeRight : c->moveRight < -0.5f ? NativeStrafeLeft : 0u);
+        pendingEdges |= nativeActions(c->pressedEdges);
+        remoteWeapon = c->selectedWeapon < 8 ? c->selectedWeapon : 0xff;
+        remotePose.valid = c->sector >= 0 && std::isfinite(c->posX) && std::isfinite(c->posY) && std::isfinite(c->posZ);
+        if (remotePose.valid) remotePose = Pose{c->yaw, c->pitch, c->posX, c->posY, c->posZ, c->sector, true};
+        if (nowTick % 60 == 0 || (c->pressedEdges & ~pse::BUTTON_ATTACK))
+            log("network_input_accepted", "\"slot\":1,\"generation\":%u,\"input_seq\":%u,\"client_tick\":%u,\"tick\":%llu,\"forward\":%.1f,\"right\":%.1f,\"native_buttons\":%u,\"wire_buttons\":%u,\"edges\":%u,\"yaw\":%.4f,\"pitch\":%.4f,\"pose\":[%.1f,%.1f,%.1f],\"sector\":%d", gen, lastSeq, c->clientTick, nowTick, c->moveForward, c->moveRight, buttons, c->buttons, c->pressedEdges, c->yaw, c->pitch, c->posX, c->posY, c->posZ, c->sector);
     } else if (const auto* req = std::get_if<pse::BridgeRespawnRequest>(&message)) {
         // Explicitly refuse features outside this phase instead of acknowledging
         // a world mutation that did not occur. Stale/foreign requests must not
         // manufacture a fresh KICK for the current session (DOC-45 P1-1).
         if(active&&ready&&req->slotId==1&&req->connectionGeneration==gen&&req->mapEpoch==epoch&&snapshotEligible()&&respawnHandler)respawnHandler(*req);
     } else if (const auto* interaction = std::get_if<pse::BridgeInteractionRequest>(&message)) {
-        if (active && interaction->slotId == 1 && interaction->connectionGeneration == gen) recover(pse::RESYNC_EXTERNAL);
+        // World requests of the client (mover/key, see world_sync.hpp). Stale or foreign ones are ignored, never a kick.
+        if (active && ready && levelReady && interaction->slotId == 1 && interaction->connectionGeneration == gen &&
+            interaction->mapEpoch == epoch && worldRequestHandler) worldRequestHandler(*interaction);
     }
 }
 void Session::tick(std::uint64_t tick, bool gameplay) {
@@ -237,7 +270,7 @@ void Session::tick(std::uint64_t tick, bool gameplay) {
     pse::BridgeMessage message;
     // Bound work to queue capacity even under a continuously producing peer.
     for (std::size_t n = 0; n < pse::THREAD_BRIDGE_INBOUND_CAPACITY && bridge.pollInbound(message); ++n) consume(message);
-    if (buttons) {
+    if (buttons || remotePose.valid) {
         if(!gameplay) neutral("level_not_running");
         else {
             const auto elapsedTicks=nowTick-lastInputTick,elapsedMs=GetTickCount64()-lastInputMs;
