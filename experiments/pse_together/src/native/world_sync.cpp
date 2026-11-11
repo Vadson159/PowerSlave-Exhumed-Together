@@ -71,7 +71,6 @@ struct State {
     std::uint64_t lastEnemyTick{}, enemyApplies{}, enemyMoves{};
     std::array<Mover, QueueCap> movers{};
     std::size_t head{}, count{};
-    std::uint16_t keysGained{};
     std::uint64_t localMovers{}, appliedMovers{}, busySkips{}, ticks{};
     struct Watch { int sector{-1}; unsigned left{}; } watch[4]{};
     int debugCls{-1}, debugType{}, debugSector{-1};
@@ -91,7 +90,7 @@ struct State {
     unsigned hitLogged{}, hitAppliedLogged{}; std::uint64_t remoteHitsMuted{}, hitsSent{}; unsigned capLogged{};
     // Урон окружения своему игроку клиента (утопление, лава, падение: Damage без источника) — решает клиент (ReqSelfDamage); хост: флаг применения.
     std::array<Hit, 32> selfQueue{}; std::size_t selfHead{}, selfCount{}; bool selfDamage{}, replicaKill{}; unsigned selfLogged{}; std::uint64_t remoteSelfMuted{};
-    // Скарабеи (чекпоинты): каждый игрок — свой. Своё касание: номер скарабея карты в очередь (хост — для себя, клиент — хосту ReqCheckpoint).
+    // Скарабеи (чекпоинты): каждый игрок — свой. Своё касание: номер скарабея карты в очередь (хост — для себя, клиент — хосту ReqTouch).
     void* checkpointTouch{}; int lastCheckpoint{-1}; std::array<int, 8> cpQueue{}; std::size_t cpHead{}, cpCount{};
     // Этап 2: касания своего игрока у клиента (ReqTouch) — одна очередь для всех видов; повтор того же актора не чаще раза в 30 тиков.
     std::array<Touch, 32> touchQueue{}; std::size_t touchHead{}, touchCount{}; std::unordered_map<std::uint64_t, std::uint64_t> touchAsked;
@@ -626,7 +625,7 @@ void __fastcall hookKeyTouch(void* key, void* instigator) {
     s.keyTouch(key, instigator);
     if (!owner) return;
     const std::uint16_t gained = static_cast<std::uint16_t>(read<std::uint16_t>(owner, 0x98) & ~before & 0xf);
-    if (gained && s.active && !s.replaying) { s.keysGained |= gained; note("world_key_local", "\"gained\":%u,\"keys\":%u", gained, read<std::uint16_t>(owner, 0x98)); }
+    if (gained && s.active && !s.replaying) { note("world_key_local", "\"gained\":%u,\"keys\":%u", gained, read<std::uint16_t>(owner, 0x98)); }
 }
 
 // Обход списков акторов по секторам (как в read-only переписи спавна host.cpp): sector+0x78 — голова двусвязного списка.
@@ -863,7 +862,7 @@ void setActive(bool on) {
     if (!on) s.ownActor = nullptr;
     if (on == s.active) return;
     s.active = on;
-    s.head = s.count = 0; s.keysGained = 0; s.sceneDone.fill(false); s.sceneSubstituted.fill(false); s.breakHead = s.breakCount = 0; s.brokenSeen.clear();
+    s.head = s.count = 0; s.sceneDone.fill(false); s.sceneSubstituted.fill(false); s.breakHead = s.breakCount = 0; s.brokenSeen.clear();
     s.soundHead = s.soundCount = 0; s.soundLastTick.fill(0);
     for (auto& l : s.lifts) l.sector = -1;
     s.doors.clear(); s.reopen.clear();
@@ -874,7 +873,6 @@ bool popMover(Mover& out) {
     out = s.movers[s.head]; s.head = (s.head + 1) % QueueCap; --s.count;
     return true;
 }
-std::uint16_t popKeysGained() { const auto v = s.keysGained; s.keysGained = 0; return v; }
 int popBreak() {
     if (!s.installed || !s.breakCount) return -1;
     const int id = s.breakQueue[s.breakHead]; s.breakHead = (s.breakHead + 1) % s.breakQueue.size(); --s.breakCount;
@@ -1181,7 +1179,6 @@ void debugKeys(Byte* player) {
     if (!thread() || !s.installed || !player || s.debugKeyBits == 0) return;
     const auto bits = s.debugKeyBits; s.debugKeyBits = 0;
     *reinterpret_cast<std::uint16_t*>(player + 0x98) = static_cast<std::uint16_t>(read<std::uint16_t>(player, 0x98) | bits);
-    if (s.active) s.keysGained |= static_cast<std::uint16_t>(bits); // как подбор у этой стороны
     note("world_debug_key", "\"bits\":%u,\"keys\":%u", bits, read<std::uint16_t>(player, 0x98));
 }
 

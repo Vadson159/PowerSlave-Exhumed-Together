@@ -401,7 +401,6 @@ struct Session {
                 reinterpret_cast<void(__fastcall*)(void*,const char*)>(g.base+0x1b54d0)(instance(),name);
             }
         }
-        w::popKeysGained(); // keys this player picked up here reach the host as touches (ReqTouch): its body takes the same key there
         w::Mover m;
         while(w::popMover(m)) sendWorld(w::ReqMover,static_cast<std::uint32_t>(m.sector),w::moverToWire(m));
     }

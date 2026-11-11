@@ -456,7 +456,7 @@ void followClientExit(std::uint32_t lo,std::uint32_t hi) {
     log("host_follow_client_exit","\"map\":\"%s\"",map.c_str());
     reinterpret_cast<void(__fastcall*)(void*,const char*)>(g.base+0x1b54d0)(instance(),map.c_str());
 }
-std::uint16_t pendingClientKeys{},sharedKeysSent{};std::uint32_t sharedKeysGen{};std::uint64_t worldOnTicks{};
+std::uint16_t sharedKeysSent{};std::uint32_t sharedKeysGen{};std::uint64_t worldOnTicks{};
 std::vector<int> enemiesGone,pickupsTaken;std::uint32_t goneSentSerial{}; // this world: map enemies gone and map spheres taken (also before any client was here)
 std::vector<std::pair<int,int>> switchesPressed; // this world: (face, event) of every switch pressed here, for clients that join later
 #ifdef PSE_FEATURE_P14
@@ -474,7 +474,7 @@ void worldSyncHost() {
         g.phase==Phase::Live && live(g.p1,primary()) && remotesLive();
     w::setActive(on);
     if(!on) {
-        worldRequests.clear();pendingClientKeys=0;sharedKeysGen=0;sharedKeysSent=0;worldOnTicks=0;goneSentSerial=0;
+        worldRequests.clear();sharedKeysGen=0;sharedKeysSent=0;worldOnTicks=0;goneSentSerial=0;
         // Alone in the level (no client ready yet): still note the map enemies that vanish and the spheres taken, for whoever joins later.
         if(gameplay() && !g.failed && !g.shutdown && !g.worldExit && live(g.p1,primary())) {
             w::prepareHud();
@@ -489,7 +489,6 @@ void worldSyncHost() {
     while(!worldRequests.empty()) {
         const auto r=worldRequests.front();worldRequests.pop_front();
         if(r.interactionType==w::ReqMover) w::applyMover(w::moverFromWire(r.targetGeneration,r.targetEntityId));
-        else if(r.interactionType==w::ReqKeys) pendingClientKeys|=static_cast<std::uint16_t>(r.targetEntityId&0xfu);
         else if(r.interactionType==w::ReqAchievement) w::applyAchievement(r.targetEntityId); // the client earned it: the host's Steam account gets it too
         else if(r.interactionType==w::ReqBreak) { if(w::applyBreak(static_cast<int>(r.targetEntityId))) g.network->publishWorldEvent(w::EvBreak,0,0,static_cast<std::int32_t>(r.targetEntityId)); }
         else if(r.interactionType==w::ReqMap) followClientExit(r.targetEntityId,r.targetGeneration);
@@ -553,9 +552,8 @@ void worldSyncHost() {
             if(state==2) { const int at=overworldCurrent()+1;log("debug_overworld","\"location\":%d,\"travel\":%s",at,travelToOverworld(at)?"true":"false"); } // the level exit: map screen at the next location
         }
     }
-    w::popKeysGained(); // P1/P2 pickups are caught by the union below
     const auto k1=read<std::uint16_t>(primary(),0x98);
-    std::uint16_t merged=static_cast<std::uint16_t>((k1|pendingClientKeys)&0xfu);pendingClientKeys=0;
+    std::uint16_t merged=static_cast<std::uint16_t>(k1&0xfu); // a client's key reaches its body here as a touch (ReqTouch): the union below has it
     for(unsigned s=1;s<=MaxRemote;++s) if(R(s).exists) merged|=static_cast<std::uint16_t>(read<std::uint16_t>(R(s).storage.bytes,0x98)&0xfu);
     if(merged!=(k1&0xfu)) w::applyKeys(primary(),g.p1.actor,merged);
     for(unsigned s=1;s<=MaxRemote;++s) if(R(s).exists) {

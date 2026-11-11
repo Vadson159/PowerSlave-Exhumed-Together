@@ -31,7 +31,7 @@ inline std::uint32_t moverToWire(const Mover& m) { return (static_cast<std::uint
 constexpr std::uint16_t EvMover = 1;      // EVENT_DOOR_STATE_CHANGE: target=sector, eventValue=cls<<8|type
 constexpr std::uint16_t EvKeys = 3;       // EVENT_PICKUP_COLLECTED: eventValue=маска ключей команды (биты 0..3)
 constexpr std::uint8_t ReqMover = 0x11;   // target=sector, generation=cls<<8|type
-constexpr std::uint8_t ReqKeys = 0x12;    // target=маска ключей, подобранных клиентом
+// 0x12 (ReqKeys) — снят на этапе 5 переделки: ключ своего игрока идёт через ReqTouch (TouchKey).
 // Веха 4: общие достижения Steam. Любое срабатывание нативного SetAchievement (0x184110) на одной стороне идёт второй (ординал 0..19
 // по docs/63_S6_1_ACHIEVEMENT_SPEC.md), та повторяет его у себя нативно: достижение получают все, за действие любого игрока.
 constexpr std::uint16_t EvAchievement = 4; // host -> client: eventValue=ординал
@@ -138,7 +138,6 @@ void setRemoteBodyTest(bool (*test)(const void* actor));
 int setHudKind(int kind);   // возвращает прежний
 void setLocalActorGetter(unsigned char* (*get)()); // хост: актор своего игрока (P1) — для сюжетных сцен
 bool popMover(Mover& out);          // мовер, запущенный игрой здесь (не репликой)
-std::uint16_t popKeysGained();      // ИЛИ битов ключей, подобранных здесь с прошлого вызова
 bool applyMover(const Mover& m);    // повторить нативно; false — сектор занят/неверен
 // Повторить подбор ключей для игрока (Player*, Puppet*): нативный OnTouch по актору-ключу, иначе прямая запись бита.
 bool applyKeys(unsigned char* player, unsigned char* puppet, std::uint16_t mask);
