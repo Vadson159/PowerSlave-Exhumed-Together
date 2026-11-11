@@ -349,7 +349,7 @@ struct Session {
         if(worldOnTicks==199) w::debugTeleport(worldPuppet());
         if(++worldOnTicks==300) w::debugSpawn();
         if(worldOnTicks==450) w::debugKeys(primary());
-        if(worldOnTicks%10==0) { w::debugCensusOnFile();w::debugHit(worldPuppet());w::debugSelfDamage(worldPuppet()); }
+        if(worldOnTicks%10==0) { w::debugCensusOnFile();w::debugHit(worldPuppet());w::debugSelfDamage(worldPuppet());w::debugTouch(worldPuppet()); }
         w::cullLocalProjectiles(); // the client's AI is a replica: enemy projectiles come from the host only
         w::cullLocalDynamic();     // ... and so are enemies and spheres spawned during play (vases, deaths): this machine's own random ones go
         // Own player: local damage is muted, the host's health is applied (red flash through the native Damage call).
@@ -381,10 +381,9 @@ struct Session {
         gonePending.clear();
         for(const int id:pickupPending) w::applyPickup(id);
         pickupPending.clear();
-        for(int id;(id=w::popPickupAsk())>=0;) sendWorld(w::ReqPickup,static_cast<std::uint32_t>(id),0); // this player touched a sphere here: the host gives it
+        for(w::Touch t;w::popTouch(t);) sendWorld(w::ReqTouch,static_cast<std::uint32_t>(t.id),t.kind); // everything this player touched here (spheres, keys, weapons, scarabs): its body at the host touches it too
         for(int id,amount,kind;w::popHit(id,amount,kind);) sendWorld(w::ReqHit,static_cast<std::uint32_t>(id),static_cast<std::uint32_t>(amount)|(static_cast<std::uint32_t>(kind)<<16)); // this player's hits on the host's enemies
         for(int amount,kind;w::popSelfDamage(amount,kind);) sendWorld(w::ReqSelfDamage,static_cast<std::uint32_t>(amount),static_cast<std::uint32_t>(kind)); // drowning, lava, falls of this player
-        for(int id;(id=w::popCheckpoint())>=0;) sendWorld(w::ReqCheckpoint,static_cast<std::uint32_t>(id),0); // this player's scarab: it respawns there
         if(difficultyPending>=0) { w::applyDifficulty(difficultyPending);difficultyPending=-1; }
         for(const auto& [f,ev]:switchPending) w::applySwitch(f,ev);
         switchPending.clear();
@@ -401,7 +400,7 @@ struct Session {
                 reinterpret_cast<void(__fastcall*)(void*,const char*)>(g.base+0x1b54d0)(instance(),name);
             }
         }
-        if(const auto gained=w::popKeysGained()) sendWorld(w::ReqKeys,gained,0);
+        w::popKeysGained(); // keys this player picked up here reach the host as touches (ReqTouch): its body takes the same key there
         w::Mover m;
         while(w::popMover(m)) sendWorld(w::ReqMover,static_cast<std::uint32_t>(m.sector),w::moverToWire(m));
     }

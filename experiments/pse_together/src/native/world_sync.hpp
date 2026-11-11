@@ -93,6 +93,14 @@ bool applySelfDamage(unsigned char* body, int amount, int kind); // хост (и
 void debugSelfDamage(unsigned char* own); // тест (клиент): PSE_DEBUG_SELF_DAMAGE_FILE — урон без источника своему игроку
 // Скарабеи: у каждого игрока свой последний скарабей, у него игрок и появляется после смерти (респаун P16).
 constexpr std::uint8_t ReqCheckpoint = 0x1b; // client -> host: target=номер скарабея карты
+// Переделка, этап 2: касания своего игрока у клиента — ОДИН канал. Клиент сообщает, чего коснулся его игрок (вид + номер актора на
+// проводе: номер карты или SphereMirrorTag|номер порождённого у хоста), хост повторяет то же касание нативным OnTouch телом этого игрока.
+constexpr std::uint8_t ReqTouch = 0x1c;      // client -> host: target=номер актора, generation=вид касания
+enum TouchKind : std::uint8_t { TouchHealth = 0, TouchAmmo = 1, TouchKey = 2, TouchWeapon = 3, TouchScarab = 4, TouchKinds = 5 };
+struct Touch { int id{-1}; std::uint8_t kind{}; };
+bool popTouch(Touch& out);                   // клиент: касание своего игрока, ещё не отправленное; false — нет
+int applyTouch(const Touch& t, unsigned char* body); // хост: тело игрока касается актора нативно (не скарабей); 0 — нет, 1 — да, 2 — порождённый шар
+void debugTouch(unsigned char* own); // тест (клиент): PSE_DEBUG_TOUCH_CLIENT="вид,номер[;вид,номер]" + PSE_DEBUG_TOUCH_FILE — свой игрок касается актора карты родным OnTouch
 int popCheckpoint();                        // свой игрок коснулся скарабея: его номер; -1 — нет
 bool checkpointPlace(int id, float& x, float& y, float& z, float& yaw, int& sector); // где стоит скарабей карты с этим номером
 bool applyHit(int id, int amount, int kind, unsigned char* body); // хост

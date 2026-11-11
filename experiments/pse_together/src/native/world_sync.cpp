@@ -93,6 +93,9 @@ struct State {
     std::array<Hit, 32> selfQueue{}; std::size_t selfHead{}, selfCount{}; bool selfDamage{}, replicaKill{}; unsigned selfLogged{}; std::uint64_t remoteSelfMuted{};
     // Скарабеи (чекпоинты): каждый игрок — свой. Своё касание: номер скарабея карты в очередь (хост — для себя, клиент — хосту ReqCheckpoint).
     void* checkpointTouch{}; int lastCheckpoint{-1}; std::array<int, 8> cpQueue{}; std::size_t cpHead{}, cpCount{};
+    // Этап 2: касания своего игрока у клиента (ReqTouch) — одна очередь для всех видов; повтор того же актора не чаще раза в 30 тиков.
+    std::array<Touch, 32> touchQueue{}; std::size_t touchHead{}, touchCount{}; std::unordered_map<std::uint64_t, std::uint64_t> touchAsked;
+    unsigned touchLogged{}, touchAppliedLogged{}; void* weaponTouch{};
     std::array<ScriptCall, 16> scriptQueue{}; std::size_t scriptHead{}, scriptCount{};
     std::array<int, 32> breakQueue{}; std::size_t breakHead{}, breakCount{}; std::unordered_map<int, std::uint64_t> brokenSeen; unsigned breakLogged{};
     std::array<bool, 256> sceneDone{}, sceneSubstituted{}; int debugBreak{-1}; // сюжетные сцены, уже сыгранные в этом мире (отсюда или реплицированные)
@@ -423,6 +426,16 @@ int healthCap(const unsigned char* player) {
 namespace {
 constexpr std::array<Byte, 16> HealthTouchPrefix{0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00};
 constexpr std::array<Byte, 16> AmmoTouchPrefix{0x40, 0x56, 0x41, 0x56, 0x48, 0x83, 0xec, 0x28, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00, 0x00, 0x00};
+// Касание своего игрока у клиента -> одна очередь ReqTouch (повтор того же актора того же вида не чаще раза в 30 тиков).
+void pushTouch(TouchKind kind, int id) {
+    if (id < 0) return;
+    const std::uint64_t key = (static_cast<std::uint64_t>(kind) << 32) | static_cast<std::uint32_t>(id);
+    auto& last = s.touchAsked[key];
+    if (last && s.ticks - last < 30) return;
+    last = s.ticks ? s.ticks : 1;
+    if (s.touchCount < s.touchQueue.size()) s.touchQueue[(s.touchHead + s.touchCount++) % s.touchQueue.size()] = Touch{id, kind};
+    if (++s.touchLogged <= 60) note("world_touch_asked", "\"kind\":%u,\"id\":%d", static_cast<unsigned>(kind), id);
+}
 template <unsigned Kind> void __fastcall hookSphereTouch(void* pickup, void* toucher) {
     auto* original = reinterpret_cast<TouchFn>(Kind == 0 ? s.healthTouch : s.ammoTouch);
     if (!original) return; // only if one of the two hooks failed to install
@@ -433,7 +446,7 @@ template <unsigned Kind> void __fastcall hookSphereTouch(void* pickup, void* tou
         auto& last = s.pickupAsked[id];
         if (last && s.ticks - last < 30) return;
         last = s.ticks ? s.ticks : 1;
-        if (s.askCount < s.askQueue.size()) s.askQueue[(s.askHead + s.askCount++) % s.askQueue.size()] = id;
+        pushTouch(Kind == 0 ? TouchHealth : TouchAmmo, id);
         if (++s.askLogged <= 40) note("world_pickup_asked", "\"id\":%d,\"kind\":%u", id, Kind);
         return;
     }
@@ -603,6 +616,7 @@ void __fastcall hookKeyTouch(void* key, void* instigator) {
     Byte* owner = nullptr;
     if (thread() && s.installed && instigator && read<Byte*>(instigator) == s.base + PuppetVtable) owner = read<Byte*>(instigator, 0x1b8);
     const std::uint16_t before = owner ? read<std::uint16_t>(owner, 0x98) : 0;
+    if (s.client && s.active && key && instigator == s.ownActor && thread()) pushTouch(TouchKey, read<int>(key, 0x180)); // the host's body takes it too
     s.keyTouch(key, instigator);
     if (!owner) return;
     const std::uint16_t gained = static_cast<std::uint16_t>(read<std::uint16_t>(owner, 0x98) & ~before & 0xf);
@@ -667,14 +681,25 @@ void __fastcall hookCheckpointTouch(void* cp, void* toucher) {
         original(cp, toucher);
         if (mine) {
             const int id = read<int>(s.base + 0xaf33a0, 0x280), own = read<int>(cp, 0x180);
-            if (id >= 0 && id == own && id != s.lastCheckpoint && s.cpCount < s.cpQueue.size()) {
-                s.lastCheckpoint = id; s.cpQueue[(s.cpHead + s.cpCount++) % s.cpQueue.size()] = id;
+            if (id >= 0 && id == own && id != s.lastCheckpoint && (s.client || s.cpCount < s.cpQueue.size())) {
+                s.lastCheckpoint = id;
+                if (s.client) pushTouch(TouchScarab, id); else s.cpQueue[(s.cpHead + s.cpCount++) % s.cpQueue.size()] = id;
                 note("world_checkpoint_local", "\"id\":%d,\"pos\":[%.0f,%.0f,%.0f]", id, read<float>(cp, 0x18), read<float>(cp, 0x1c), read<float>(cp, 0x20));
             }
         }
         return;
     }
     original(cp, toucher);
+}
+// Оружие (kexSlavePickupWeapon, vtable 0x52cb60): OnTouch 0x1d8470. У хоста на нём хук P16 (каждый игрок получает оружие, оно остаётся в мире);
+// у клиента — этот: своё касание проходит родным путём (оружие сразу в руках) и уходит хосту (ReqTouch), тело этого игрока получает его там.
+constexpr std::uint32_t WeaponTouchRva = 0x1d8470, WeaponVtable = 0x52cb60;
+constexpr std::array<Byte, 16> WeaponTouchPrefix{0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00};
+void __fastcall hookWeaponTouch(void* weapon, void* toucher) {
+    auto* original = reinterpret_cast<TouchFn>(s.weaponTouch);
+    if (!original) return;
+    if (thread() && s.installed && s.client && s.active && weapon && toucher && toucher == s.ownActor) pushTouch(TouchWeapon, read<int>(weapon, 0x180));
+    original(weapon, toucher);
 }
 bool install(Byte* base, std::uint32_t simTid, Logger log, bool host) {
     s.base = base; s.tid = simTid; s.log = log;
@@ -742,6 +767,10 @@ bool install(Byte* base, std::uint32_t simTid, Logger log, bool host) {
                  MH_CreateHook(base + AmmoTouchRva, reinterpret_cast<void*>(&hookSphereTouch<1>), &s.ammoTouch) != MH_OK || MH_EnableHook(base + AmmoTouchRva) != MH_OK) {
             note("world_hook_failed", "\"site\":\"SphereTouch\""); s.healthTouch = s.ammoTouch = nullptr;
         } else note("sphere_hook_ready", "\"health_rva\":%u,\"ammo_rva\":%u", HealthTouchRva, AmmoTouchRva);
+        if (!std::equal(WeaponTouchPrefix.begin(), WeaponTouchPrefix.end(), base + WeaponTouchRva)) note("world_profile_mismatch", "\"site\":\"weapon_touch\"");
+        else if (MH_CreateHook(base + WeaponTouchRva, reinterpret_cast<void*>(&hookWeaponTouch), &s.weaponTouch) != MH_OK || MH_EnableHook(base + WeaponTouchRva) != MH_OK) {
+            note("world_hook_failed", "\"site\":\"WeaponTouch\""); s.weaponTouch = nullptr;
+        } else note("touch_hook_ready", "\"weapon_rva\":%u", WeaponTouchRva);
     }
     if (!host) { // враги хоста: ИИ клиента заменён репликой, пока приходят снимки
         if (!std::equal(AiTickPrefix.begin(), AiTickPrefix.end(), base + AiTickRva) || !std::equal(AiDamagePrefix.begin(), AiDamagePrefix.end(), base + AiDamageRva) ||
@@ -1552,6 +1581,52 @@ int takePickup(int id, Byte* body) {
         health ? "true" : "false", hp, static_cast<int>(read<std::int16_t>(body, 0x17a)));
     return taken ? (dynamic ? 2 : 1) : 0;
 }
+void debugTouch(Byte* own) {
+    static bool fired = false; char spec[128]{}, file[MAX_PATH]{};
+    if (fired || !thread() || !s.installed || !s.client || !s.active || !own) return;
+    if (!GetEnvironmentVariableA("PSE_DEBUG_TOUCH_CLIENT", spec, sizeof(spec)) || !GetEnvironmentVariableA("PSE_DEBUG_TOUCH_FILE", file, sizeof(file)) ||
+        GetFileAttributesA(file) == INVALID_FILE_ATTRIBUTES) return;
+    fired = true;
+    for (char* p = spec; p && *p;) {
+        int kind = -1, id = -1;
+        if (sscanf_s(p, "%d,%d", &kind, &id) == 2 && kind >= 0 && kind < TouchKinds) {
+            static constexpr std::uint32_t vt[TouchKinds]{HealthPickupVtable, AmmoPickupVtable, KeyVtable, WeaponVtable, CheckpointVtable};
+            static constexpr std::uint32_t rva[TouchKinds]{HealthTouchRva, AmmoTouchRva, KeyTouchRva, WeaponTouchRva, CheckpointTouchRva};
+            Byte* target = nullptr;
+            forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + vt[kind] || read<int>(a, 0x180) != id) return false; target = a; return true; });
+            note("world_debug_touch", "\"kind\":%d,\"id\":%d,\"found\":%s", kind, id, target ? "true" : "false");
+            if (target) reinterpret_cast<TouchFn>(s.base + rva[kind])(target, own); // the hooked native entry: exactly what the engine's touch scan calls
+        }
+        p = std::strchr(p, ';'); if (p) ++p;
+    }
+}
+bool popTouch(Touch& out) {
+    if (!s.touchCount) return false;
+    out = s.touchQueue[s.touchHead]; s.touchHead = (s.touchHead + 1) % s.touchQueue.size(); --s.touchCount;
+    return true;
+}
+// Хост: то же касание, что игрок клиента сделал у себя, — нативным OnTouch телом этого игрока (через хуки: шары -> P14 этому игроку,
+// оружие -> P16, ключ -> общий набор ключей). Что сделал свой игрок, решает его клиент: ключ и оружие отдаются без проверки расстояния
+// (тело идёт за позой игрока с задержкой); шар — с прежней проверкой takePickup (его может взять и другой игрок).
+int applyTouch(const Touch& t, Byte* body) {
+    if (!thread() || !s.installed || s.client || !s.active || !body || t.id < 0 || read<std::int16_t>(body, 0x17a) <= 0) return 0;
+    if (t.kind == TouchHealth || t.kind == TouchAmmo) return takePickup(t.id, body);
+    if (t.kind != TouchKey && t.kind != TouchWeapon) return 0;
+    const bool key = t.kind == TouchKey;
+    Byte* target = nullptr;
+    forEachActor([&](Byte* a, int) {
+        if (read<Byte*>(a) != s.base + (key ? KeyVtable : WeaponVtable) || read<int>(a, 0x180) != t.id || !(read<unsigned>(a, 0x16c) & 0x100u)) return false;
+        target = a; return true;
+    });
+    const char* result = "gone";
+    if (target) {
+        const int before = s.hudKind; s.hudKind = 2;
+        reinterpret_cast<TouchFn>(s.base + (key ? KeyTouchRva : WeaponTouchRva))(target, body);
+        s.hudKind = before; result = "touched";
+    }
+    if (++s.touchAppliedLogged <= 60) note("world_touch_applied", "\"kind\":%u,\"id\":%d,\"result\":\"%s\"", static_cast<unsigned>(t.kind), t.id, result);
+    return std::strcmp(result, "touched") == 0 ? 1 : 0;
+}
 bool clampHealth(Byte* actor, Byte* player, int floor) {
     if (!thread() || !s.installed || !actor || !player) return false;
     const int hp = read<std::int16_t>(actor, 0x17a), cap = (std::max)(healthCap(player), floor);
@@ -1742,7 +1817,7 @@ void resetWorld() {
     hostDynIds.clear(); dynSeen.clear(); dynMine.clear(); dynHold.clear();
     for (auto& l : s.lifts) l.sector = -1;
     s.doors.clear(); s.reopen.clear();
-    s.pickupAsked.clear(); s.askHead = s.askCount = 0; s.hitHead = s.hitCount = 0; s.selfHead = s.selfCount = 0;
+    s.pickupAsked.clear(); s.askHead = s.askCount = 0; s.touchAsked.clear(); s.touchHead = s.touchCount = 0; s.hitHead = s.hitCount = 0; s.selfHead = s.selfCount = 0;
     s.lastCheckpoint = -1; s.cpHead = s.cpCount = 0;
 }
 void debugFireball(Byte* target) {

@@ -511,6 +511,21 @@ void worldSyncHost() {
         else if(r.interactionType==w::ReqSelfDamage && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists && live(R(r.slotId).p2,R(r.slotId).storage.bytes)) // drowning, lava, fall
             w::applySelfDamage(R(r.slotId).p2.actor,static_cast<int>(r.targetEntityId),static_cast<int>(r.targetGeneration&0xffu));
         else if(r.interactionType==w::ReqCheckpoint && r.slotId>=1 && r.slotId<=MaxRemote) markCheckpoint16(r.slotId,static_cast<int>(r.targetEntityId)); // that player's scarab
+        else if(r.interactionType==w::ReqTouch && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists && live(R(r.slotId).p2,R(r.slotId).storage.bytes)) {
+            // One channel for everything the client's own player touched in its game (sync rework stage 2): its body here touches the same
+            // actor natively (spheres through P14 to that player, weapons through P16, keys into the shared set); a scarab is that player's.
+            const w::Touch t{static_cast<int>(r.targetEntityId),static_cast<std::uint8_t>(r.targetGeneration&0xffu)};
+            if(t.kind==w::TouchScarab) markCheckpoint16(r.slotId,t.id);
+#ifdef PSE_FEATURE_P14
+            else if((t.kind==w::TouchHealth || t.kind==w::TouchAmmo) && p14Eligible()) {
+                pse::p14::allowRemoteTouch(true);
+                const int taken=w::applyTouch(t,R(r.slotId).p2.actor);
+                pse::p14::allowRemoteTouch(false);
+                if(taken==2) g.network->publishWorldEvent(w::EvPickup,0,0,t.id);
+            }
+#endif
+            else if(t.kind==w::TouchKey || t.kind==w::TouchWeapon) w::applyTouch(t,R(r.slotId).p2.actor);
+        }
         else if(r.interactionType==w::ReqHit && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists) // that client's player hit an enemy in its game
             w::applyHit(static_cast<int>(r.targetEntityId),static_cast<int>(r.targetGeneration&0xffffu),static_cast<int>((r.targetGeneration>>16)&0xffu),R(r.slotId).p2.actor);
         else if(r.interactionType==w::ReqScript) { const auto c=w::unpackScript(static_cast<int>(r.targetEntityId&0xffff),r.targetGeneration,static_cast<std::uint16_t>(r.targetEntityId>>16));w::applyScript(c.num,g.p1.actor,&c); } // the client crossed a story trigger: the host's player plays the scene too
