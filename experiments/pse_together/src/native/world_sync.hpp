@@ -91,7 +91,7 @@ bool popSelfDamage(int& amount, int& kind);               // клиент
 bool applySelfDamage(unsigned char* body, int amount, int kind); // хост (и отладочная смерть тела клиента)
 void debugSelfDamage(unsigned char* own); // тест (клиент): PSE_DEBUG_SELF_DAMAGE_FILE — урон без источника своему игроку
 // Скарабеи: у каждого игрока свой последний скарабей, у него игрок и появляется после смерти (респаун P16).
-constexpr std::uint8_t ReqCheckpoint = 0x1b; // client -> host: target=номер скарабея карты
+// 0x1b (ReqCheckpoint) — снят на этапе 5 переделки: скарабей своего игрока идёт через ReqTouch (TouchScarab).
 // Переделка, этап 2: касания своего игрока у клиента — ОДИН канал. Клиент сообщает, чего коснулся его игрок (вид + номер актора на
 // проводе: номер карты или SphereMirrorTag|номер порождённого у хоста), хост повторяет то же касание нативным OnTouch телом этого игрока.
 constexpr std::uint8_t ReqTouch = 0x1c;      // client -> host: target=номер актора, generation=вид касания

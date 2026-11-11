@@ -499,7 +499,6 @@ void worldSyncHost() {
         }
         else if(r.interactionType==w::ReqSelfDamage && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists && live(R(r.slotId).p2,R(r.slotId).storage.bytes)) // drowning, lava, fall
             w::applySelfDamage(R(r.slotId).p2.actor,static_cast<int>(r.targetEntityId),static_cast<int>(r.targetGeneration&0xffu));
-        else if(r.interactionType==w::ReqCheckpoint && r.slotId>=1 && r.slotId<=MaxRemote) markCheckpoint16(r.slotId,static_cast<int>(r.targetEntityId)); // that player's scarab
         else if(r.interactionType==w::ReqTouch && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists && live(R(r.slotId).p2,R(r.slotId).storage.bytes)) {
             // One channel for everything the client's own player touched in its game (sync rework stage 2): its body here touches the same
             // actor natively (spheres through P14 to that player, weapons through P16, keys into the shared set); a scarab is that player's.
