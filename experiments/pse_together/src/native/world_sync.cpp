@@ -81,10 +81,10 @@ struct State {
     void* ach{}; bool achDryRun{}; int debugAch{-1};
     void* script{}; bool forceRoot{}; int debugScriptNum{-1};
     bool (*remoteTest)(const void*){}; unsigned char* (*localActor)(){}; void* consume{}; int hudKind{}; unsigned hudLogged{}; bool hudTried{}; SinkFn sinkOrig[12]{};
-    // Клиент: шары здоровья/патронов своего игрока берёт хост (ReqPickup). healthTouch/ammoTouch — оригиналы OnTouch; pickupAsked — номер шара ->
+    // Клиент: шары здоровья/патронов своего игрока берёт хост (ReqTouch). healthTouch/ammoTouch — оригиналы OnTouch; pickupAsked — номер шара ->
     // тик последнего запроса (повтор не чаще раза в 30 тиков, отклик подбора только на свой запрос).
     void* healthTouch{}; void* ammoTouch{}; std::unordered_map<int, std::uint64_t> pickupAsked;
-    std::array<int, 16> askQueue{}; std::size_t askHead{}, askCount{}; unsigned askLogged{}, takeLogged{};
+    unsigned askLogged{}, takeLogged{};
     // Попадания игрока клиента по врагам хоста (ReqHit): очередь на отправку; хост — флаг «урон по запросу клиента», счётчики.
     struct Hit { int id{}; std::uint16_t amount{}; std::uint8_t kind{}; };
     std::array<Hit, 64> hitQueue{}; std::size_t hitHead{}, hitCount{}; bool clientHit{};
@@ -413,7 +413,7 @@ int sphereWireId(const void* a) {
 // OnTouch шара здоровья (0x1d8770) и патронов (0x1d8590). У хоста на них стоят хуки P14 (кому из игроков отдать); у клиента — эти.
 // Раньше клиент брал шар у себя (здоровье, вспышка, шар исчез), а у хоста тело клиента касалось шара само — только если его поставили ровно на шар:
 // часто не касалось, хост возвращал клиенту прежнее здоровье нативным уроном (лечение -> красная вспышка), шар оставался у хоста; иногда шар у
-// хоста брал другой игрок. Теперь касание своего игрока у клиента только просит хост (ReqPickup); хост отдаёт шар телу этого игрока нативным
+// хоста брал другой игрок. Теперь касание своего игрока у клиента только просит хост (ReqTouch); хост отдаёт шар телу этого игрока нативным
 // OnTouch, убирает его у всех (EvPickup), а взявший клиент показывает подбор (звук, надпись, вспышки) по EvPickup на свой запрос.
 constexpr std::uint32_t HealthTouchRva = 0x1d8770, AmmoTouchRva = 0x1d8590;
 } // namespace (temporarily: healthCap is part of the public API)
@@ -1492,11 +1492,6 @@ bool applyPickup(int id) {
     removeActor(target);
     return true;
 }
-int popPickupAsk() {
-    if (!s.askCount) return -1;
-    const int id = s.askQueue[s.askHead]; s.askHead = (s.askHead + 1) % s.askQueue.size(); --s.askCount;
-    return id;
-}
 // Сложность (GameInstance +0x1d8, геттер vtable +0x158 = 0x1ae6a0): от неё — полоса здоровья на HUD (100 на сложностях 1-2, иначе 200 на анкх),
 // сколько даёт шар здоровья и урон. Здоровье игрока ведёт хост: при другой сложности у клиента 200 хоста рисовались двумя полосами.
 constexpr std::uint32_t GameInstanceRva = 0xaf33a0, DifficultyOffset = 0x1d8;
@@ -1900,7 +1895,7 @@ void resetWorld() {
     hostDynIds.clear(); dynSeen.clear(); dynMine.clear(); dynHold.clear();
     for (auto& l : s.lifts) l.sector = -1;
     s.doors.clear(); s.reopen.clear();
-    s.pickupAsked.clear(); s.askHead = s.askCount = 0; s.touchAsked.clear(); s.touchHead = s.touchCount = 0; s.hitHead = s.hitCount = 0; s.selfHead = s.selfCount = 0;
+    s.pickupAsked.clear(); s.touchAsked.clear(); s.touchHead = s.touchCount = 0; s.hitHead = s.hitCount = 0; s.selfHead = s.selfCount = 0;
     s.lastCheckpoint = -1; s.cpHead = s.cpCount = 0;
 }
 void debugFireball(Byte* target) {

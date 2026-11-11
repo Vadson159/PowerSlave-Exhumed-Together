@@ -497,18 +497,6 @@ void worldSyncHost() {
             w::playPlayerSound(pse::native_proxy::actorOf(r.slotId),r.targetEntityId);
             g.network->publishWorldEvent(w::EvSound,r.slotId,0,static_cast<std::int32_t>(r.targetEntityId));
         }
-        else if(r.interactionType==w::ReqPickup && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists && live(R(r.slotId).p2,R(r.slotId).storage.bytes)) {
-#ifdef PSE_FEATURE_P14
-            // That client's player touched a health/ammo sphere in its own game: its body here takes it (P14 gives it to that player only). A map
-            // sphere then goes to everyone through popPickup below; a dynamic one (vase, enemy drop) is announced now by its mirror tag.
-            if(p14Eligible()) {
-                pse::p14::allowRemoteTouch(true);
-                const int taken=w::takePickup(static_cast<int>(r.targetEntityId),R(r.slotId).p2.actor);
-                pse::p14::allowRemoteTouch(false);
-                if(taken==2) g.network->publishWorldEvent(w::EvPickup,0,0,static_cast<std::int32_t>(r.targetEntityId));
-            }
-#endif
-        }
         else if(r.interactionType==w::ReqSelfDamage && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists && live(R(r.slotId).p2,R(r.slotId).storage.bytes)) // drowning, lava, fall
             w::applySelfDamage(R(r.slotId).p2.actor,static_cast<int>(r.targetEntityId),static_cast<int>(r.targetGeneration&0xffu));
         else if(r.interactionType==w::ReqCheckpoint && r.slotId>=1 && r.slotId<=MaxRemote) markCheckpoint16(r.slotId,static_cast<int>(r.targetEntityId)); // that player's scarab
