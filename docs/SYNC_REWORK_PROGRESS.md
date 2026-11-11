@@ -17,7 +17,7 @@
 | 3 | Общая репликация акторов уровня, локальная логика мира у клиента выключена | готов (3.1), проверен вживую; 3.2–3.4 — решения ниже |
 | 4 | Репликация секторов (пол/потолок/свет) и граней (текстуры рычагов) | готов, проверен вживую |
 | 5 | Удаление лишних частных пересылок | готов, проверен вживую |
-| — | Финал: полный регресс, пакет друга, S:\PSE_Together, отчёт | в работе |
+| — | Финал: полный регресс, пакет друга, S:\PSE_Together, отчёт | готов |
 
 ## Этап 1 — единая сессия хоста
 
@@ -155,3 +155,23 @@ smoke_m9, smoke_s1 21/21, smoke_n 3 + смена уровня — PASS; журн
 - Инструменты разведки: `tools/re/xdis.py <rva> [n]` / `xdis.py find <regex> [window-regex]` и `tools/re/xfunc.py <rva>...` (capstone+pefile; EXE play_vote).
 - OnTouch (+0x40) по vtable: здоровье 0x52c868→0x1d8770, патроны 0x52cac8→0x1d8590, анкх 0x52c7d0→0x1d8870, ключ 0x52c998→0x1d8a00,
   оружие 0x52cb60→0x1d8470, скарабей 0x5288f0→0x1a3b50, выход TravelObject 0x530588→0x2072e0, Puppet игрока 0x52d198→0x4a670 (базовый, пустой?).
+
+## Финал
+
+- Полный живой регресс одной командой: `bash experiments/pse_together/tools/regress_all.sh "$PWD/play_vote" <папка>` (12 смоуков:
+  m9, m7, s1, s2, s2 TOMB, s3, s4, n 3 + кампания, n 2 FIRE, smoke.py RESTART+CAMPAIGN, SCENE, INPUT; после каждого log_check),
+  итог — `<папка>/summary.txt`.
+- Дальше: пакет друга (`make_friend_package.bat /nopause` → `PSE_Together_friend.zip`, при занятом файле — с датой), обновить
+  `S:\PSE_Together\game` (pse_together.dll, SDL2.dll, pe-together.dll, pe-together.ini, pe-play.exe) с резервной копией прежних в
+  `S:\PSE_Together\backup_<дата>`, итоговый отчёт пользователю.
+
+Сделано 2026-11-12:
+- Финальный регресс на итоговой сборке (DLL 858fbd50477393a0), `regress_all.sh`, 23:54–00:24: m9, m7, s1 21/21, s2 7/7, s2 TOMB 6/6,
+  s3 5/5, s4 5/5, n 3 + смена уровня, n 2 FIRE, smoke.py RESTART+CAMPAIGN, SCENE, INPUT — всё PASS; журналы: проблем нет (кроме
+  намеренной `debug_world_fault` в m9), застреваний тика в игре нет. ctest 18/19 (`p24_loader_contract`, как всегда).
+- Пакет друга: `PSE_Together_friend_20261112_0025.zip` (и `PSE_Together_friend.zip`), сборка 2026-11-11 23:51, DLL 858fbd50477393a0.
+- `S:\PSE_Together` обновлена (game + overlay: pse_together.dll, pe-together.ini, SDL2.dll, pe-together.dll; pe-play.exe, VERSION.txt);
+  прежние файлы — `S:\PSE_Togetherackup_20261112_0025`.
+
+Не проверено (нельзя на одном ПК): два ПК через интернет/Radmin; долгая игра; настоящее утопление; прицельная стрельба; поведение при
+реальной потере пакетов. Что проверить с другом — в CHANGELOG (запись «итог переделки»).
