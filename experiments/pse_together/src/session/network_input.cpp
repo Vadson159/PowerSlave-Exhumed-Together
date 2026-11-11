@@ -59,7 +59,7 @@ void Session::verifyNativeMap(map56::Fault fault,const map56::Identity& current)
             neutral(s,"map_identity_invalidated");
             // The host is changing/loading its map (ChangeMap, exit portal): not being ready is expected now, so the join timeout starts
             // from here, not from the join long ago. Otherwise tick() would kick the client before it could follow the map order.
-            p.joinedTick=nowTick;
+            p.joinedTick=nowTick;p.waitTicks=0;
         }
         p.ready=false;
     }
@@ -106,6 +106,36 @@ bool Session::publishWorldSnapshot(std::vector<pse::EntitySnapshot>&& entities) 
     pse::BridgeWorldSnapshot w;
     w.snapshotSequence=++worldSnapshotSequence;w.serverTick=static_cast<std::uint32_t>(nowTick);w.mapEpoch=epoch;w.entities=std::move(entities);
     return pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{std::move(w)}));
+}
+void Session::leaveWorld(const char* reason) {
+    bridge.assertSimulationThread();
+    if(!running())return;
+    levelReady=false;
+    for(unsigned s=1;s<MaxSlots;++s) {
+        Peer& p=peers[s];
+        if(p.buttons || p.remotePose.valid)neutral(s,reason);
+        p.ready=false;p.waitTicks=0;
+        p.gate.invalidate();
+    }
+    flush(); // the next-map order (if any) still goes out: it is in the outbox
+    log("network_world_left","\"reason\":\"%s\",\"connected\":%u,\"epoch\":%u,\"tick\":%llu",reason,activePeers(),epoch,nowTick);
+}
+bool Session::rebindNativeMap(const map56::Identity& identity,std::uint32_t levelEpoch) {
+    bridge.assertSimulationThread();
+    if(!running() || !nativeMap || levelEpoch<=1 || levelEpoch==epoch)return false;
+    for(unsigned s=1;s<MaxSlots;++s) if(!peers[s].gate.rebind(identity,levelEpoch))return false;
+    epoch=levelEpoch;nativeDomain=identity.name;++bindings;
+    for(unsigned s=1;s<MaxSlots;++s) { Peer& p=peers[s];p.ready=false;p.waitTicks=0;p.joinedTick=nowTick; }
+    // BROADCAST: the worker re-points its WELCOME map (late joiners) and its snapshot epoch filter, then tells every connected client.
+    pse::BridgeMapChange map;
+    map.mapName=nativeDomain;map.newMapEpoch=epoch;
+#ifdef PSE_FEATURE_P4
+    map.mapStructure=map111::structure(identity);
+#endif
+    enqueue(std::move(map));
+    flush();
+    log("network_world_rebound","\"map\":\"%s\",\"epoch\":%u,\"bindings\":%u,\"connected\":%u,\"tick\":%llu",nativeDomain.c_str(),epoch,bindings,activePeers(),nowTick);
+    return true;
 }
 bool Session::announceNextMap(const std::string& name) {
     bridge.assertSimulationThread();
@@ -242,7 +272,7 @@ void Session::consume(pse::BridgeMessage& message) {
             neutral(slot, "new_generation");
             p->gen = e->connectionGeneration;
             p->active = true; p->ready = false; p->hasSeq = false; p->lastSeq = 0;
-            p->joinedTick = nowTick;
+            p->joinedTick = nowTick; p->waitTicks = 0; p->everReady = false;
             p->participant = e->participantId;
             if (nativeMap) p->gate.authenticated(static_cast<std::uint8_t>(slot), p->gen);
             pse::BridgeMapChange map;
@@ -279,11 +309,20 @@ void Session::consume(pse::BridgeMessage& message) {
             // v1.10 MapReady carries only slot/epoch: this verifies the authenticated peer's
             // echo of the epoch bound to the host-verified identity, not the client's map itself.
             const auto verdict = p->gate.mapReady(r->slotId, r->connectionGeneration, r->mapEpoch, levelReady && p->active);
+            if (verdict == map56::HostGate::Ready::Duplicate && p->ready && r->connectionGeneration == p->gen && r->mapEpoch == epoch) {
+                // The client's own world changed while the host's did not (its Restart Level / checkpoint reload, or it went back to
+                // the host's level): same connection and epoch, a fresh world on its side. It gets the baseline and every shared world
+                // state again (joinSerial), its body here simply continues.
+                ++joinCounter;
+                baseline(slot);
+                log("network_reready","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"tick\":%llu",slot,p->gen,epoch,nowTick);
+                return;
+            }
             if (verdict != map56::HostGate::Ready::Accepted) {
                 log("map_ready_rejected", "\"reason\":\"%s\",\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"current_generation\":%u,\"current_epoch\":%u,\"tick\":%llu", map56::HostGate::text(verdict), r->slotId, r->connectionGeneration, r->mapEpoch, p->gen, epoch, nowTick);
                 return;
             }
-            p->ready = true;
+            p->ready = true; p->everReady = true; p->waitTicks = 0;
             ++joinCounter;
             baseline(slot);
 #ifdef PSE_FEATURE_P4
@@ -309,7 +348,10 @@ void Session::consume(pse::BridgeMessage& message) {
             (!p->hasSeq || c->sequence > p->lastSeq) && std::isfinite(c->moveForward) && std::isfinite(c->moveRight) &&
             std::isfinite(c->yaw) && std::isfinite(c->pitch);
         if (!valid) {
-            log("network_input_rejected", "\"slot\":%u,\"generation\":%u,\"input_seq\":%u,\"tick\":%llu", c->slotId, c->connectionGeneration, c->sequence, nowTick);
+            // A client keeps sending while the host (or the client itself) is between worlds: expected, logged sparsely.
+            const bool between = p && p->active && (!p->ready || !levelReady);
+            if (!between || (p && p->rejectedInputs++ % 600 == 0))
+                log("network_input_rejected", "\"slot\":%u,\"generation\":%u,\"input_seq\":%u,\"tick\":%llu,\"between_worlds\":%s", c->slotId, c->connectionGeneration, c->sequence, nowTick, between ? "true" : "false");
             return;
         }
         p->hasSeq = true; p->lastSeq = c->sequence; p->lastInputTick = nowTick; p->lastInputMs = GetTickCount64();
@@ -357,7 +399,10 @@ void Session::tick(std::uint64_t tick, bool gameplay) {
                 }
             }
         }
-        if (p.active && !p.ready && nowTick - p.joinedTick >= 600) recover(s, pse::RESYNC_EXTERNAL);
+        // Join handshake timeout: a new connection that never became ready within 600 ticks of the host's own gameplay. A peer that was
+        // ready once on this connection is never kicked for it: after a world change it may load slower or still pick on the map screen.
+        if (p.active && !p.ready && levelReady) ++p.waitTicks;
+        if (p.active && !p.ready && !p.everReady && p.waitTicks >= 600) recover(s, pse::RESYNC_EXTERNAL);
     }
     if (overflowed) recoverAll(bridge.consumeResyncReasons() | pse::RESYNC_OUTBOUND_LOSS);
     flush();

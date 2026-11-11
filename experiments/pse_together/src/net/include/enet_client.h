@@ -49,6 +49,8 @@ public:
     uint64_t getReconnectKey() const { return m_reconnectKey; }
     void clearReconnectKey() { m_reconnectKey = 0; m_config.reconnectKey = 0; }
     uint32_t getMapEpoch() const { return m_mapEpoch; }
+    // Bridge mode: the host bound its session to a new world (MapChange with a new epoch inside the same connection).
+    void setSessionMap(uint32_t epoch, const std::string& name) { m_mapEpoch = epoch; m_mapName = name; }
     const std::string& getMapName() const { return m_mapName; }
 
     const PlayerStateSnapshot* getLocalPlayerState() const;

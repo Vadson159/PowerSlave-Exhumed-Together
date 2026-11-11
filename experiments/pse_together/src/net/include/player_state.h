@@ -40,6 +40,7 @@ struct PlayerParticipant {
     ENetPeer*   peer = nullptr;          // Transient transport peer
     bool        connected = false;
     uint64_t    lastSeenTimestampMs = 0;
+    uint64_t    disconnectedAtMs = 0;    // GetTickCount64() when the connection ended (a long-departed identity's slot may be reclaimed)
 
     // Entity Lifetime Tracking (independent of native pointers)
     uint32_t    entityId = 1000;

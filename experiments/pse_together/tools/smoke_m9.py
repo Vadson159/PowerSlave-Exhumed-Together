@@ -111,7 +111,7 @@ for _ in range(10): act.focus(act.hwnd_of(host)); time.sleep(2)
 client = launch('client'); time.sleep(8)
 keys(client, 'F7', 'wait=1', 'RETURN', 'wait=2', *MENU)
 both = [client, host]
-print('client followed to KARNAK:', wait_for('client', 'client_follow_host_map', 1, 60, both), '| welcomed:', wait_for('client', 'client_welcome', 1, 120, both))
+print('client followed to KARNAK:', wait_for('client', 'client_follow_host_map', 1, 60, both), '| welcomed:', wait_for('client', 'client_welcome', 1, 120, both), '| ready:', wait_for('client', 'client_input_domain_ready', 1, 120, both))
 (out / 'self.flag').write_text('go')   # environment damage first: enemies at the scarab may kill the client soon
 print('environment damage: client', wait_for('client', 'world_debug_self_damage', 1, 60, both), '| host applied', wait_for('host', 'world_self_damage_applied', 1, 30, both))
 print('teleported: client', wait_for('client', 'world_debug_teleport', 1, 60, both), '| host', wait_for('host', 'world_debug_teleport', 1, 60, both))
@@ -137,7 +137,7 @@ print('client pose after respawn:', [p['pose'] for p in pose], '(scarab 235 at 5
 (out / 'block.flag').write_text('go')
 print('host blocked:', wait_for('host', 'blocked', 1, 30, both), '| next map:', wait_for('host', 'debug_block_next_map', 1, 40, both))
 print('host recovered:', wait_for('host', 'host_recovered_after_block', 1, 90, both))
-print('client rejoined on SANCTUAR:', wait_for('client', 'client_welcome', 3, 180, both))
+print('client ready on SANCTUAR in the same session:', wait_for('client', 'client_input_domain_ready', 2, 180, both), '| welcomes (must stay 1):', len([r for r in rows('client') if r['event'] == 'client_welcome']), '| host rebinds:', len([r for r in rows('host') if r['event'] == 'network_world_rebound']))
 time.sleep(4); look(host, '6_host_sanctuar.png', 1); look(client, '7_client_sanctuar.png', 1)
 print('--- scarabs / respawn')
 show('client', 'checkpoint_hook_ready', 'world_checkpoint_local', 'p16_client_respawn_committed', 'world_health_capped')
@@ -146,8 +146,8 @@ print('--- environment damage')
 show('client', 'world_debug_self_damage', 'world_self_damage', 'world_own_health')
 show('host', 'world_self_damage_applied', 'world_remote_self_damage_muted')
 print('--- recovery')
-show('host', 'blocked', 'debug_block_next_map', 'host_recovered_after_block', 'host_block_kept', 'map_identity_bound', 'host_world_rearmed')
-show('client', 'client_welcome', 'client_follow_host_map', 'client_recovered_after_block', 'blocked', 'client_identity_reset')
+show('host', 'blocked', 'debug_block_next_map', 'host_recovered_after_block', 'host_block_kept', 'map_identity_bound', 'host_world_rearmed', 'network_world_left', 'network_world_rebound', 'network_started')
+show('client', 'client_welcome', 'client_follow_host_map', 'client_recovered_after_block', 'blocked', 'client_identity_reset', 'client_host_world_changed', 'world_transition', 'client_world_left', 'client_input_domain_ready', 'client_session')
 bad = {}
 for role in ('host', 'client'):
     for r in rows(role):

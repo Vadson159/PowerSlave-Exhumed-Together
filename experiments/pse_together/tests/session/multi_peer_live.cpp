@@ -44,8 +44,10 @@ struct Client {
     std::uint32_t inputSeq{};
     std::vector<BridgePlayerSnapshot> snapshots;
     std::vector<BridgeWorldEvent> events;
-    std::vector<BridgeMapChange> orders;
-    unsigned worldSnapshots{};
+    std::vector<BridgeMapChange> orders, rebinds; // rebinds: MapChange with a new epoch (the host's next world inside the session)
+    map56::Identity world = Map;
+    unsigned worldSnapshots{}, baselines{};
+    std::uint32_t lastBaselineEpoch{};
     void start(const std::string& participant, std::uint16_t hostPort, std::uint64_t reconnectKey = 0) {
         id = participant; port = hostPort;
         if (bridge) { worker.reset(); bridge->unregisterSimulationThread(); }
@@ -56,7 +58,7 @@ struct Client {
         ClientConfig cc; cc.hostPort = hostPort; cc.joinToken = "M12A_Loopback"; cc.participantId = participant;
         cc.displayName = participant.substr(0, 20); cc.reconnectKey = reconnectKey;
         joined = lost = mapReadySent = baselineSeen = false; rejected = -1; slot = 0; generation = 0; inputSeq = 0;
-        snapshots.clear(); events.clear(); orders.clear(); worldSnapshots = 0;
+        snapshots.clear(); events.clear(); orders.clear(); rebinds.clear(); worldSnapshots = 0; baselines = 0;
         check(worker->startClient(cc), "client worker starts");
     }
     void pump() {
@@ -69,14 +71,14 @@ struct Client {
                 else if (e->type == BridgeSessionEvent::Type::LOCAL_SESSION_LOST) lost = true;
             } else if (const auto* s = std::get_if<BridgePlayerSnapshot>(&m)) snapshots.push_back(*s);
             else if (const auto* w = std::get_if<BridgeWorldEvent>(&m)) events.push_back(*w);
-            else if (const auto* c = std::get_if<BridgeMapChange>(&m)) { if (c->newMapEpoch == 0) orders.push_back(*c); }
-            else if (std::get_if<BridgeWorldBaseline>(&m)) baselineSeen = true;
+            else if (const auto* c = std::get_if<BridgeMapChange>(&m)) { if (c->newMapEpoch == 0) orders.push_back(*c); else if (c->newMapEpoch != epoch) { rebinds.push_back(*c); epoch = c->newMapEpoch; } }
+            else if (const auto* b = std::get_if<BridgeWorldBaseline>(&m)) { baselineSeen = true; ++baselines; lastBaselineEpoch = b->mapEpoch; }
             else if (std::get_if<BridgeWorldSnapshot>(&m)) ++worldSnapshots;
         }
     }
     void sendMapReady() {
         BridgeMapReady r; r.slotId = static_cast<std::uint8_t>(slot); r.mapEpoch = epoch; r.connectionGeneration = generation;
-        r.mapName = Map.name; r.mapStructure = map111::structure(Map);
+        r.mapName = world.name; r.mapStructure = map111::structure(world);
         mapReadySent = isSuccess(bridge->pushOutbound(BridgeMessage{r}));
     }
     void sendInput(std::uint32_t buttons, float forward, float x, float yaw, std::uint8_t weapon) {
@@ -93,9 +95,10 @@ struct World {
     std::unique_ptr<m12a::Session> host;
     std::vector<std::unique_ptr<Client>> clients;
     std::uint64_t tick{};
+    bool gameplay{true}; // false: the host is between worlds (loading, map screen)
     // One simulation-thread step: tick the host session, pump every client.
     void step() {
-        host->tick(++tick, true);
+        host->tick(++tick, gameplay);
         for (auto& c : clients) c->pump();
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -342,7 +345,78 @@ int main() {
         check(w.until([&] { leaver.sendInput(BUTTON_ATTACK, 0, 777.0f, 0, 1); return host.pose(slot).valid && host.pose(slot).x == 777.0f; }), "new generation input accepted on the reused slot");
     }
 
-    // ---- 9. shutdown --------------------------------------------------------------------------------------------------------
+    // ---- 9. one session for the whole game: the host's next world (StateExit -> next level) keeps every client connected -----------
+    {
+        constexpr std::uint32_t Epoch2 = 0x91070002;
+        const map56::Identity Map2{"maps/KARNAK.MAP", 0x5678, 1, 93, 31337};
+        std::uint32_t worldGens[8]{};
+        for (auto& c : w.clients) worldGens[c->slot] = c->generation;
+        const auto serial = host.joinSerial();
+        host.leaveWorld("StateExit");
+        check(host.connected() == 0 && host.activePeers() == 7 && !host.anySnapshotEligible(), "world left: nobody ready, everybody still connected");
+        check(!host.publishWorldEvent(1, 0, 0, 1) && !host.publishNativeSnapshot(w.clients[0]->slot, snapshotFor(w.clients[0]->slot, ++snapSeq, 1)), "nothing is published between worlds");
+        // A long stay on the map screen / a slow load: far beyond the 600-tick join timeout, nobody is kicked.
+        w.gameplay = false;
+        for (int i = 0; i < 900; ++i) { w.tick += 1; w.step(); }
+        bool kept = true;
+        for (auto& c : w.clients) kept = kept && !c->lost && host.generation(c->slot) == worldGens[c->slot];
+        check(kept, "no client is kicked or disconnected while the host is between worlds");
+        // The next world is stable: re-bind with a new epoch, every client is told inside its existing connection.
+        check(!host.rebindNativeMap(Map2, host.mapEpoch()), "re-binding to the same epoch is refused");
+        w.gameplay = true;
+        check(host.rebindNativeMap(Map2, Epoch2) && host.mapEpoch() == Epoch2 && host.worldBindings() == 1, "host session re-bound to the next world");
+        check(w.until([&] { for (auto& c : w.clients) if (c->rebinds.empty()) return false; return true; }), "every client receives the new world binding");
+        bool sameConn = true, newWorld = true;
+        for (auto& c : w.clients) {
+            sameConn = sameConn && c->generation == worldGens[c->slot] && !c->lost;
+            newWorld = newWorld && c->rebinds.size() == 1 && c->rebinds[0].newMapEpoch == Epoch2 && c->rebinds[0].mapName == Map2.name;
+        }
+        check(sameConn, "same connection generation for every client across the world change");
+        check(newWorld, "exactly one MapChange with the new epoch and map name per client");
+        for (auto& c : w.clients) check(!host.wantsPlayer(c->slot) && host.mapGate(c->slot).peer() == map56::HostGate::Peer::AwaitMapReady, "each peer must become ready again");
+        // A MapReady of the old world is refused; the new one makes the peer ready again.
+        {
+            auto& c = *w.clients[0];
+            BridgeMapReady old; old.slotId = static_cast<std::uint8_t>(c.slot); old.mapEpoch = Epoch; old.connectionGeneration = c.generation;
+            old.mapName = Map.name; old.mapStructure = map111::structure(Map);
+            c.bridge->pushOutbound(BridgeMessage{old});
+            w.settle(150);
+            check(!host.wantsPlayer(c.slot), "MapReady of the previous world is refused");
+        }
+        for (auto& c : w.clients) { c->world = Map2; c->baselineSeen = false; c->sendMapReady(); }
+        check(w.until([&] { for (auto& c : w.clients) if (!host.snapshotEligible(c->slot)) return false; return true; }), "every client ready in the next world");
+        check(w.until([&] { for (auto& c : w.clients) if (!c->baselineSeen || c->lastBaselineEpoch != Epoch2) return false; return true; }), "each client got the baseline of the new world");
+        check(host.joinSerial() == serial + 7, "joinSerial advanced once per client (shared world state is re-sent)");
+        // Snapshots of the new epoch pass both workers' epoch filters (host session map, client node epoch).
+        for (auto& c : w.clients) c->snapshots.clear();
+        const bool snap2 = w.until([&] {
+            bool all = true;
+            for (auto& c : w.clients) if (c->snapshots.empty()) { host.publishNativeSnapshot(c->slot, snapshotFor(c->slot, ++snapSeq, static_cast<std::uint32_t>(w.tick))); all = false; }
+            return all;
+        });
+        check(snap2, "native snapshots of the new world reach every client");
+        bool epochOk = true;
+        for (auto& c : w.clients) for (const auto& s : c->snapshots) epochOk = epochOk && s.mapEpoch == Epoch2;
+        check(epochOk, "every delivered snapshot carries the new epoch");
+        auto& c0 = *w.clients[0];
+        check(w.until([&] { c0.sendInput(BUTTON_JUMP, 0, 4321.0f, 0, 1); return host.pose(c0.slot).valid && host.pose(c0.slot).x == 4321.0f; }), "input accepted in the new world");
+        // The client's own world restarts while the host's does not: same epoch MapReady again = re-ready (baseline again).
+        const auto before = c0.baselines;
+        const auto serial2 = host.joinSerial();
+        c0.sendMapReady();
+        check(w.until([&] { return c0.baselines > before; }), "re-ready in the same world gets a fresh baseline");
+        check(host.joinSerial() == serial2 + 1 && host.snapshotEligible(c0.slot) && countEvent("network_reready") >= 1, "re-ready re-sends the shared world state and keeps the peer eligible");
+        // A client that drops and comes back after the world change gets the new world in its WELCOME.
+        auto& r = *w.clients[4];
+        const auto rslot = r.slot; const auto rkey = r.key; const auto rid = r.id; const auto rgen = r.generation;
+        r.stop();
+        check(w.until([&] { return !host.wantsPlayer(rslot); }), "dropped client leaves");
+        r.start(rid, port, rkey);
+        check(w.until([&] { return r.joined; }), "dropped client reconnects");
+        check(r.slot == rslot && r.generation == rgen + 1 && r.epoch == Epoch2, "reconnect: same slot, next generation, WELCOME carries the current world");
+    }
+
+    // ---- 10. shutdown --------------------------------------------------------------------------------------------------------
     host.stop("test_done");
     check(!host.running() && host.connected() == 0, "session stopped, no peer wanted");
     for (auto& c : w.clients) c->stop();

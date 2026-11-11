@@ -16,6 +16,9 @@ out = root / time.strftime('smoke_%Y%m%d_%H%M%S')
 out.mkdir()
 # A smoke run never touches the user's real Steam achievements: the mod's SetAchievement hook only logs (PSE_ACH_DRYRUN=1).
 os.environ.setdefault('PSE_ACH_DRYRUN', '1')
+for prof_dir in (root / 'profile').glob('*'):   # New Game asks "overwrite?" (default No) once a slot exists: start with empty slots
+    saves = prof_dir / 'early_native_logs' / 'saves'
+    if saves.exists() and any(saves.iterdir()): saves.rename(saves.with_name('saves_before_' + out.name)); saves.mkdir()
 if os.environ.get('SMOKE_CAMPAIGN'):
     # Milestone 4: host "walks through the exit" (same native ChangeMap as the exit trigger) and the client follows to the next map.
     os.environ.setdefault('PSE_DEBUG_CHANGE_MAP', 'maps/KARNAK.MAP')
@@ -275,12 +278,12 @@ if os.environ.get('SMOKE_CAMPAIGN'):
     print('host announced the change:', wait_for('host', 'host_map_change_announced', 1, 60), '| client follows:', wait_for('client', 'client_follow_map_received', 1, 20))
     print('host world rearmed:', wait_for('host', 'host_world_rearmed', 1, 60), '| client transition:', wait_for('client', 'world_transition', 1, 30))
     # the client must rejoin the NEW host session and both must have P2/proxy again on KARNAK
-    print('second P2 spawn on host:', wait_for('host', 'snapshot_entity_bindings', 2, 150), '| second client_welcome:', wait_for('client', 'client_welcome', 2, 60))
+    print('second P2 spawn on host:', wait_for('host', 'snapshot_entity_bindings', 2, 150), '| client ready on KARNAK in the same session:', wait_for('client', 'client_input_domain_ready', 2, 60), '| welcomes:', len(events('client', 'client_welcome')))
     time.sleep(8); look(host, 'k2_host_karnak.png', 2); look(client, 'k2_client_karnak.png', 2)
     keys(client, 'hold:W=1.5', 'wait=1'); look(host, 'k3_host_sees_p2.png', 3)
     keys(host, 'hold:W=1.0', 'wait=1'); look(client, 'k3_client_sees_host.png', 3)
-    for role, names in (('host', ('debug_change_map', 'host_map_change_announced', 'p2_travel_captured', 'state_exit_entry', 'host_world_rearmed', 'map_identity_bound', 'network_started', 'p2_travel_restored', 'proxy_world_transition', 'ach_local', 'ach_applied')),
-                        ('client', ('client_follow_map_received', 'client_follow_map_change', 'world_transition', 'client_welcome', 'client_loadout_applied', 'ach_local', 'ach_applied'))):
+    for role, names in (('host', ('debug_change_map', 'host_map_change_announced', 'p2_travel_captured', 'state_exit_entry', 'host_world_rearmed', 'map_identity_bound', 'network_started', 'network_world_rebound', 'p2_travel_restored', 'proxy_world_transition', 'ach_local', 'ach_applied')),
+                        ('client', ('client_follow_map_received', 'client_follow_map_change', 'world_transition', 'client_welcome', 'client_host_world_changed', 'client_input_domain_ready', 'client_loadout_applied', 'ach_local', 'ach_applied'))):
         for r in events(role, *names): print(role, {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
 if os.environ.get('SMOKE_LATE'):
     # Late joiner: P2 is created from a copy of the host's live inventory (no travel happened yet).

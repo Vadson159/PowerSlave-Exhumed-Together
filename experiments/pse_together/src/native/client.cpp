@@ -114,6 +114,14 @@ bool prefix(profile::Index i) { return std::equal(std::begin(profile::Sites[i].p
 void flushJournal() { journalWriter.flush(true); }
 #include "client_self_p16.inc"
 #include "client_respawn_p16.inc"
+// The host's session moved to another world (MapChange with a new epoch, or a welcome): the host builds every body afresh (generation 1)
+// in that world, so every per-binding latch of the respawn / self-state handshakes starts over. No native call.
+void bindingReset16() {
+    input16.invalidate();requestPending16=newLocal16=protect16=false;stagedConfirm16.reset();
+    p7Authority=ss7::Authority{};p7Admitted=false;pse::self_native_p7::invalidate();
+    inputBound16=false;hostDead16=false;hostDeath16=0;localGeneration16=1;
+    slots16.reset();
+}
 #ifdef PSE_FEATURE_VISUAL_PROXY
 pse::seam::Seam seam58;
 void nativeProxyJournal(const char* event,const char* detail) { log(event,"%s",detail); }
@@ -163,6 +171,11 @@ struct Session {
     std::array<std::uint32_t,pse::MAX_PLAYERS> genWaitLogged16{}; // log throttle for p16_snapshot_generation_wait, per slot
     std::string followMap; // Milestone 4: the host announced the next map; hookTick calls the native ChangeMap with it
     std::uint64_t exitTick{};bool followedByUs{},exitSent{}; // followedByUs: the map change in progress is the one WE started on the host's order; exitSent: our own exit was reported
+    // One session for the whole game: when the host's binding is new (welcome, MapChange), the next stable gameplay world of this client is
+    // compared with the host's level once; another level -> follow it. Not continuously: while the host itself is between worlds (this client
+    // walked into the exit first and is already in the next level), the old binding must not pull it back.
+    bool followCheck{};
+    std::uint32_t bindings{};
 #ifdef PSE_FEATURE_SNAPSHOT
     snapshot55::Guard snapshots;
 #endif
@@ -175,6 +188,14 @@ struct Session {
     void observeMap() {
         map56::Identity id;const auto fault=map56::derive(map56::observe(g.base),id);
         mapGate.observe(fault,id);
+        if(fault==map56::Fault::None) localMap=id; // the current world (MapReady and the proxy map token describe it)
+        if(followCheck && fault==map56::Fault::None && active && !g.failed) {
+            followCheck=false;
+            if(id.name!=mapGate.hostName() && followMap.empty() && pse::validNativeMapName(mapGate.hostName())) {
+                followMap=mapGate.hostName();
+                log("client_follow_host_map","\"host\":\"%s\",\"local\":\"%s\",\"epoch\":%u",mapGate.hostName().c_str(),id.name.c_str(),mapGate.mapEpoch());
+            }
+        }
         const auto state=mapGate.state();
         if(fault!=lastFault || state!=lastState || g.ticks%600==0)
             log("client_map_status","\"tick\":%llu,\"fault\":\"%s\",\"local\":\"%s\",\"host\":\"%s\",\"state\":\"%s\",\"stable_ticks\":%u,\"epoch\":%u,\"generation\":%u,\"count_a\":%llu,\"count_b\":%llu",g.ticks,map56::text(fault),id.name.c_str(),mapGate.hostName().c_str(),map56::ClientGate::text(state),mapGate.stableTicks(),mapGate.mapEpoch(),mapGate.connection(),id.countA,id.countB);
@@ -275,6 +296,35 @@ struct Session {
     bool sendWorld(std::uint8_t type,std::uint32_t target,std::uint32_t generation) {
         pse::BridgeInteractionRequest r;r.mapEpoch=epoch;r.slotId=slot;r.interactionType=type;r.targetEntityId=target;r.targetGeneration=generation;
         return pse::isSuccess(bridge.pushOutbound(pse::BridgeMessage{r}));
+    }
+    // This client's own world ended (worldTransition) while the session stays: proxies of the old world are gone with it (barrier58 +
+    // native_proxy::rearm), their machines are replaced; MapReady is due again in the next world.
+    void worldLeft() {
+        // An order received before or while leaving that world is done by leaving it (or was our own exit's echo): the next world
+        // follows the host's level through followCheck when the host's binding changes.
+        if(!followMap.empty()) log("client_order_superseded","\"order\":\"%s\"",followMap.c_str());
+        followMap.clear();
+        readySent=baseline=false;exitSent=false;followedByUs=false;exitTick=0;
+        hostHealthValid=vitalsSynced=hostLoadoutValid=false;
+        mapGate.newWorld();
+#ifdef PSE_FEATURE_VISUAL_PROXY
+        for(unsigned i=0;i<pse::MAX_PLAYERS;++i) proxies.resetSlot(static_cast<std::uint8_t>(i));
+        retireMask58=removeAppliedMask58=0;adapterRemoveApplied=false;
+        proxies.configureSession(slot,gen,epoch);
+#endif
+        log("client_world_left","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"host\":\"%s\",\"follow\":\"%s\"",slot,gen,epoch,mapGate.hostName().c_str(),followMap.c_str());
+    }
+    // A new binding to the host's world (first welcome, or the host moved on inside this session): world events of the old one are void,
+    // the host builds this player's body afresh (generation 1), every other player's proxy is replaced by its next snapshot.
+    void newBindingState() {
+        ++bindings;
+        worldKeysPending=0;scriptPending.clear();breakPending.clear();soundPending.clear();gonePending.clear();pickupPending.clear();switchPending.clear();
+        hostHealthValid=vitalsSynced=hostLoadoutValid=false;
+        bindingReset16();
+#ifdef PSE_FEATURE_VISUAL_PROXY
+        proxies.configureSession(slot,gen,epoch);
+        for(unsigned i=0;i<pse::MAX_PLAYERS;++i) retireProxy58(static_cast<std::uint8_t>(i),"host_world_changed");
+#endif
     }
     void worldEvent(const pse::BridgeWorldEvent& e) {
         namespace w=pse::world;
@@ -412,18 +462,16 @@ struct Session {
                     if(e->reconnectKey) g.reconnectKey=e->reconnectKey;
 #ifdef PSE_FEATURE_MAPREADY
                     #ifdef PSE_FEATURE_P4
-                    if(!map111::matches(localMap,e->mapName,e->mapStructure)) {
-                        active=readySent=baseline=false;
-                        // This client stands in another level than the host's: go to the host's level instead of staying out of the game for good.
-                        if(e->mapName!=localMap.name && pse::validNativeMapName(e->mapName)) { followMap=e->mapName;log("client_follow_host_map","\"host\":\"%s\",\"local\":\"%s\"",e->mapName.c_str(),localMap.name.c_str()); }
-                        else block("welcome_native_map_structure_v111");
-                        continue;
-                    }
+                    // Same level name but another structure: not the same map (another game version) - never playable together.
+                    // Another level: welcome as usual, then this client follows the host's level (observeMap, followCheck).
+                    if(e->mapName==localMap.name && !map111::matches(localMap,e->mapName,e->mapStructure)) { active=readySent=baseline=false;block("welcome_native_map_structure_v111");continue; }
                     #endif
                     if(!mapGate.welcome(e->slotId,e->connectionGeneration,e->mapEpoch,e->mapName)) { block("welcome_map_identity_or_epoch");continue; }
-                    slot=e->slotId;gen=e->connectionGeneration;epoch=e->mapEpoch;active=true;readySent=baseline=false;reconnectPending=false;
+                    const bool newBinding=e->mapEpoch!=epoch;
+                    slot=e->slotId;gen=e->connectionGeneration;epoch=e->mapEpoch;active=true;readySent=baseline=false;reconnectPending=false;followCheck=true;
                     if(e->reconnectKey) g.reconnectKey=e->reconnectKey; // a later session of this process rejoins the same slot
-                    snapshots.reset(gen,epoch);slots16.quiet();
+                    snapshots.reset(gen,epoch);
+                    if(newBinding) newBindingState(); else slots16.quiet(); // a reconnect inside the same host world keeps the respawn generations
                     log("client_welcome","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"host_map\":\"%s\",\"local_map\":\"%s\",\"world_synchronized\":false",slot,gen,epoch,mapGate.hostName().c_str(),localMap.name.c_str());
 #ifdef PSE_FEATURE_VISUAL_PROXY
                     proxies.configureSession(slot,gen,epoch);log("proxy_session_configured","\"local_slot\":%u,\"generation\":%u,\"epoch\":%u,\"spawn_enabled_by_session\":false,\"native_capacity\":%u",slot,gen,epoch,static_cast<unsigned>(pse::MAX_PLAYERS-1));
@@ -470,22 +518,24 @@ struct Session {
                     if(active && pse::validNativeMapName(map->mapName)) { followMap=map->mapName;log("client_follow_map_received","\"map\":\"%s\",\"generation\":%u",followMap.c_str(),gen); }
                     continue;
                 }
-#ifdef PSE_FEATURE_P4
-                if(!map111::matches(localMap,map->mapName,map->mapStructure)) { readySent=baseline=false;block("map_change_native_structure_v111");continue; }
-#endif
+                if(!active || (map->newMapEpoch==epoch && map->mapName==mapGate.hostName())) continue; // the binding we already have (join echo)
 #ifdef PSE_FEATURE_MAPREADY
-                if(!mapGate.mapChange(map->connectionGeneration,map->newMapEpoch,map->mapName)) {
-                    readySent=baseline=false;block("unsupported_map_change");
-#ifdef PSE_FEATURE_VISUAL_PROXY
-                    barrier58("unsupported_map_change");
-#endif
-                }
+                // One host session for the whole game: the host is in its next world (next level, Restart Level, loaded save, back from the
+                // map screen). Same connection and slot; this client binds to the new epoch and becomes ready again once its own world is
+                // that level (following it when it is another one).
+                if(!mapGate.mapChange(map->connectionGeneration,map->newMapEpoch,map->mapName)) { log("client_map_change_refused","\"map\":\"%s\",\"epoch\":%u",map->mapName.c_str(),map->newMapEpoch);continue; }
+                const auto oldEpoch=epoch;
+                epoch=map->newMapEpoch;readySent=baseline=false;followCheck=true;
+                snapshots.reset(gen,epoch);
+                newBindingState();
+                log("client_host_world_changed","\"map\":\"%s\",\"epoch\":%u,\"old_epoch\":%u,\"local\":\"%s\",\"generation\":%u,\"bindings\":%u",map->mapName.c_str(),epoch,oldEpoch,localMap.name.c_str(),gen,bindings);
 #else
                 if(map->mapName!=Domain || map->newMapEpoch!=epoch) block("unsupported_map_domain");
 #endif
             } else if(const auto* b=std::get_if<pse::BridgeWorldBaseline>(&m)) {
                 if(b->connectionGeneration!=gen) continue;
 #ifdef PSE_FEATURE_MAPREADY
+                if(b->mapEpoch!=epoch) { log("client_baseline_stale","\"epoch\":%u,\"current\":%u",b->mapEpoch,epoch);continue; } // of a host world already left
                 if(!active || !readySent || b->totalBatches!=1 || b->batchIndex!=0 || !b->entities.empty() || !mapGate.baseline(b->connectionGeneration,b->mapEpoch,b->mapName)) { block("map_baseline_contract");continue; }
                 baseline=true;log("client_input_domain_ready","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"map\":\"%s\",\"entities\":0,\"state\":\"%s\",\"world_synchronized\":false",slot,gen,epoch,mapGate.hostName().c_str(),map56::ClientGate::text(mapGate.state()));
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -599,7 +649,8 @@ struct Session {
 #ifdef PSE_FEATURE_MAPREADY
         // MapReady only after the authenticated host identity equals the locked local native
         // identity for StableTicks consecutive stable ticks: never on connection or a timer.
-        if(active && !readySent && !g.failed && gameplay() && g.localThisTick==1 && mapGate.shouldSendReady()) {
+        // Not while an order of the host is still to be executed here (this world is about to be left: Restart Level, next level).
+        if(active && !readySent && !g.failed && gameplay() && g.localThisTick==1 && followMap.empty() && mapGate.shouldSendReady()) {
             pse::BridgeMapReady r;r.slotId=slot;r.connectionGeneration=gen;r.mapEpoch=epoch;
 #ifdef PSE_FEATURE_P4
             r.mapName=localMap.name;r.mapStructure=map111::structure(localMap);
@@ -720,29 +771,36 @@ void stop(const char* reason) {
     log("client_quiesced","\"reason\":\"%s\",\"pinned\":true,\"player_writes\":0",reason);flushJournal();
 #endif
 }
-// A level restart or checkpoint reload keeps the process and every hook alive, but it is a NEW world: the engine purges the
-// old proxy Actor itself. Close the old network session, reset every per-world latch (self-state authority, respawn gate,
-// proxy adapter) and let a fresh Session rejoin with the saved reconnect key when the next gameplay world is stable.
+// Leaving a gameplay world (next level, Restart Level, checkpoint reload, map screen, title) keeps the process, every hook AND the
+// network session: the host's session lives until the host quits, so this client stays connected; only the per-world latches go
+// (self-state authority, respawn gate, proxy adapter: the engine purges the proxy Actors itself). The next stable world sends MapReady
+// again (a new epoch from the host's MapChange, or the same one after a world change of this client alone, see Session::consume()).
+// A session that is no longer connected (rejected, never welcomed) is dropped here and the next world starts a fresh one.
 void worldTransition(const char* reason) {
     if(!thread() || g.stopped) return;
     if(g.failed && !processFault(lastBlock) && blockRecoveries<16) { // the next world rejoins the host by itself (no game restart)
         g.failed=false;++blockRecoveries;log("client_recovered_after_block","\"reason\":\"%s\",\"recoveries\":%u,\"at\":\"%s\"",lastBlock,blockRecoveries,reason);lastBlock[0]=0;
     }
     ++g.worldSerial;
-    log("world_transition","\"reason\":\"%s\",\"world\":%llu",reason,g.worldSerial);
-    if(g.session) g.session->barrier58(reason);
+    auto* ss=g.session;
+    const bool keep=ss && ss->started && !ss->stopped && (ss->active || ss->reconnectPending);
+    log("world_transition","\"reason\":\"%s\",\"world\":%llu,\"session_kept\":%s",reason,g.worldSerial,keep?"true":"false");
+    if(ss) ss->barrier58(reason);
     pse::native_proxy::exitBarrier(1);
     if(!restart16.restore(log)) block("p16_restart_restore");
     input16.invalidate();requestPending16=newLocal16=protect16=false;stagedConfirm16.reset();
     p7Authority=ss7::Authority{};p7Admitted=false;pse::self_native_p7::invalidate();
     p7LifetimeClosed=false;p7PinnedActor=p7PinnedNode=0;p7PinnedAllocation=0;
-    inputBound16=false;hostDead16=false;hostDeath16=0;localGeneration16=1;startValid16=false;
-    slots16.reset();
-    // The in-game Together UI stays up: the menu request is kept so the next gameplay world rejoins on its own.
-    if(g.session) g.session->stop(reason);
-    g.session=nullptr; // the stopped Session is retained (never freed): its worker has joined, nothing references it
+    inputBound16=false;startValid16=false;
+    if(!keep) {
+        // A fresh session follows: the respawn generations start over with it.
+        hostDead16=false;hostDeath16=0;localGeneration16=1;slots16.reset();
+        if(ss) ss->stop(reason);
+        g.session=nullptr; // the stopped Session is retained (never freed): its worker has joined, nothing references it
+    }
     if(!pse::native_proxy::rearm()) block("native_proxy_rearm");
     pse::world::resetWorld();
+    if(keep) ss->worldLeft();
 }
 // Host leads, client follows: kexSlaveGameInstanceLocal::ChangeMap (0x1b54d0, "maps/NAME.MAP") is what the game itself calls from an exit
 // trigger: it starts the 1 s fade and sets the pending map; the usual StateExit -> worldTransition() -> new Session path does the rest.

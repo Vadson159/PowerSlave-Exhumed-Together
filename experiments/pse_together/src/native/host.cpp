@@ -221,6 +221,7 @@ bool p16Restore();
 // artifacts, abilities, quest items, team dolls, health. p2Entry = what P2 had when this world started (a Restart Level gives that back).
 std::map<std::string, P2Persist> travelBy; // carried inventory per client identity (see Remote::key)
 bool mapAnnounced{};
+bool worldBound{}; // this world's map identity is bound to the host session (first world: configureNativeMap; later: rebindNativeMap)
 void rearmWorld();
 void recoverAfterBlock();
 void tick16();
@@ -546,6 +547,7 @@ void worldSyncHost() {
         if(!fired && GetEnvironmentVariableA("PSE_DEBUG_END",st,sizeof(st)) && GetEnvironmentVariableA("PSE_DEBUG_MAP_FILE",file,sizeof(file)) && GetFileAttributesA(file)!=INVALID_FILE_ATTRIBUTES) {
             fired=true;const int state=std::atoi(st);log("debug_end_game","\"state\":%d",state);
             if(state==6||state==7) reinterpret_cast<void(__fastcall*)(void*,int)>(g.base+0x1ae650)(instance(),state);
+            if(state==2) { const int at=overworldCurrent()+1;log("debug_overworld","\"location\":%d,\"travel\":%s",at,travelToOverworld(at)?"true":"false"); } // the level exit: map screen at the next location
         }
     }
     w::popKeysGained(); // P1/P2 pickups are caught by the union below
@@ -1000,8 +1002,9 @@ void unbind(const char* reason) {
 #ifdef PSE_ROLE_HOST
     g.backgroundStopping=true;
     endFocusLease(); g.neutralPrimary=false;
-    // Join completes while engine services and our callbacks/storage still live.
-    if (g.network) g.network->stop(reason);
+    // One session for the whole game: a world change keeps every client connected (only their readiness ends with this world).
+    // DirectQuit ends it: the join completes while engine services and our callbacks/storage still live.
+    if (g.network) { if (next) g.network->leaveWorld(reason); else g.network->stop(reason); }
     if (g.schedule) for (unsigned slot=1; slot<=MaxRemote; ++slot) if (R(slot).exists) {
         Ctx ctx(slot);
         own<std::uint32_t>(0, 0);
@@ -1042,6 +1045,8 @@ void __fastcall hookStateExit(void* self) {
         log("state_exit_return", "\"external_handle_null\":%s,\"owned_dtor_returns\":%llu,\"guards\":%s,\"actor_reads\":false,\"module_and_storage_pinned\":true",
             read<Byte*>(player(), 0xd8) ? "false" : "true", g.dtorReturns, guards() ? "true" : "false");
         recoverAfterBlock();
+        // A fault that is not recoverable (process level) ends co-op for this run: the clients are told by the session's end.
+        if (g.failed && g.network && g.network->running()) g.network->stop("blocked_permanently");
         rearmWorld();
     }
 }
@@ -1177,8 +1182,8 @@ void debugKillP2(std::uint64_t worldTicks){
     static bool fileFired=false;char file[MAX_PATH]{}; // or when PSE_DEBUG_KILL_P2_FILE appears (once)
     if(!fileFired&&worldTicks%10==0&&GetEnvironmentVariableA("PSE_DEBUG_KILL_P2_FILE",file,sizeof(file))&&GetFileAttributesA(file)!=INVALID_FILE_ATTRIBUTES){fileFired=true;unsigned empty=0;fixture16.compare_exchange_strong(empty,2);log("debug_kill_p2_file","\"world_ticks\":%llu",worldTicks);}
 }
-// Called right after the engine's own StateExit returned: everything per-world is dropped and the next gameplay world starts a fresh
-// Session (new listening socket, new map identity and epoch, new P2). The old Session object is retained, never freed (its worker has joined).
+// Called right after the engine's own StateExit returned: everything per-world is dropped (bodies, proxies, respawn team, world sync).
+// The network Session is NOT: it lives until the host quits, the next world re-binds it to its map with a new epoch (rebindNativeMap).
 // The world that had the fault is gone (the engine's StateExit returned): every body and proxy of it is destroyed. The next world gets a fresh
 // session as usual, so a world-level fault no longer needs a game restart (it used to: the session stayed dead and clients could not rejoin).
 void recoverAfterBlock() {
@@ -1192,7 +1197,6 @@ void recoverAfterBlock() {
 }
 void rearmWorld() {
     if(g.failed || g.shutdown || !thread()) return;
-    g.network=nullptr;
     g.worldExit=false;g.backgroundStopping=false;g.resetAttempted=false;g.schedule=false;g.scope=false;g.p2Update=false;
     g.phase=Phase::Waiting;g.p1={};g.attestSamples=0;g.anchorValid=false;
     for(auto& r:g.remotes){r.p2={};r.exists=false;r.p2Tick=r.motionTick=0;r.appliedSequence=r.appliedGeneration=r.appliedButtons=0;r.maxP2Distance=0;r.key.clear();r.entry={};}
@@ -1201,7 +1205,7 @@ void rearmWorld() {
     connected16={};
     g.p7KeysPermitted=false;g.p7KeyProbeSerial=g.p7KeyReviewSerial=0;
     g.snapshotEligibleLogged=false;g.lastMapFault=map56::Fault::None;
-    mapAnnounced=false;
+    mapAnnounced=false;worldBound=false;
     enemiesGone.clear();pickupsTaken.clear();switchesPressed.clear();goneSentSerial=0;pse::world::resetWorld();
     for(unsigned i=0;i<8;++i){proxyEntity[i]=0;proxyRebuild[i]=false;}
     // respawn / death bookkeeping of the old world
@@ -1424,8 +1428,19 @@ void __fastcall hookTick(void* self) {
 #endif
             if (g.phase == Phase::Armed && ++g.attestSamples >= 60) {
 #ifdef PSE_ROLE_HOST
-                if (!g.network) {
-                    g.network = new m12a::Session(log);
+                if (!worldBound && g.network && g.network->running()) {
+                    // The same session, the next world: every connected client is moved to it (new epoch; slots, identities and
+                    // connections stay). Its bodies are built again below as each client becomes ready in this world.
+                    const auto observed=map56::observe(g.base);map56::Identity id;
+                    const auto fault=map56::derive(observed,id);
+                    const auto epoch=fault==map56::Fault::None ? map56::randomEpoch(g.network->mapEpoch()) : 0;
+                    if(fault!=map56::Fault::None || !epoch || !g.network->rebindNativeMap(id,epoch)) { block("native_map_rebind");g.inTick=false;return; }
+                    log("map_identity_bound", "\"map\":\"%s\",\"map_epoch\":%u,\"epoch_source\":\"BCryptGenRandom per world of the host session\",\"tick\":%llu,\"rebind\":true,\"bindings\":%u,\"clients\":%u",
+                        id.name.c_str(),epoch,g.ticks,g.network->worldBindings(),g.network->activePeers());
+                    worldBound=true;
+                }
+                if (!g.network || !g.network->running()) {
+                    g.network = new m12a::Session(log); // the first world (or after a permanent stop): a new listening session
 #if defined(PSE_FEATURE_MAPREADY)
                     {
                         const auto observed=map56::observe(g.base);map56::Identity id;
@@ -1442,6 +1457,7 @@ void __fastcall hookTick(void* self) {
 #endif
                     if (!g.network->start()) block("network_start");
                     if(!g.failed&&!installWeapon16())block("p16_weapon_hook_install");
+                    worldBound=true;
                 }
                 if (!g.failed) constructWaiting();
 #else

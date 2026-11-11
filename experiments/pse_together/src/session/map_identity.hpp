@@ -99,6 +99,14 @@ public:
         if(worldState!=World::Unbound || mapEpoch<=1 || id.name.empty())return false;
         identity=id;epoch=mapEpoch;worldState=World::Verified;return true;
     }
+    // One host session for the whole game: the next world (level, restart, loaded save) re-binds the gate to its identity and a
+    // new epoch. The authenticated peer generation stays; a connected peer must send MapReady for the new epoch again.
+    bool rebind(const Identity& id,std::uint32_t mapEpoch) {
+        if(mapEpoch<=1 || mapEpoch==epoch || id.name.empty())return false;
+        identity=id;epoch=mapEpoch;worldState=World::Verified;
+        if(peerState!=Peer::Disconnected)peerState=Peer::AwaitMapReady;
+        return true;
+    }
     // Every simulation tick. Any fault or any identity difference invalidates the binding.
     bool verify(Fault f,const Identity& current) {
         if(worldState!=World::Verified)return false;
@@ -161,7 +169,8 @@ public:
         verifiedThisTick=ok;
         if(!ok) { stable=0;return; }
         if(current==State::Disconnected)return;
-        if(local.name!=host) { current=State::Mismatch;return; }
+        // Another level than the host's: not ready here (the client follows the host's level, see client.cpp observeMap()).
+        if(local.name!=host) { stable=0;return; }
         if(stable<StableTicks)++stable;
         if(current==State::AwaitNativeMap && stable>=StableTicks)current=State::IdentityVerified;
     }
@@ -171,12 +180,20 @@ public:
         if(current!=State::MapReadySent || gen!=generation || mapEpoch!=epoch || name!=host)return false;
         current=State::Ready;return true;
     }
-    // Any announced change of world while bound is unsupported in DOC56: fail closed.
+    // The host's session moved to its next world (same connection, new epoch): bind to it, MapReady again once this client's own
+    // world is that level and stable. False only for a malformed change.
     bool mapChange(std::uint32_t gen,std::uint32_t mapEpoch,const std::string& name) {
         if(gen!=generation)return true; // other session's control message: ignored
         if(mapEpoch==epoch && name==host)return true;
-        if(!terminal())current=State::Invalidated;
-        return false;
+        if(mapEpoch<=1 || name.empty() || name.size()>pse::MAX_STRING_LEN)return false;
+        epoch=mapEpoch;host=name;stable=0;verifiedThisTick=false;
+        if(current!=State::Disconnected)current=State::AwaitNativeMap;
+        return true;
+    }
+    // This client left its world (StateExit / map invalidated) but keeps the connection: the next world is locked afresh.
+    void newWorld() {
+        locked=false;stable=0;verifiedThisTick=false;lockedIdentity={};
+        if(current!=State::Disconnected && current!=State::Mismatch)current=State::AwaitNativeMap;
     }
     void lost() { if(!terminal()) { current=State::Disconnected;stable=0; } }
     bool snapshotEligible(std::uint32_t gen,std::uint32_t mapEpoch) const {

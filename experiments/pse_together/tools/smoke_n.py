@@ -23,6 +23,9 @@ if os.environ.get('SMOKE_N_CAMPAIGN'):
     os.environ.setdefault('PSE_DEBUG_CHANGE_MAP', 'maps/KARNAK.MAP')
     os.environ.setdefault('PSE_DEBUG_MAP_FILE', str(out / 'go_next_map.flag'))
     os.environ.setdefault('PSE_DEBUG_P2_GRANT', '3,40')
+for prof_dir in (root / 'profile').glob('*'):   # New Game asks "overwrite?" (default No) once a slot exists: start with empty slots
+    saves = prof_dir / 'early_native_logs' / 'saves'
+    if saves.exists() and any(saves.iterdir()): saves.rename(saves.with_name('saves_before_' + out.name)); saves.mkdir()
 
 MENU = ('RETURN', 'wait=1.5', 'RETURN', 'wait=1.5', 'RETURN', 'wait=1.5', 'RETURN', 'wait=5', 'RETURN', 'wait=12')
 
@@ -158,4 +161,7 @@ if os.environ.get('SMOKE_N_CAMPAIGN'):
     for r in events('host', 'host', 'p2_travel_captured', 'p2_travel_restored', 'p2_seeded_from_host'): print('host', {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
     for pid_name, pid in procs.items():
         shot(pid, f'{pid_name}_next_map.png')
+for pid in reversed(list(procs.values())):   # close every window of this run: a leftover host keeps the port and breaks the next smoke
+    h = act.hwnd_of(pid)
+    if h: act.u.PostMessageW(h, 0x10, 0, 0); time.sleep(4)
 print('screens in', out)

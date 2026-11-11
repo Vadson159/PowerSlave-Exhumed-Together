@@ -130,7 +130,7 @@ CLIENT_MENU = ('RETURN', 'wait=1.5', 'RETURN', 'wait=1.5', 'RETURN', 'wait=1.5',
 keys(client, 'F7', 'wait=1', 'RETURN', 'wait=2', *CLIENT_MENU)
 both = [client, host]
 print('client followed the host to KARNAK:', wait_for('client', 'client_follow_host_map', 1, 60, both))
-print('client welcomed on KARNAK (2nd welcome):', wait_for('client', 'client_welcome', 2, 120, both))
+print('client ready on KARNAK (same session, no 2nd welcome):', wait_for('client', 'client_input_domain_ready', 1, 120, both))
 print('host built P2:', wait_for('host', 'snapshot_entity_bindings', 1, 90, both))
 print('client teleported:', wait_for('client', 'world_debug_teleport', 1, 60, both), '| host teleported:', wait_for('host', 'world_debug_teleport', 1, 60, both))
 print('P2 pistol granted:', wait_for('host', 'debug_p2_grant', 1, 60, both))

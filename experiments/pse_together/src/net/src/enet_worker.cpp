@@ -959,6 +959,13 @@ bool ENetWorker::handleClientCustomPacket(uint8_t msgType, ByteReader& reader, u
         if (mc.deserialize(reader) && reader.remaining()==0) {
             auto dto = BridgeMapChange::fromNet(mc);
             if (m_clientInputCadence && m_clientNode) dto.connectionGeneration = m_clientNode->getConnectionGeneration();
+            // A new world of the same host session (next level, restart, loaded save): snapshots of the new epoch pass from now
+            // on, and input waits for this client's MapReady of that world (no input of the old world reaches the new one).
+            if (m_clientNode && mc.newMapEpoch != 0 && mc.newMapEpoch != m_clientNode->getMapEpoch()) {
+                m_clientNode->setSessionMap(mc.newMapEpoch, mc.mapName);
+                m_clientInputReady = false;
+                m_clientHasSample = false;
+            }
             deliverInbound(std::move(dto));
             return true;
         }

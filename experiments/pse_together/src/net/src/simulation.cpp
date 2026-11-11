@@ -157,6 +157,25 @@ int8_t WorldSimulation::allocateClientSlot(const std::string& participantId, con
         }
     }
 
+    // 3. The host session now lives as long as the host's game: an identity that left long ago (its game was restarted: a new
+    // participantId) must not hold its slot forever. A slot disconnected for ReclaimAfterMs goes to the newcomer; a short drop
+    // (network hiccup, the departed player coming back with its key) keeps its reservation.
+    constexpr uint64_t ReclaimAfterMs = 60000;
+    const uint64_t now = GetTickCount64();
+    for (uint8_t i = 1; i < MAX_PLAYERS && i <= maxClientSlots; ++i) {
+        auto& s = m_slots[i];
+        if (s.connected || s.participantId.empty() || !s.disconnectedAtMs || now - s.disconnectedAtMs < ReclaimAfterMs) continue;
+        s.participantId = participantId;
+        s.displayName = name;
+        s.reconnectKey = generateRandomReconnectKey();
+        s.resetForNewConnection(peer, s.connectionGeneration + 1); // generations of a slot only grow: stale DTOs of the old identity stay stale
+        s.disconnectedAtMs = 0;
+        SpawnPoint sp = calculateSpawnPoint(i);
+        s.resetToStarterLoadout(sp, m_starterLoadout);
+        outAssignedKey = s.reconnectKey;
+        return static_cast<int8_t>(i);
+    }
+
     // Server full
     outRejectReason = REJECT_SERVER_FULL;
     return -1;
@@ -166,6 +185,7 @@ void WorldSimulation::disconnectSlot(uint8_t slotId, uint8_t /*reason*/) {
     if (slotId >= MAX_PLAYERS) return;
     std::lock_guard<std::mutex> lock(m_simMutex);
     m_slots[slotId].connected = false;
+    m_slots[slotId].disconnectedAtMs = GetTickCount64();
     m_slots[slotId].peer = nullptr;
     m_slots[slotId].inboundCommandQueue.clear();
 }

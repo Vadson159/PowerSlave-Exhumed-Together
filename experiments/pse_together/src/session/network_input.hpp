@@ -35,6 +35,8 @@ public:
     bool wantsPlayer(unsigned slot) const { const auto* p=peerOf(slot); return p && p->active && p->ready && !stopped; }
     bool anyWantsPlayer() const { return connected()!=0; }
     unsigned connected() const { unsigned n=0;for(unsigned s=1;s<MaxSlots;++s)n+=wantsPlayer(s);return n; }
+    // Connected at the transport level (ready or not: loading the next world, on the map screen ...).
+    unsigned activePeers() const { unsigned n=0;for(unsigned s=1;s<MaxSlots;++s)n+=peers[s].active;return n; }
     std::uint32_t nativeButtons(unsigned slot) const { const auto* p=peerOf(slot);return p ? p->buttons : 0; }
     // Rising edges (attack/jump/use/weapon) seen since the last call, as native button bits: a one-tick tap must reach the
     // player even if the latest-state coalescing swallowed the held state. Consumed once per update of that player.
@@ -66,6 +68,13 @@ public:
     bool announceNextMap(const std::string& name);
     // DOC56 opt-in: native map identity bound to a non-constant epoch; configure before start(). Binds every peer gate.
     bool configureNativeMap(const map56::Identity& identity,std::uint32_t levelEpoch);
+    // One session for the whole game (until the host quits). leaveWorld(): the host's world ends (StateExit): every peer stays
+    // connected but is no longer ready (no input, snapshots or world events until it is ready in the next world).
+    void leaveWorld(const char* reason);
+    // The host's next world is stable: every gate is bound to it with a new epoch, every connected client is told (MapChange with
+    // newMapEpoch != 0, the same reliable message a WELCOME announces) and becomes ready again with MapReady of that epoch.
+    bool rebindNativeMap(const map56::Identity& identity,std::uint32_t levelEpoch);
+    std::uint32_t worldBindings() const { return bindings; }
     // Every SIMULATION tick before tick(): current native observation result (verifies every gate).
     void verifyNativeMap(map56::Fault fault,const map56::Identity& current);
     bool snapshotEligible(unsigned slot) const;
@@ -78,7 +87,8 @@ public:
 private:
     struct Peer {
         map56::HostGate gate;
-        std::uint64_t lastInputTick{}, joinedTick{}, lastInputMs{};
+        std::uint64_t lastInputTick{}, joinedTick{}, lastInputMs{}, waitTicks{}, rejectedInputs{};
+        bool everReady{}; // ready once on this connection: a later world change never kicks it for being slow (it is loading/choosing)
         std::uint32_t gen{}, lastSeq{}, buttons{}, pendingEdges{};
         bool active{}, ready{}, hasSeq{};
         Pose remotePose{};
@@ -110,6 +120,6 @@ private:
     std::array<Peer,MaxSlots> peers{};
     std::string nativeDomain;
     bool nativeMap{};
-    std::uint32_t worldSequence{}, worldSnapshotSequence{}, joinCounter{};
+    std::uint32_t worldSequence{}, worldSnapshotSequence{}, joinCounter{}, bindings{};
 };
 } // namespace m12a
