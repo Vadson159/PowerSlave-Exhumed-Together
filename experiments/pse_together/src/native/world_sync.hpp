@@ -119,6 +119,12 @@ bool applySwitch(int face, int event);     // клиент: поставить �
 // расхождении больше 6 тиков (двигает платформу сам движок), площадку запускает или поднимает тем же кодом, что движок (поздно вошедший тоже).
 struct Platform { std::int16_t sector{}; std::uint8_t kind{}; std::uint32_t value{}; }; // kind 1 = платформа (value = тик), 2 = площадка (value = состояние)
 int collectPlatforms(Platform* out, int max);       // хост
+// Переделка, этап 4: высоты секторов хоста (пол/потолок). Хост: каждый сектор, который в этом мире хоть раз двигался (moving = только те, что
+// двигаются сейчас); клиент доводит свой сектор до высот хоста родным сдвигом плоскости, если его собственный механизм в секторе не работал
+// последние 1,5 с (локальную анимацию двери/лифта, запущенную тем же действием, не перебивает).
+struct SectorState { std::int16_t sector{}; float floor{}, ceiling{}; };
+int collectSectors(SectorState* out, int max, bool movingOnly); // хост
+void applySectors(const SectorState* in, int count);            // клиент
 void applyPlatforms(const Platform* in, int count); // клиент
 bool install(unsigned char* base, std::uint32_t simTid, Logger log, bool host); // bootstrap APC на Sim-потоке, MH_Initialize уже сделан
 // Каждый тик: true — идёт согласованный геймплей (сессия готова). false очищает очереди и выключает перехват.

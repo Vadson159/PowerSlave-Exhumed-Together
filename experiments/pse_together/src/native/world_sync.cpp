@@ -1818,6 +1818,49 @@ bool applySwitch(int faceIdx, int evIdx) {
     note("world_switch_applied", "\"face\":%d,\"event\":%d,\"changed\":%s", faceIdx, evIdx, changed ? "true" : "false");
     return changed;
 }
+// Сдвиг плоскости сектора (0x1ce510: сектор, потолок?, дельта по высоте) — то, чем тики дверей/лифтов двигают пол (dl=0) и потолок (dl=1):
+// вместе с плоскостью двигает вершины граней сектора. Высота плоскости — +0x18 у плоскости пола (+0x68) / потолка (+0x70).
+constexpr std::uint32_t MovePlaneRva = 0x1ce510;
+constexpr std::array<Byte, 16> MovePlanePrefix{0x48, 0x8b, 0xc4, 0x88, 0x50, 0x10, 0x48, 0x89, 0x48, 0x08, 0x55, 0x56, 0x57, 0x41, 0x56, 0x48};
+std::unordered_map<int, std::uint64_t> sectorBusySince; // клиент: сектор -> последний тик, когда в нём работал свой механизм
+std::vector<bool> sectorEverMoved;                      // хост: сектор двигался в этом мире
+int collectSectors(SectorState* out, int max, bool movingOnly) {
+    if (!thread() || !s.installed || s.client) return 0;
+    const auto count = sectorCount();
+    if (!count || count > 8192) return 0;
+    if (sectorEverMoved.size() != count) sectorEverMoved.assign(static_cast<std::size_t>(count), false);
+    int n = 0;
+    for (std::uint64_t i = 0; i < count && n < max; ++i) {
+        auto* sec = sectorAt(static_cast<std::int64_t>(i));
+        if (!sec) continue;
+        const bool moving = (read<Byte>(sec, 0x14) & 4) != 0;
+        if (moving) sectorEverMoved[static_cast<std::size_t>(i)] = true;
+        if (movingOnly ? !moving : !sectorEverMoved[static_cast<std::size_t>(i)]) continue;
+        const auto p = probe(static_cast<int>(i));
+        if (p.valid) out[n++] = {static_cast<std::int16_t>(i), p.floorD, p.ceilingD};
+    }
+    return n;
+}
+void applySectors(const SectorState* in, int count) {
+    if (!thread() || !s.installed || !s.client || !s.active || count <= 0) return;
+    if (!std::equal(MovePlanePrefix.begin(), MovePlanePrefix.end(), s.base + MovePlaneRva)) { static bool once = false; if (!once) { once = true; note("world_profile_mismatch", "\"site\":\"move_plane\""); } return; }
+    using MovePlane = void(__fastcall*)(void*, bool, float);
+    static unsigned logged = 0;
+    for (int i = 0; i < count; ++i) {
+        const auto& h = in[i];
+        auto* sec = sectorAt(h.sector);
+        if (!sec || !read<Byte*>(sec, 0x68) || !read<Byte*>(sec, 0x70)) continue;
+        if (read<Byte>(sec, 0x14) & 4) { sectorBusySince[h.sector] = s.ticks; continue; } // its own door/lift moves now: let it finish
+        const auto busy = sectorBusySince.find(h.sector);
+        if (busy != sectorBusySince.end() && s.ticks - busy->second < 90) continue;
+        const auto p = probe(h.sector);
+        const float df = h.floor - p.floorD, dc = h.ceiling - p.ceilingD;
+        if (!std::isfinite(df) || !std::isfinite(dc) || (std::fabs(df) <= 0.5f && std::fabs(dc) <= 0.5f)) continue;
+        if (std::fabs(df) > 0.5f) reinterpret_cast<MovePlane>(s.base + MovePlaneRva)(sec, false, df);
+        if (std::fabs(dc) > 0.5f) reinterpret_cast<MovePlane>(s.base + MovePlaneRva)(sec, true, dc);
+        if (++logged <= 60) note("world_sector_corrected", "\"sector\":%d,\"floor\":[%.1f,%.1f],\"ceiling\":[%.1f,%.1f]", h.sector, p.floorD, h.floor, p.ceilingD, h.ceiling);
+    }
+}
 int collectPlatforms(Platform* out, int max) {
     if (!thread() || !s.installed || s.client) return 0;
     scanPlatforms();
@@ -1850,6 +1893,7 @@ void applyPlatforms(const Platform* in, int count) {
     }
 }
 void resetWorld() {
+    sectorBusySince.clear(); sectorEverMoved.clear();
     if (!thread()) return;
     s.switchHead = s.switchCount = 0; s.platformsScanned = false; s.floatSectors.clear(); s.padSectors.clear();
     s.enemySeen.clear(); s.goneHead = s.goneCount = 0; s.pickupHead = s.pickupCount = 0;

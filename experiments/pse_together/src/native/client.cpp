@@ -338,7 +338,8 @@ struct Session {
         if(e.eventType==w::EvBreak && e.eventValue>=0 && breakPending.size()<64) { breakPending.push_back(e.eventValue);return; } // another player broke a vase/urn
         if(e.eventType==w::EvAchievement && e.eventValue>=0 && e.eventValue<20) { achPending|=1u<<e.eventValue;return; } // another player earned it
         if(e.eventType==w::EvScript && e.eventValue>0 && e.eventValue<256 && scriptPending.size()<16) { scriptPending.push_back(w::unpackScript(e.eventValue,e.sourceEntityId,static_cast<std::uint16_t>(e.targetEntityId)));return; } // another player crossed a story trigger
-        if(e.eventType==w::EvMover && worldReady())
+        static const bool dropMovers=[]{char v[8]{};return GetEnvironmentVariableA("PSE_DEBUG_DROP_MOVERS",v,sizeof(v))>0 && v[0]=='1';}(); // smoke only: as if the relay was lost
+        if(e.eventType==w::EvMover && worldReady() && !dropMovers)
             w::applyMover(w::moverFromWire(static_cast<std::uint32_t>(e.eventValue),e.targetEntityId));
     }
     void worldSync() {
@@ -580,6 +581,9 @@ struct Session {
                     pse::world::Platform plat[24];int pln=0; // floating platform ticks / drop pad states of the host (type 4)
                     for(const auto& ent:ws->entities) if(ent.type==4 && pln<24 && ent.entityId<32768) plat[pln++]={static_cast<std::int16_t>(ent.entityId),static_cast<std::uint8_t>(ent.subType),ent.meta};
                     pse::world::applyPlatforms(plat,pln);
+                    pse::world::SectorState sect[48];int sn=0; // sector heights of the host (type 5, stage 4)
+                    for(const auto& ent:ws->entities) if(ent.type==5 && sn<48 && ent.entityId<32768) sect[sn++]={static_cast<std::int16_t>(ent.entityId),ent.posX,ent.posY};
+                    pse::world::applySectors(sect,sn);
                 }
 #ifdef PSE_FEATURE_SNAPSHOT
             } else if(const auto* c=std::get_if<pse::BridgeRespawnConfirm>(&m)) {

@@ -591,6 +591,12 @@ void worldSyncHost() {
             std::vector<pse::EntitySnapshot> out;out.reserve(static_cast<std::size_t>(n)+static_cast<std::size_t>(pc)+static_cast<std::size_t>(dn));
             static w::Platform platforms[128];
             const int pn=platformTick ? w::collectPlatforms(platforms,128) : 0;
+            static w::SectorState sectors[160];   // stage 4: sector heights - every sector that ever moved at 4 Hz, the moving ones at 20 Hz
+            const int sn=enemyTick ? w::collectSectors(sectors,160,!platformTick) : 0;
+            for(int i=0;i<sn;++i) {
+                pse::EntitySnapshot s;s.entityId=static_cast<std::uint32_t>(static_cast<std::uint16_t>(sectors[i].sector));s.generation=1;s.type=5;s.posX=sectors[i].floor;s.posY=sectors[i].ceiling;
+                out.push_back(s);
+            }
             for(int i=0;i<pn;++i) {   // floating platform tick / drop pad state, type 4 (worldOnTicks%15 is also an enemy tick)
                 pse::EntitySnapshot s;s.entityId=static_cast<std::uint32_t>(platforms[i].sector);s.generation=1;s.type=4;s.subType=platforms[i].kind;s.meta=platforms[i].value;
                 out.push_back(s);
