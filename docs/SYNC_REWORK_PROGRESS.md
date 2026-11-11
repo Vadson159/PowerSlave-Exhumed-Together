@@ -171,7 +171,7 @@ smoke_m9, smoke_s1 21/21, smoke_n 3 + смена уровня — PASS; журн
   намеренной `debug_world_fault` в m9), застреваний тика в игре нет. ctest 18/19 (`p24_loader_contract`, как всегда).
 - Пакет друга: `PSE_Together_friend_20261112_0025.zip` (и `PSE_Together_friend.zip`), сборка 2026-11-11 23:51, DLL 858fbd50477393a0.
 - `S:\PSE_Together` обновлена (game + overlay: pse_together.dll, pe-together.ini, SDL2.dll, pe-together.dll; pe-play.exe, VERSION.txt);
-  прежние файлы — `S:\PSE_Togetherackup_20261112_0025`.
+  прежние файлы — `S:\PSE_Together\backup_20261112_0025`.
 
 Не проверено (нельзя на одном ПК): два ПК через интернет/Radmin; долгая игра; настоящее утопление; прицельная стрельба; поведение при
 реальной потере пакетов. Что проверить с другом — в CHANGELOG (запись «итог переделки»).
