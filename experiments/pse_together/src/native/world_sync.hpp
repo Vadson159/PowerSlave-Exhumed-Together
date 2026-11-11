@@ -100,7 +100,8 @@ enum TouchKind : std::uint8_t { TouchHealth = 0, TouchAmmo = 1, TouchKey = 2, To
 struct Touch { int id{-1}; std::uint8_t kind{}; };
 bool popTouch(Touch& out);                   // клиент: касание своего игрока, ещё не отправленное; false — нет
 int applyTouch(const Touch& t, unsigned char* body); // хост: тело игрока касается актора нативно (не скарабей); 0 — нет, 1 — да, 2 — порождённый шар
-void debugTouch(unsigned char* own); // тест (клиент): PSE_DEBUG_TOUCH_CLIENT="вид,номер[;вид,номер]" + PSE_DEBUG_TOUCH_FILE — свой игрок касается актора карты родным OnTouch
+void debugTouch(unsigned char* own);
+void debugRemove(); // тест (хост): PSE_DEBUG_REMOVE="номер[,номер]" + PSE_DEBUG_REMOVE_FILE — убрать акторы карты родным Remove (как скрипт/взрыв) // тест (клиент): PSE_DEBUG_TOUCH_CLIENT="вид,номер[;вид,номер]" + PSE_DEBUG_TOUCH_FILE — свой игрок касается актора карты родным OnTouch
 int popCheckpoint();                        // свой игрок коснулся скарабея: его номер; -1 — нет
 bool checkpointPlace(int id, float& x, float& y, float& z, float& yaw, int& sector); // где стоит скарабей карты с этим номером
 bool applyHit(int id, int amount, int kind, unsigned char* body); // хост
@@ -122,6 +123,7 @@ void applyPlatforms(const Platform* in, int count); // клиент
 bool install(unsigned char* base, std::uint32_t simTid, Logger log, bool host); // bootstrap APC на Sim-потоке, MH_Initialize уже сделан
 // Каждый тик: true — идёт согласованный геймплей (сессия готова). false очищает очереди и выключает перехват.
 void setActive(bool on);
+void prepareHud(); // HUD-перехваты один раз, как только игра идёт (у хоста — ещё до входа клиента, чтобы вход не стоил тика)
 int popBreak();                      // номер актора карты, разбитого здесь (не репликой); -1 — нет
 bool applyBreak(int id);             // добить у себя актор карты с этим номером; false — уже было / не найден
 // Хост: проверка «это актор тела другого игрока» (не P1): рамка урона и сообщения о подборе чужих тел на HUD хоста подавляются.

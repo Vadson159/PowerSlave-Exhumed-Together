@@ -533,7 +533,9 @@ template<unsigned K> void hookHudSink(Byte* vtable) {
     auto* target = *reinterpret_cast<Byte**>(vtable + K * 8);
     const auto rva = static_cast<std::uint64_t>(target - s.base);
     if (rva < 0x1000 || rva >= 0x482000) { note("world_hud_sink_skipped", "\"vslot\":%u,\"reason\":\"outside_text\"", K); return; }
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&hudSink<K>), reinterpret_cast<void**>(&s.sinkOrig[K])) != MH_OK || MH_EnableHook(target) != MH_OK) {
+    // Queued: all six are switched on by ONE MH_ApplyQueued (each MinHook enable suspends every thread of the game: six in a row stalled the host's
+    // tick ~0.2 s at the first join).
+    if (MH_CreateHook(target, reinterpret_cast<void*>(&hudSink<K>), reinterpret_cast<void**>(&s.sinkOrig[K])) != MH_OK || MH_QueueEnableHook(target) != MH_OK) {
         note("world_hud_sink_skipped", "\"vslot\":%u,\"reason\":\"hook\",\"rva\":%llu", K, rva); return;
     }
     char hex[40]{}; for (int i = 0; i < 12; ++i) sprintf_s(hex + 2 * i, 3, "%02x", target[i]);
@@ -542,14 +544,18 @@ template<unsigned K> void hookHudSink(Byte* vtable) {
 // Хост, один раз, на Sim-потоке, когда игра уже идёт (глобал HUD к этому времени точно построен).
 void installHudSinks() {
     if (s.hudTried) return;
-    s.hudTried = true;
     auto* vtable = *reinterpret_cast<Byte**>(s.base + HudObjectRva);
     const auto vrva = static_cast<std::uint64_t>(vtable - s.base);
-    if (!vtable || vrva < 0x482000 || vrva >= 0x59f000) { note("world_hud_sink_skipped", "\"reason\":\"vtable\",\"rva\":%llu", vrva); return; }
+    if (!vtable || vrva < 0x482000 || vrva >= 0x59f000) { // the HUD is not built yet: try again on a later tick
+        static unsigned waits = 0; if (++waits == 1 || waits % 600 == 0) note("world_hud_sink_skipped", "\"reason\":\"vtable\",\"rva\":%llu,\"waits\":%u", vrva, waits);
+        return;
+    }
+    s.hudTried = true;
     hookHudSink<3>(vtable); hookHudSink<4>(vtable); hookHudSink<5>(vtable);
     // vtable +0x30/+0x38/+0x40 (kexSlaveHudLocal 0x52b1f0: 0x1c16d0/0x1c16e0/0x1c16f0 — только таймеры вспышек +0xa4/+0xa8/+0xac): полоса здоровья
     // мигала у хоста, когда шар здоровья брало тело друга (OnTouch 0x1d8770 зовёт +0x30 до consume), и рамка урона под водой (0x1dbd00, +0x38).
     hookHudSink<6>(vtable); hookHudSink<7>(vtable); hookHudSink<8>(vtable);
+    if (MH_ApplyQueued() != MH_OK) note("world_hud_sink_skipped", "\"reason\":\"apply_queued\"");
 }
 
 int achOrdinal(const char* key) {
@@ -1180,6 +1186,7 @@ void debugKeys(Byte* player) {
 }
 
 bool replicaActive() { return replicaOn(); }
+void prepareHud() { if (thread() && s.installed) installHudSinks(); }
 
 void setFriendlyFire(bool on) { s.friendlyFire = on; }
 
@@ -1234,14 +1241,23 @@ int collectEnemies(Enemy* out, int max) {
         for (unsigned off = 0x80; off <= 0x200 && anim; off += 8) if (read<Byte*>(def, off) == anim) { e.anim = static_cast<std::uint16_t>(off); break; }
         return false;
     });
-    // Враг карты, бывший в мире в прошлый сбор и пропавший теперь (разорван взрывом и убран в тот же тик, убран скриптом): клиент не успевает увидеть
-    // его смерть в снимке и держал бы его живым. Неполный список (упёрлись в max) о пропавших ничего не говорит. Учёт идёт весь мир (resetWorld).
+    // Актор карты, бывший в мире в прошлый сбор и пропавший теперь — у хоста мир один (переделка, этап 3): враг, разорванный взрывом и убранный в тот же
+    // тик, стена или декорация, убранная скриптом, ключ, взятый хостом, — у клиента убирается тот же актор (EvEnemyGone = «актор карты исчез»,
+    // любого класса). Не учитываются касаемые предметы (флаг 0x100: оружие, анкхи, артефакты каждый игрок берёт сам; шары — EvPickup; ключи и так
+    // общие) и тела игроков. Учёт идёт весь мир (resetWorld).
     if (n < max) {
         const auto round = ++s.enemyRound;
-        for (int i = 0; i < n; ++i) s.enemySeen[static_cast<int>(out[i].id)] = round;
+        forEachActor([&](Byte* a, int) {
+            const int id = read<int>(a, 0x180);
+            const auto* node = read<Byte*>(a, 0x10);
+            if (id < 0 || id >= 100000 || isPuppet(a) || !node || (read<Byte>(a, 0x40) && read<int>(node, 0x40) < 1)) return false;
+            if ((read<unsigned>(a, 0x16c) & 0x100u) && read<Byte*>(a) != s.base + AiVtable) return false;
+            s.enemySeen[id] = round;
+            return false;
+        });
         for (auto it = s.enemySeen.begin(); it != s.enemySeen.end();) {
-            if (it->second == round) { ++it; continue; }
-            if (s.goneCount < s.goneQueue.size()) s.goneQueue[(s.goneHead + s.goneCount++) % s.goneQueue.size()] = it->first;
+            if (it->second == round || s.goneCount >= s.goneQueue.size()) { ++it; continue; } // a full queue: the rest goes next round
+            s.goneQueue[(s.goneHead + s.goneCount++) % s.goneQueue.size()] = it->first;
             it = s.enemySeen.erase(it);
         }
     }
@@ -1440,8 +1456,15 @@ void cullLocalProjectiles() {
 bool applyEnemyGone(int id) {
     if (!thread() || !s.installed || !s.client || !s.active || id < 0) return false;
     Byte* target = nullptr;
-    forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + AiVtable || read<int>(a, 0x180) != id || read<Byte>(a, 0x40)) return false; target = a; return true; });
-    note("world_enemy_gone_applied", "\"id\":%d,\"found\":%s,\"hp\":%d", id, target ? "true" : "false", target ? static_cast<int>(read<std::int16_t>(target, 0x17a)) : 0);
+    // Any class (stage 3): the host's world lost this map actor. Touchable items (weapons, ankhs, artifacts) are each player's own and never sent.
+    forEachActor([&](Byte* a, int) {
+        if (read<int>(a, 0x180) != id || read<Byte>(a, 0x40) || isPuppet(a)) return false;
+        if ((read<unsigned>(a, 0x16c) & 0x100u) && read<Byte*>(a) != s.base + AiVtable) return false;
+        target = a; return true;
+    });
+    static unsigned logged = 0;
+    if (++logged <= 60) note("world_enemy_gone_applied", "\"id\":%d,\"found\":%s,\"hp\":%d,\"ai\":%s,\"vt\":\"%llx\"", id, target ? "true" : "false", target ? static_cast<int>(read<std::int16_t>(target, 0x17a)) : 0,
+        target && read<Byte*>(target) == s.base + AiVtable ? "true" : "false", target ? static_cast<unsigned long long>(read<Byte*>(target) - s.base) : 0ull);
     if (!target) return false;
     removeActor(target);
     return true;
@@ -1598,6 +1621,22 @@ void debugTouch(Byte* own) {
             if (target) reinterpret_cast<TouchFn>(s.base + rva[kind])(target, own); // the hooked native entry: exactly what the engine's touch scan calls
         }
         p = std::strchr(p, ';'); if (p) ++p;
+    }
+}
+void debugRemove() {
+    static bool fired = false; char spec[128]{}, file[MAX_PATH]{};
+    if (fired || !thread() || !s.installed || s.client) return;
+    if (!GetEnvironmentVariableA("PSE_DEBUG_REMOVE", spec, sizeof(spec)) || !GetEnvironmentVariableA("PSE_DEBUG_REMOVE_FILE", file, sizeof(file)) ||
+        GetFileAttributesA(file) == INVALID_FILE_ATTRIBUTES) return;
+    fired = true;
+    for (char* p = spec; p && *p;) {
+        const int id = std::atoi(p);
+        Byte* target = nullptr;
+        forEachActor([&](Byte* a, int) { if (isPuppet(a) || read<int>(a, 0x180) != id || read<Byte>(a, 0x40)) return false; target = a; return true; });
+        note("world_debug_remove", "\"id\":%d,\"found\":%s,\"vt\":\"%llx\",\"flags\":\"%x\"", id, target ? "true" : "false",
+            target ? static_cast<unsigned long long>(read<Byte*>(target) - s.base) : 0ull, target ? read<unsigned>(target, 0x16c) : 0u);
+        if (target) removeActor(target);
+        p = std::strchr(p, ','); if (p) ++p;
     }
 }
 bool popTouch(Touch& out) {

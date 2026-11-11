@@ -477,6 +477,7 @@ void worldSyncHost() {
         worldRequests.clear();pendingClientKeys=0;sharedKeysGen=0;sharedKeysSent=0;worldOnTicks=0;goneSentSerial=0;
         // Alone in the level (no client ready yet): still note the map enemies that vanish and the spheres taken, for whoever joins later.
         if(gameplay() && !g.failed && !g.shutdown && !g.worldExit && live(g.p1,primary())) {
+            w::prepareHud();
             if(g.ticks%3==0) { static w::Enemy scratch[128];w::collectEnemies(scratch,128); }
             for(int id;(id=w::popEnemyGone())>=0;) enemiesGone.push_back(id);
             for(int id;(id=w::popPickup())>=0;) pickupsTaken.push_back(id);
@@ -624,7 +625,7 @@ void worldSyncHost() {
     if(worldOnTicks==400) w::debugKeys(primary());
     if(worldOnTicks==500) w::debugKillEnemy();
     const unsigned dbg=firstRemote();Byte* const dbgActor=dbg?R(dbg).p2.actor:nullptr;
-    if(dbgActor && worldOnTicks>=230 && worldOnTicks%10==0) {w::debugPullEnemy(dbgActor);w::debugCensusOnFile();}
+    if(dbgActor && worldOnTicks>=230 && worldOnTicks%10==0) {w::debugPullEnemy(dbgActor);w::debugCensusOnFile();w::debugRemove();}
     if(dbgActor && worldOnTicks>=230) w::debugFireball(dbgActor);
     static bool grantedOnce{};
     if(worldOnTicks==300 && !grantedOnce && dbg) { Ctx dctx(dbg);   // smoke only: PSE_DEBUG_P2_GRANT="weapon,ammo" gives host P2 a weapon and its ammo (once per process: the next map must carry it)
