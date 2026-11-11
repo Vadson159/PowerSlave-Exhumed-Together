@@ -18,8 +18,7 @@ rp16::DeadInput input16;nl16::RestartGate restart16;nl16::Receipt receipt16;
 nl16::Start start16{};bool startValid16{},inputBound16{},requestPending16{},newLocal16{},protect16{};
 float startFloor16{},startCeiling16{};
 std::uint32_t localGeneration16=1,hostDeath16{};bool hostDead16{};
-std::array<std::uint32_t,2> expectedGeneration16{1,1},lastDeath16{};
-std::array<bool,2> lastDead16{};
+pse::client_slots::Tracker slots16; // per slot 0..7: expected entity generation, last death state, stale-snapshot clock
 std::atomic<std::uint64_t> approvedProbe16{},approvedReview16{};
 std::uint64_t probeSerial16{};rp16::Confirmation ownConfirm16{};
 

@@ -10,7 +10,7 @@ enum class Verdict { Accept, NotReady, Identity, Stale, EntityMismatch, Nonfinit
 // sequence for records: native sender assigns a unique sequence to each packet.
 struct Guard {
     struct Slot { std::uint32_t sequence{},tick{},entity{},generation{}; };
-    std::array<Slot,2> slots{};
+    std::array<Slot,pse::MAX_PLAYERS> slots{}; // slot 0 = host player, 1..7 = remote players
     std::uint32_t connection{},epoch{};
     void reset(std::uint32_t gen,std::uint32_t mapEpoch) { connection=gen;epoch=mapEpoch;slots={}; }
     Verdict accept(const pse::BridgePlayerSnapshot& s,bool ready) {

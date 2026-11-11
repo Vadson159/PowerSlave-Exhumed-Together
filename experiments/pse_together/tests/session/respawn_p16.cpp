@@ -141,6 +141,21 @@ void weapons(){
     f.team.map(8,true);const Identity next{1,10,8};f.team.connect(next,1);
     check(!f.team.weaponAvailable(next,44),"new map clears prior pickup provenance");
 }
+void reconnect(){
+    // A client that reconnects inside the same map (new connection generation) keeps its body: death and respawn follow the NEW connection.
+    constexpr Identity Client2{1,10,7},Foreign{1,11,8},Old{1,9,7};
+    Fixture f;
+    check(f.team.observeDeath(Client2,1)==Result::Stale,"before rebind the new connection is a stranger");
+    check(f.team.rebind(Client2)==Result::Accepted&&f.team.slot(1)->who==Client2&&f.team.slot(1)->life==Life::Alive&&f.team.slot(1)->generation==1,"rebind moves only the connection token");
+    check(f.team.rebind(Old)==Result::Stale&&f.team.rebind(Client2)==Result::Stale,"older or equal connection cannot rebind");
+    check(f.team.rebind(Foreign)==Result::Invalid,"another epoch cannot rebind");
+    check(f.team.observeDeath(Old,1)==Result::Stale&&f.team.observeDeath(Client2,1)==Result::Accepted,"death is recognised on the new connection only");
+    check(f.request(Client2)==Result::Accepted&&f.request(Client2)==Result::Busy,"respawn request on the new connection works");
+    check(f.team.rebind({1,12,7})==Result::Busy,"no rebind while a respawn is in flight");
+    check(f.complete()==Result::Accepted&&f.team.slot(1)->life==Life::Alive,"respawn after rebind commits");
+    Team empty;empty.map(7,true);
+    check(empty.rebind(Client2)==Result::Stale,"an absent slot cannot be rebound");
+}
 void wire(){
     // Existing accepted v1.12 messages are used verbatim. Native 200 HP is
     // NOT transported by MsgRespawnConfirm; full PlayerSnapshot must follow.
@@ -152,7 +167,7 @@ void wire(){
     check(out.deserialize(cr)&&cr.remaining()==0&&out.entityGeneration==4&&out.defaultAmmo==60&&out.defaultWeapons==3,"existing v112 confirm accepts native starter ammo without wire change");
 }
 }
-int main(){manual();routing();failure();totalPartyKill();input();weapons();wire();
+int main(){manual();reconnect();routing();failure();totalPartyKill();input();weapons();wire();
     std::printf("P16 RESPAWN checks=%u failures=%u; OFFLINE POLICY ONLY, NOT KEX\n",checks,failures);
     return failures?1:0;
 }

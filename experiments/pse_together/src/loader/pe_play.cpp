@@ -80,22 +80,33 @@ int wmain(int argc, wchar_t** argv) {
     std::vector<std::wstring> extra;
     bool dryRun = false;
     std::wstring role;  // host | client: selects the payload (broker v2), profile\<role>, and the D3D11 profile config
+    std::wstring instance;  // --instance N (1..9): another client of the same install uses its own profile\client<N> (several players on one PC)
     for (int i = 1; i < argc; ++i) {
         const std::wstring a = argv[i];
         if (a == L"--root" && i + 1 < argc) root = argv[++i];
         else if (a == L"--role" && i + 1 < argc) role = argv[++i];
+        else if (a == L"--instance" && i + 1 < argc) instance = argv[++i];
         else if (a == L"--dry-run") dryRun = true;  // prepare profile + print the plan, do not start the game
         else extra.push_back(a);
     }
     root = fullPath(root);
     if (root.empty()) { std::wprintf(L"Invalid --root.\n"); return ERROR_BAD_PATHNAME; }
     if (!role.empty() && role != L"host" && role != L"client") { std::wprintf(L"--role must be host or client.\n"); return ERROR_INVALID_PARAMETER; }
-    const std::wstring game = root + L"\\game", profile = root + L"\\profile" + (role.empty() ? L"" : L"\\" + role);
+    if (!instance.empty() && (role.empty() || instance.size() != 1 || instance[0] < L'1' || instance[0] > L'9')) { std::wprintf(L"--instance must be one digit 1..9 and needs --role.\n"); return ERROR_INVALID_PARAMETER; }
+    const std::wstring game = root + L"\\game", profile = root + L"\\profile" + (role.empty() ? L"" : L"\\" + role + instance);
     const std::wstring exe = game + L"\\anubis_Shipping_Steam_x64.exe";
     std::wstring message;
     const DWORD check = pse::loader::checkExe(exe.c_str(), message);
     if (check) { std::wprintf(L"%ls\n", message.c_str()); return static_cast<int>(check); }
-    for (const wchar_t* sub : {L"", L"\\roaming", L"\\local", L"\\temp", L"\\user", L"\\early_saved_games", L"\\early_native_logs", L"\\gpu_cache",
+    // The mod's SDL2.dll forwards to the game's original one, kept next to it as SDL2_pse_original.dll (install.bat makes it). Without it Windows only says
+    // "SDL2_pse_original.DLL was not found" (exit code -1073741515): say what to do instead.
+    if (GetFileAttributesW((game + L"\\SDL2_pse_original.dll").c_str()) == INVALID_FILE_ATTRIBUTES) {
+        std::wprintf(L"SDL2_pse_original.dll is missing in %ls\nRun install.bat again (it copies it from your Steam game folder).\n", game.c_str());
+        return ERROR_FILE_NOT_FOUND;
+    }
+    // early_native_logs\saves: the guard serves Saved Games\...\Powerslave EX\ from early_native_logs and the game does not create the saves directory
+    // itself, so without it every save (autosave at level start, savegame) failed with "Unable to open ... for writing". Each machine keeps its own saves.
+    for (const wchar_t* sub : {L"", L"\\roaming", L"\\local", L"\\temp", L"\\user", L"\\early_saved_games", L"\\early_native_logs", L"\\early_native_logs\\saves", L"\\gpu_cache",
                                L"\\gpu_cache\\steam", L"\\gpu_cache\\steam\\AMDv1", L"\\gpu_cache\\steam\\fozpipelinesv6", L"\\steam_overlay", L"\\logs"})
         if (!makeTree(profile + sub)) { std::wprintf(L"Cannot create %ls%ls (Win32 %lu)\n", profile.c_str(), sub, GetLastError()); return ERROR_CANNOT_MAKE; }
     // The P23 HUD/lobby renders through D3D11; the stand wrote this into the profile kexengine.cfg (the guard serves the

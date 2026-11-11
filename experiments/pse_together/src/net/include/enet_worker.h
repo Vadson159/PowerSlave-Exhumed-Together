@@ -190,6 +190,8 @@ private:
     std::array<InputMailbox, MAX_PLAYERS> m_inputs{};
     std::array<bool, MAX_PLAYERS> m_slotActive{};
     std::array<uint32_t, MAX_PLAYERS> m_slotGen{};
+    struct UiPoseSeen { bool valid=false; uint32_t epoch=0, gen=0, tick=0; uint64_t stateNs=0; };
+    std::array<UiPoseSeen, MAX_PLAYERS> m_uiPoseSeen{}; // per subject slot: last pose published to the lobby
     std::string m_sessionMapName;   // Last map published by the simulation (survives host restart)
     NativeMapStructure m_sessionMapStructure;
     uint32_t m_sessionMapEpoch = 0;

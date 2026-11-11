@@ -4,6 +4,7 @@
 #include "ui_native.hpp"
 #include "ui/shared_p23.hpp"
 #include "ui/lobby.hpp"
+#include "ui/discovery.hpp"
 #include "ui/opening_text.hpp"
 #include <MinHook.h>
 #include <d3d11.h>
@@ -59,7 +60,10 @@ struct Context {
     bool menu{},composer{},board{},textLease{},textWasActive{};int mouseWasRelative{},field{};
     ui::OpeningText openingText;
     ui::Menu form;
-    std::string draft,status="F8: Together menu";
+    // Lobbies of the local network (LAN / Radmin VPN): the host announces itself, the client lists what it hears (src/ui/discovery.hpp).
+    discovery::Browser browser;discovery::Advertiser advertiser;
+    std::vector<discovery::Lobby> lobbies;std::vector<std::string> addresses;int pick{};bool autoLobby{};
+    std::string draft,status="F7: Exhumed Together menu";
     std::size_t activityKey{};std::uint64_t showUntil{};bool activityInit{}; // chat / notices stay on screen a few seconds after they change
     Void textStart{},textStop{};Flag textActive{},relative{};SetFlag relativeSet{};
     WindowById windowById{};GetWMInfo windowInfo{};
@@ -125,6 +129,10 @@ void inputLease(bool active,bool restoreMouse=true) {
     }
     c->textLease=active;ui::shared().capture.store(active,std::memory_order_release);
 }
+std::vector<std::string> addressesNow() {
+    std::vector<std::string> out;for(const auto& i:discovery::interfaces())out.push_back(i.address);return out;
+}
+bool onList() {return c->menu && !c->composer && !c->form.host && c->field==4;}
 std::string& currentField() {
     if(c->composer)return c->draft;
     switch(c->field) {case 0:return c->form.displayName;case 1:return c->form.address;case 2:return c->form.portText;default:return c->form.token;}
@@ -135,8 +143,15 @@ void submit() {
         else c->status="Chat: enter 1-90 characters";
         return;
     }
+    if(c->form.host) {c->menu=false;inputLease(false);return;} // the host's lobby is already open: Enter just closes the screen
+    if(onList()) {   // a lobby of the list: its address and port go into the form, then the usual connect
+        if(c->lobbies.empty()) {c->status="No lobby found yet";return;}
+        const auto& l=c->lobbies[static_cast<std::size_t>((std::min)(c->pick,static_cast<int>(c->lobbies.size())-1))];
+        if(!l.open) {c->status="Host is not in a level yet";return;}
+        c->form.address=l.address;c->form.portText=std::to_string(l.port);
+    }
     if(ui::shared().submit(c->form)) {
-        ++c->submitted;c->menu=false;inputLease(false);c->status="Load the same level to start the session";
+        ++c->submitted;c->menu=false;inputLease(false);c->status="Load the same level as the host";
         c->log("p23_menu_submit","\"host\":%s,\"name_bytes\":%zu,\"port\":%u",c->form.host?"true":"false",c->form.displayName.size(),*ui::port(c->form.portText));
     } else c->status=ui::shared().stopping.load()?"Session ended. Restart game for a new session":ui::shared().requested.load()?"Session already started":"Check player name, IPv4 and port";
 }
@@ -159,22 +174,28 @@ bool input(Event& e) {
     if(e.type==0x301 && e.key.keysym.sym=='t')c->openingText.release(e.key.time);
     if(e.type==0x300) {
         const auto key=e.key.keysym.sym;
-        if(!e.key.repeat && key==((1<<30)|65)) { // SDL_SCANCODE_F8=65
-            c->menu=!c->menu;c->composer=false;c->openingText.reset();if(c->menu)++c->menus;inputLease(c->menu);return true;
+        if(!e.key.repeat && key==((1<<30)|64)) { // SDL_SCANCODE_F7=64
+            c->menu=!c->menu;c->composer=false;c->openingText.reset();if(c->menu)++c->menus;inputLease(c->menu);
+            if(c->menu) {   // opens on the list of lobbies when there is one; the host sees its own lobby
+                c->field=(!c->form.host && !c->lobbies.empty())?4:0;if(c->form.host)c->addresses=addressesNow();
+            }
+            return true;
         }
         if(!c->menu && !c->composer && key=='\\') {c->board=true;return true;}
         if(!c->menu && !c->composer && key=='t' && ui::shared().requested.load()) {c->composer=true;c->openingText.open();inputLease(true);return true;}
         if(c->menu || c->composer) {
             if(!e.key.repeat)c->openingText.nextKey();
             if(key==27) {c->menu=c->composer=false;inputLease(false);}
-            else if(key==9 && c->menu)c->field=(c->field+1)%4;
-            else if(key==8)eraseUtf8(currentField());
+            else if(key==9 && c->menu)c->field=(c->field+1)%((!c->form.host && !c->lobbies.empty())?5:4);
+            else if(key==((1<<30)|82) && onList()) {if(c->pick>0)--c->pick;}                                   // Up
+            else if(key==((1<<30)|81) && onList()) {if(c->pick+1<static_cast<int>(c->lobbies.size()))++c->pick;} // Down
+            else if(key==8 && !onList())eraseUtf8(currentField());
             else if(key==13 && !e.key.repeat)submit();
             return true;
         }
     }
     if(e.type==0x303 && (c->menu || c->composer)) {
-        if(!c->openingText.accept(e.text.time))return true;
+        if(!c->openingText.accept(e.text.time) || onList())return true;
         const auto length=strnlen_s(e.text.text,32);
         if(length<32) {auto& s=currentField();const auto cap=c->composer?ui::ChatBytes:c->field==0?31u:c->field==3?64u:64u;if(s.size()+length<=cap)s.append(e.text.text,length);}
         return true;
@@ -182,7 +203,13 @@ bool input(Event& e) {
     if(e.type==0x401 && c->menu && e.mouse.button==1) {
         RECT client{};GetClientRect(c->hwnd,&client);
         const int sx=e.mouse.x-16,sy=e.mouse.y-16;
-        if(sx>=0 && sx<Width && sy>=65 && sy<65+4*48)c->field=(sy-65)/48;
+        if(!c->form.host) {   // client layout: lobby rows 64..184, fields from 195, connect button 360
+            if(sx>=0 && sx<Width && sy>=64 && sy<64+4*30 && !c->lobbies.empty()) {
+                const int row=(sy-64)/30;if(row<static_cast<int>(c->lobbies.size())) {c->pick=row;c->field=4;}
+            }
+            else if(sx>=0 && sx<Width && sy>=195 && sy<195+4*40)c->field=(sy-195)/40;
+            else if(sx>=16 && sx<400 && sy>=360 && sy<400)submit();
+        } else if(sx>=0 && sx<Width && sy>=65 && sy<65+4*48)c->field=(sy-65)/48;
         else if(sx>=16 && sx<400 && sy>=285 && sy<330)submit();
         return true;
     }
@@ -237,15 +264,43 @@ void draw(IDXGISwapChain* chain) {
     std::lock_guard lock(c->uiMutex);
     // Draw a compact status/chat HUD even when the menu is closed.
     PatBlt(c->dc,0,0,Width,Height,BLACKNESS);
-    int panelHeight=100;bool pauseHint=false;
-    if(c->menu) {
+    int panelHeight=100,stripW=Width;bool pauseHint=false;
+    // Main menu (game state 1): a small note bottom right, above the player's name, tells that the mod is loaded and how to open its menu.
+    const bool title=*reinterpret_cast<const int*>(c->base+0xaf33a0+0x24)==1 && !c->menu && !c->board && !c->composer;
+    if(title) {
+        // Two single lines in the usual overlay font; the strip is cut to the text (not the whole 620 px panel).
+        panelHeight=60;
+        const std::wstring a=L"Exhumed Together",b=L"F7 for Options";SIZE sa{},sb{};
+        GetTextExtentPoint32W(c->dc,a.c_str(),static_cast<int>(a.size()),&sa);GetTextExtentPoint32W(c->dc,b.c_str(),static_cast<int>(b.size()),&sb);
+        stripW=(std::min)(Width,(std::max)(static_cast<int>(sa.cx),static_cast<int>(sb.cx))+20);
+        text(10,4,a,RGB(255,210,100));
+        text(10,30,b);
+    } else if(c->menu && c->form.host) {
+        // The host's lobby is created by itself when the game starts and announced to the local network (LAN, Radmin VPN, ...).
         panelHeight=430;text(16,12,L"POWERSLAVE EXHUMED TOGETHER",RGB(255,210,100));
-        text(16,40,c->form.host?L"Create cooperative game":L"Connect to cooperative game");
-        const std::wstring labels[]={L"Player",c->form.host?L"Bind IPv4":L"Host IPv4",L"Port",L"Token"};
+        text(16,40,L"You are the HOST - your lobby is open");
+        text(16,78,L"Lobby:   "+wide(c->form.displayName),RGB(120,240,255));
+        text(16,112,L"Players: "+std::to_wstring((std::max)(1u,static_cast<unsigned>(std::count_if(view.players().begin(),view.players().end(),[](const auto& p) {return p.has_value();}))))+L" / "+std::to_wstring(ui::Capacity));
+        text(16,146,std::wstring(L"State:   ")+(ui::shared().requested.load()?L"announced in your network":L"starting..."));
+        std::wstring addr=L"Your addresses (manual join): ";for(const auto& a:c->addresses)addr+=wide(a)+L"   ";
+        if(c->addresses.empty())addr+=L"none found";
+        text(16,190,addr);
+        text(16,262,L"Friends: F7, pick this lobby, Enter",RGB(255,210,100));
+        text(16,330,L"Enter / Esc / F7: close");
+    } else if(c->menu) {
+        panelHeight=470;text(16,12,L"POWERSLAVE EXHUMED TOGETHER",RGB(255,210,100));
+        text(16,40,L"Lobbies in your network (LAN / Radmin VPN)");
+        if(c->lobbies.empty())text(16,68,L"  searching... (host must run the mod)",RGB(180,180,170));
+        for(std::size_t i=0;i<c->lobbies.size() && i<4;++i) {
+            const auto& l=c->lobbies[i];const bool sel=c->field==4 && c->pick==static_cast<int>(i);
+            const std::wstring row=std::wstring(sel?L"> ":L"  ")+wide(l.host)+L"   "+std::to_wstring(l.players)+L"/"+std::to_wstring(l.capacity)+L"   "+(l.open?L"open":L"starting")+L"   "+wide(l.address)+L":"+std::to_wstring(l.port);
+            text(16,68+static_cast<int>(i)*30,row,sel?RGB(120,240,255):l.open?RGB(238,238,225):RGB(170,170,160));
+        }
+        const std::wstring labels[]={L"Player",L"Host IPv4 (manual)",L"Port",L"Token"};
         const std::string values[]={c->form.displayName,c->form.address,c->form.portText,std::string(c->form.token.size(),'*')};
-        for(int i=0;i<4;++i)text(16,70+i*48,(c->field==i?L"> ":L"  ")+labels[i]+L": "+wide(values[i]),c->field==i?RGB(120,240,255):RGB(238,238,225));
-        text(16,288,c->form.host?L"[ Enter / click: CREATE GAME ]":L"[ Enter / click: CONNECT ]",RGB(255,210,100));
-        text(16,332,L"Tab: next field     Esc / F8: close");
+        for(int i=0;i<4;++i)text(16,200+i*40,(c->field==i?L"> ":L"  ")+labels[i]+L": "+wide(values[i]),c->field==i?RGB(120,240,255):RGB(238,238,225));
+        text(16,366,c->field==4?L"[ Enter: JOIN the chosen lobby ]":L"[ Enter / click: CONNECT to the typed address ]",RGB(255,210,100));
+        text(16,404,L"Up/Down: lobby   Tab: next field   Esc/F7: close");
     } else if(c->board) {
         panelHeight=340;text(16,12,L"COOPERATIVE PLAYERS",RGB(255,210,100));int y=48;
         for(const auto& p:view.players())if(p) {
@@ -253,7 +308,7 @@ void draw(IDXGISwapChain* chain) {
             text(16,y,L"P"+std::to_wstring(p->slot+1)+L" "+wide(p->displayName)+L"  "+(p->slot==0?L"HOST ":L"")+state+L"  "+std::to_wstring(p->ping)+L"ms");y+=34;
         }
     } else {
-        // In the game the panel is hidden: the hint line (F8 / players / chat) appears only while the game's own Esc menu is open.
+        // In the game the panel is hidden: the hint line (F7 / players / chat) appears only while the game's own Esc menu is open.
         // New chat lines and notices stay up for a few seconds; the composer (T) keeps the panel while typing.
         const bool pause=ui::shared().paused.load(std::memory_order_acquire);
         const auto& notices=view.notices();const auto& lines=view.messages();const auto now=ui::nowMs();
@@ -262,7 +317,7 @@ void draw(IDXGISwapChain* chain) {
         const bool recent=now<c->showUntil;
         if(!pause && !recent && !c->composer)return; // nothing to show: no panel at all
         int y=10;pauseHint=pause;
-        if(pause) {text(16,y,L"F8 Menu   \\ Players   T Chat",RGB(255,210,100));y=40;}
+        if(pause) {text(16,y,(!c->form.host && !ui::shared().requested.load() && !c->lobbies.empty())?(L"F7: JOIN a lobby ("+std::to_wstring(c->lobbies.size())+L" found)   \\ Players   T Chat"):std::wstring(L"F7 Exhumed Together menu   \\ Players   T Chat"),RGB(255,210,100));y=40;}
         if(!notices.empty()){text(16,y,wide(notices.back()),RGB(130,240,180));y+=28;}
         const std::size_t count=ui::nowMs()-c->mapAt.load()<100?2:4;
         const auto start=lines.size()>count?lines.size()-count:0;
@@ -271,17 +326,17 @@ void draw(IDXGISwapChain* chain) {
         panelHeight=(std::max)(pause?100:60,y+8);
         if(pause && view.players()[view.local()<8?view.local():0]==std::nullopt)text(16,panelHeight-30,wide(c->status),RGB(255,190,130));
     }
-    if(c->menu)text(16,374,wide(c->status),RGB(255,190,130));
+    if(c->menu)text(16,c->form.host?374:440,wide(c->status),RGB(255,190,130));
     GdiFlush();
     DXGI_SWAP_CHAIN_DESC desc{};if(FAILED(chain->GetDesc(&desc)))return;
     ComPtr<ID3D11Texture2D> back;ComPtr<ID3D11RenderTargetView> rtv;
     if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&back))) || FAILED(c->device->CreateRenderTargetView(back.Get(),nullptr,&rtv)))return;
     D3D11_TEXTURE2D_DESC bd{};back->GetDesc(&bd);if(bd.Width<1 || bd.Height<1)return;
-    const int yOffset=c->menu||c->board||pauseHint?16:(std::max)(16,static_cast<int>(bd.Height)-panelHeight-16);
-    const float left=-1+32.0f/static_cast<float>(bd.Width),top=1-2.0f*static_cast<float>(yOffset)/static_cast<float>(bd.Height);
-    const float right=left+2.0f*Width/static_cast<float>(bd.Width),bottom=top-2.0f*static_cast<float>(panelHeight)/static_cast<float>(bd.Height);
+    const int yOffset=title?(std::max)(16,static_cast<int>(bd.Height)-panelHeight-static_cast<int>(bd.Height/5)):16; // notices and chat: top left, clear of the ammo/health bars
+    const float left=title?1-2.0f*(stripW+14)/static_cast<float>(bd.Width):-1+32.0f/static_cast<float>(bd.Width),top=1-2.0f*static_cast<float>(yOffset)/static_cast<float>(bd.Height);
+    const float u1=static_cast<float>(stripW)/Width,right=left+2.0f*stripW/static_cast<float>(bd.Width),bottom=top-2.0f*static_cast<float>(panelHeight)/static_cast<float>(bd.Height);
     const float v=static_cast<float>(panelHeight)/Height;
-    const float vertices[]={left,top,0,0,right,top,1,0,left,bottom,0,v,left,bottom,0,v,right,top,1,0,right,bottom,1,v};
+    const float vertices[]={left,top,0,0,right,top,u1,0,left,bottom,0,v,left,bottom,0,v,right,top,u1,0,right,bottom,u1,v};
     D3D11_MAPPED_SUBRESOURCE mapped{};if(FAILED(c->deferred->Map(c->vertices.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped)))return;
     std::copy(std::begin(vertices),std::end(vertices),static_cast<float*>(mapped.pData));c->deferred->Unmap(c->vertices.Get(),0);
     c->deferred->UpdateSubresource(c->texture.Get(),0,nullptr,c->pixels,Width*4,0);
@@ -364,6 +419,8 @@ std::string defaultName() {
 bool install(unsigned char* base,DWORD tid,bool host,Logger logger) {
     if(c || GetCurrentThreadId()!=tid || !base || !logger)return false;
     c=new Context;c->base=base;c->tid=tid;c->log=logger;c->form.host=host;c->form.displayName=defaultName();
+    if(host)c->form.address="0.0.0.0"; // the automatic lobby listens on every interface (LAN, Radmin VPN, ...)
+    else c->browser.start();
     ui::shared().host=host;ui::shared().menu=c->form;
     ui::shared().eventLogger.store(logger,std::memory_order_release);
     HMODULE sdl=GetModuleHandleW(L"SDL2.dll"),d3d=GetModuleHandleW(L"d3d11.dll");if(!sdl || !d3d)return false;
@@ -389,9 +446,35 @@ void tick(bool ready,std::uint32_t epoch,std::uint8_t local,std::uint32_t genera
     if(!c || GetCurrentThreadId()!=c->tid)return;
     c->epoch=epoch;c->local=local;c->generation=generation;
     ui::shared().ready.store(ready && epoch && local<8 && generation,std::memory_order_release);
+    static unsigned lobbyTicks=0;++lobbyTicks;
+    if(c->form.host) {
+        // Automatic lobby: the host needs no menu. The first tick with the interface enabled creates the request (same as pressing Enter
+        // in the old host form) and starts announcing; the game session itself still starts when the host stands in a level.
+        if(!c->autoLobby && ui::shared().interfaceEnabled.load() && !ui::shared().requested.load() && !ui::shared().stopping.load()) {
+            std::lock_guard lock(c->uiMutex);c->autoLobby=true;
+            if(ui::shared().submit(c->form)) {
+                ++c->submitted;c->status="Lobby created automatically";
+                const bool ann=c->advertiser.start(c->form.displayName,*ui::port(c->form.portText));
+                c->log("p23_lobby_auto_created","\"announcing\":%s,\"port\":%u,\"name_bytes\":%zu",ann?"true":"false",*ui::port(c->form.portText),c->form.displayName.size());
+            }
+        }
+    } else if(lobbyTicks%20==0) {
+        auto fresh=c->browser.list();
+        std::lock_guard lock(c->uiMutex);
+        if(fresh.size()!=c->lobbies.size() || (!fresh.empty() && c->lobbies.empty()))
+            c->log("p23_lobbies_seen","\"count\":%zu,\"first\":\"%s\",\"address\":\"%s\",\"open\":%s",fresh.size(),fresh.empty()?"":fresh[0].host.c_str(),fresh.empty()?"":fresh[0].address.c_str(),!fresh.empty()&&fresh[0].open?"true":"false");
+        c->lobbies=std::move(fresh);
+        if(c->pick>=static_cast<int>(c->lobbies.size()))c->pick=c->lobbies.empty()?0:static_cast<int>(c->lobbies.size())-1;
+    }
+}
+void lobbyInfo(const char* map,unsigned players,bool open) {
+    if(!c || GetCurrentThreadId()!=c->tid || !c->form.host || !c->advertiser.running())return;
+    static unsigned n=0;if(++n%30!=1)return; // twice a second is plenty for a beacon
+    c->advertiser.set(map?map:"",static_cast<std::uint8_t>((std::min)(players,255u)),open);
 }
 void stop() {
     if(!c || GetCurrentThreadId()!=c->tid)return;
+    c->advertiser.stop();c->browser.stop();
     c->stopped.store(true);ui::shared().stopping.store(true);ui::shared().ready.store(false);
     {std::lock_guard lock(c->uiMutex);inputLease(false,false);}
     for(unsigned i=0;i<Count;++i) {auto& h=c->hooks[i];if(!h.enabled)continue;

@@ -273,6 +273,7 @@ def offline(tag):
     r0 = subprocess.run([str(BUILD / 'pe-play.exe'), '--dry-run', '--root', str(play_root)], capture_output=True, timeout=60)
     check('pe-play refuses root without game EXE', r0.returncode != 0 and not (play_root / 'profile').exists(), returncode=r0.returncode)
     shutil.copyfile(HOST_COPY / EXE_NAME, play_root / 'game' / EXE_NAME)
+    (play_root / 'game' / 'SDL2_pse_original.dll').write_bytes(b'')  # pe-play only checks that the original SDL2 copy exists (install.bat makes it)
     r1 = subprocess.run([str(BUILD / 'pe-play.exe'), '--dry-run', '--root', str(play_root)], capture_output=True, timeout=60)
     text = r1.stdout.decode('utf-16-le', 'replace')
     (out / 'play_dry_run.txt').write_text(text, encoding='utf8')
@@ -289,6 +290,7 @@ def offline(tag):
     role_root = work / 'play_role'
     (role_root / 'game').mkdir(parents=True)
     shutil.copyfile(HOST_COPY / EXE_NAME, role_root / 'game' / EXE_NAME)
+    (role_root / 'game' / 'SDL2_pse_original.dll').write_bytes(b'')
     rr = subprocess.run([str(BUILD / 'pe-play.exe'), '--dry-run', '--role', 'host', '--root', str(role_root)], capture_output=True, timeout=60)
     rtext = rr.stdout.decode('utf-16-le', 'replace')
     rprofile = role_root / 'profile' / 'host'
@@ -379,7 +381,7 @@ def install(root_arg, source_arg=None):
     (game / 'pe-together.ini').write_text(ini, encoding='utf-16')
     shutil.copyfile(BUILD / 'pe-play.exe', root / 'pe-play.exe')
     for name, role in (('host', 'host'), ('join', 'client')):
-        (root / (name + '.bat')).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\n"%~dp0pe-play.exe" --role ' + role + '\r\nset "pse_result=%ERRORLEVEL%"\r\n'
+        (root / (name + '.bat')).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\n"%~dp0pe-play.exe" --role ' + role + ' -stdout\r\nset "pse_result=%ERRORLEVEL%"\r\n'
             'if not "%pse_result%"=="0" echo Failed with code %pse_result%\r\npause\r\nexit /b %pse_result%\r\n').encode('ascii'))
     manifest = dict(root=str(root), source=str(source), files=len(prep['independent_copy_files']),
                     hashes={n: sha(game / n) for n in ['SDL2.dll', 'SDL2_pse_original.dll', 'pe-together.dll', 'pse_together.dll', 'anubis_Shipping_Steam_x64.exe']},

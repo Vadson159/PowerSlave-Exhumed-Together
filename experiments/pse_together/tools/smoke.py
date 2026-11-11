@@ -14,6 +14,27 @@ root = Path(sys.argv[1]).resolve()
 hold = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
 out = root / time.strftime('smoke_%Y%m%d_%H%M%S')
 out.mkdir()
+# A smoke run never touches the user's real Steam achievements: the mod's SetAchievement hook only logs (PSE_ACH_DRYRUN=1).
+os.environ.setdefault('PSE_ACH_DRYRUN', '1')
+if os.environ.get('SMOKE_CAMPAIGN'):
+    # Milestone 4: host "walks through the exit" (same native ChangeMap as the exit trigger) and the client follows to the next map.
+    os.environ.setdefault('PSE_DEBUG_CHANGE_MAP', 'maps/KARNAK.MAP')
+    os.environ.setdefault('PSE_DEBUG_MAP_FILE', str(out / 'go_next_map.flag'))
+    os.environ.setdefault('PSE_DEBUG_P2_GRANT', '3,40')   # host P2 gets weapon 3 + 40 ammo: it must arrive on the next map
+    os.environ.setdefault('PSE_DEBUG_ACH', '2')           # host earns ACH_TEAM_DOLL -> the client's game gets it too
+    os.environ.setdefault('PSE_DEBUG_ACH_CLIENT', '5')    # client earns ACH_MASK -> the host's game gets it too
+if os.environ.get('SMOKE_LATE'):
+    os.environ.setdefault('PSE_DEBUG_P1_GRANT', '5,77')   # the host already owns weapon 5 + 77 ammo when the client joins
+if os.environ.get('SMOKE_SCENE'):
+    # Story scene of the level (TOMB script 1, King Ramses): both players stand in the chamber; the HOST crosses the trigger (script 1 via
+    # the hook, as a root call) and the client must play the scene too. SMOKE_SCENE=client makes the CLIENT the one who crosses it.
+    os.environ.setdefault('PSE_DEBUG_TELEPORT', '0,2800,0,-864')
+    os.environ.setdefault('PSE_DEBUG_TELEPORT_CLIENT', '0,2800,0,-864')
+    if os.environ['SMOKE_SCENE'] == 'client': os.environ.setdefault('PSE_DEBUG_SCRIPT_CLIENT', '1')
+    else: os.environ.setdefault('PSE_DEBUG_SCRIPT', '1')
+if os.environ.get('SMOKE_ENDING'):
+    os.environ.setdefault('PSE_DEBUG_END', '7')
+    os.environ.setdefault('PSE_DEBUG_MAP_FILE', str(out / 'go_ending.flag'))
 
 
 def pids():
@@ -87,9 +108,9 @@ def events(role, *names):
 
 host = launch('host'); time.sleep(8)
 MENU = ('RETURN', 'wait=1.5', 'RETURN', 'wait=1.5', 'RETURN', 'wait=1.5', 'RETURN', 'wait=5', 'RETURN', 'wait=12')  # start, New Game, slot, difficulty, (map screen) load
-keys(host, 'F8', 'wait=1', 'RETURN', 'wait=2', *MENU)  # the player name is the default (PSE_PLAYER_NAME below)
+keys(host, 'F7', 'wait=1', 'RETURN', 'wait=2', *MENU)  # the player name is the default (PSE_PLAYER_NAME below)
 client = launch('client'); time.sleep(8)
-keys(client, 'F8', 'wait=1', 'RETURN', 'wait=2', *MENU)
+keys(client, 'F7', 'wait=1', 'RETURN', 'wait=2', *MENU)
 shot(host, '1_host_start.png'); shot(client, '2_client_start.png')
 print('p2 spawned:', bool(events('host', 'snapshot_entity_bindings')), '| spawn choice:', [ (r['spawn'], r['distance']) for r in events('host', 'p4_spawn_chosen')][-1:])
 # 1) client walks forward -> host P2 (native Puppet) walks ahead of the host; the host window should show it
@@ -111,7 +132,8 @@ if os.environ.get('SMOKE_MENU'):
     keys(client, 'ESC', 'wait=1.5'); look(client, 'm_0.png', 0.5)
     for i in range(1, 3):
         keys(client, 'DOWN', 'wait=0.5'); shot(client, f'm_{i}.png')
-    keys(client, 'F8', 'wait=1'); look(client, 'm_f8.png', 0.5); keys(client, 'F8', 'wait=0.5'); keys(client, 'ESC', 'wait=1')
+    keys(client, 'F7', 'wait=1'); look(client, 'm_f8.png', 0.5); keys(client, 'F7', 'wait=0.5'); keys(client, 'ESC', 'wait=1')
+    keys(host, 'ESC', 'wait=1.5'); keys(host, 'F7', 'wait=1'); look(host, 'm_host_f8.png', 0.5); keys(host, 'F7', 'wait=0.5'); keys(host, 'ESC', 'wait=1')   # the host's own lobby screen
 def restart(pid, name, role):
     # Pause menu: Resume, Options, Reload Last Checkpoint, Restart Level, Exit To Title, Quit.
     keys(pid, 'ESC', 'wait=1.5', 'DOWN', 'DOWN', 'DOWN', 'RETURN', 'wait=1', 'LEFT', 'RETURN', 'wait=2'); shot(pid, name + '_a.png')
@@ -208,7 +230,8 @@ if os.environ.get('SMOKE_RESPAWN'):
         k = (r['life_state'], r['weapon_mask'], tuple(r['ammo']))
         if k != last: print('host P2', r['utc'][14:23], 'life', r['life_state'], 'mask', r['weapon_mask'], 'ammo', r['ammo']); last = k
     for r in events('client', 'client_loadout_applied')[-3:]: print('client loadout', r['utc'][14:23], 'owned', r['owned'], 'ammo', r['ammo'])
-    for role in ('host', 'client'):
+    for role in ('host', 'client'):
+
         for r in events(role, 'p16_death_observed', 'p16_respawn_request', 'p16_respawn_committed', 'p16_E_request_sent', 'p16_generation_admitted', 'p16_client_confirm_native', 'p16_client_respawn_committed', 'blocked', 'world_own_health'):
             print(role, {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns')})
 if os.environ.get('SMOKE_FIREBALL'):
@@ -237,11 +260,64 @@ if os.environ.get('SMOKE_WEAPON'):
     for r in sc:
         k = (r['active_weapon'], r['pending_weapon'], r['weapon_mask'], tuple(r['ammo']))
         if k != last: print('host P2', r['utc'][14:23], 'active', r['active_weapon'], 'mask', r['weapon_mask'], 'ammo', r['ammo']); last = k
+if os.environ.get('SMOKE_CAMPAIGN'):
+    def wait_for(role, name, count=1, timeout=90):
+        end = time.time() + timeout; turn = 0
+        while time.time() < end:
+            if len(events(role, name)) >= count: return True
+            act.focus(act.hwnd_of(host if turn % 2 == 0 else client)); turn += 1   # one PC: only the focused window runs
+            time.sleep(2)
+        return False
+    print('P2 grant seen:', wait_for('host', 'debug_p2_grant', 1, 60))
+    time.sleep(3); look(host, 'k1_host_tomb.png', 2); look(client, 'k1_client_tomb.png', 2)
+    print('achievements shared in TOMB: host->client applied:', [r['key'] for r in events('client', 'ach_applied')], '| client->host applied:', [r['key'] for r in events('host', 'ach_applied')])
+    Path(os.environ['PSE_DEBUG_MAP_FILE']).write_text('go')
+    print('host announced the change:', wait_for('host', 'host_map_change_announced', 1, 60), '| client follows:', wait_for('client', 'client_follow_map_received', 1, 20))
+    print('host world rearmed:', wait_for('host', 'host_world_rearmed', 1, 60), '| client transition:', wait_for('client', 'world_transition', 1, 30))
+    # the client must rejoin the NEW host session and both must have P2/proxy again on KARNAK
+    print('second P2 spawn on host:', wait_for('host', 'snapshot_entity_bindings', 2, 150), '| second client_welcome:', wait_for('client', 'client_welcome', 2, 60))
+    time.sleep(8); look(host, 'k2_host_karnak.png', 2); look(client, 'k2_client_karnak.png', 2)
+    keys(client, 'hold:W=1.5', 'wait=1'); look(host, 'k3_host_sees_p2.png', 3)
+    keys(host, 'hold:W=1.0', 'wait=1'); look(client, 'k3_client_sees_host.png', 3)
+    for role, names in (('host', ('debug_change_map', 'host_map_change_announced', 'p2_travel_captured', 'state_exit_entry', 'host_world_rearmed', 'map_identity_bound', 'network_started', 'p2_travel_restored', 'proxy_world_transition', 'ach_local', 'ach_applied')),
+                        ('client', ('client_follow_map_received', 'client_follow_map_change', 'world_transition', 'client_welcome', 'client_loadout_applied', 'ach_local', 'ach_applied'))):
+        for r in events(role, *names): print(role, {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
+if os.environ.get('SMOKE_LATE'):
+    # Late joiner: P2 is created from a copy of the host's live inventory (no travel happened yet).
+    end = time.time() + 60
+    while time.time() < end and not events('host', 'p2_seeded_from_host'):
+        act.focus(act.hwnd_of(host)); time.sleep(1); act.focus(act.hwnd_of(client)); time.sleep(1)
+    for r in events('host', 'debug_p1_grant', 'p2_seeded_from_host', 'p2_travel_restored'): print('host', {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
+    for r in events('client', 'client_loadout_applied')[:2]: print('client', {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
+if os.environ.get('SMOKE_SCENE'):
+    time.sleep(2)
+    end = time.time() + 60
+    while time.time() < end and not (events('host', 'script_call') and events('client', 'script_call')):
+        act.focus(act.hwnd_of(host)); time.sleep(1); act.focus(act.hwnd_of(client)); time.sleep(1)
+    for i in range(5):   # the scene lasts several seconds: camera lock, Ramses, dialogue
+        act.focus(act.hwnd_of(client)); time.sleep(1.2); shot(client, f's_client_{i}.png')
+        act.focus(act.hwnd_of(host)); time.sleep(1.2); shot(host, f's_host_{i}.png')
+    for role in ('host', 'client'):
+        for r in events(role, 'script_hook_ready', 'script_debug_trigger', 'script_call', 'script_applied', 'script_skipped', 'world_mover_local', 'world_mover_applied', 'world_mover_busy'):
+            print(role, {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
+if os.environ.get('SMOKE_ENDING'):
+    # Story ending: the host asks game state 7 (EndGame(true)); the client must follow and play its own ending movie.
+    print('P2 spawned:', bool(events('host', 'snapshot_entity_bindings')))
+    time.sleep(5); look(host, 'e1_host_before.png', 1); look(client, 'e1_client_before.png', 1)
+    Path(os.environ['PSE_DEBUG_MAP_FILE']).write_text('go')
+    time.sleep(1.2)
+    for i in range(6):   # movie frames on both windows
+        act.focus(act.hwnd_of(client)); time.sleep(1.5); shot(client, f'e2_client_{i}.png')
+        act.focus(act.hwnd_of(host)); time.sleep(1.5); shot(host, f'e2_host_{i}.png')
+    for role, names in (('host', ('debug_end_game', 'host_map_change_announced', 'state_exit_entry', 'host_world_rearmed')), ('client', ('client_follow_map_received', 'client_follow_state', 'world_transition'))):
+        for r in events(role, *names): print(role, {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
 if os.environ.get('SMOKE_LOOK'):
     # Free-look at the PSE_DEBUG_TELEPORT[_CLIENT] spot: one picture per 90-degree turn (relative mouse), host and client.
     for pid, name in ((client, 'client'), (host, 'host')):
         for i in range(4):
             look(pid, f'l_{name}_{i}.png', 1.0); keys(pid, 'mouse:500', 'wait=0.5')
+for role in ('host', 'client'):   # lobby: the host opens one by itself, the client finds it by the beacon and joins from the list
+    for r in events(role, 'p23_lobby_auto_created', 'p23_lobbies_seen', 'p23_menu_submit'): print(role, {k: v for k, v in r.items() if k not in ('record', 'pid', 'tid', 'seq', 'steady_ns', 'utc')})
 sp = events('client', 'proxy_spawned'); ref = events('client', 'spawn_refused')
 print('client proxy spawned:', len(sp), '| refused:', len(ref), sorted({r.get('reason') for r in ref}))
 mot = [r for r in events('host', 'network_native_motion') if r['before'] != r['after']]
@@ -256,3 +332,4 @@ for pid in (client, host):
     h = act.hwnd_of(pid)
     if h: act.u.PostMessageW(h, 0x10, 0, 0); time.sleep(5)
 print('screens in', out)
+

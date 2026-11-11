@@ -1,4 +1,4 @@
-// Unified client: P4 background, P7 self state, P16 respawn, P23 UI, proxy of the host player.
+// Unified client: P4 background, P7 self state, P16 respawn, P23 UI, proxies of every OTHER player (slots 0..7 minus its own).
 // S0.3 unified source: the former lab copies src/client.cpp (DOC-51..56, no proxy) and src/client58b.cpp (DOC-58B)
 // were one file plus a diff; they are now this file selected by flags (PSE_FEATURE_SNAPSHOT / _MAPREADY / _VISUAL_PROXY).
 // PSE_FEATURE_VISUAL_PROXY routes accepted remote snapshots to VisualProxyStateMachine and drives the registered
@@ -21,9 +21,12 @@
 #include <pse_together/config.hpp>
 #include "build_profile.hpp"
 #include "world_sync.hpp"
+#include "log_throttle.hpp"
+#include "async_journal.hpp"
 #include "self_native_p16.hpp"
 #include "lifecycle_p16.hpp"
 #include "respawn_p16.hpp"
+#include "client_slots.hpp"
 #include "self_state_p7.hpp"
 #ifdef PSE_FEATURE_P4
 #include "background_policy.hpp"
@@ -61,13 +64,14 @@ constexpr char Domain[]="M12A_INPUT_ONLY";
 #endif
 std::uint64_t steadyNs() { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()); }
 struct Session;
+void reportExit();
 struct Context {
     HMODULE module{}; Byte* base{}; DWORD tid{};
     FILE* journal{}; SRWLOCK logLock=SRWLOCK_INIT; char buffer[65536]{};
     std::atomic<unsigned> prepared{},permit{};
     void* original[profile::Count]{}; bool enabled[profile::Count]{};
     bool inTick{},stopped{},shutdown{},failed{},attested{};
-    unsigned localThisTick{}; std::uint64_t ticks{},localUpdates{},ordinal{},logSeq{},lastFlush{},foreign{},reconnectKey{},worldSerial{1};
+    unsigned localThisTick{}; std::uint64_t ticks{},localUpdates{},ordinal{},logSeq{},lastFlush{},foreign{},reconnectKey{},worldSerial{1}; unsigned identity{},identityResets{};bool freshIdentity{}; // see the REJECTED handler
     std::uint32_t buttons{},cmdButtons{},forwardHeld{},backHeld{}; bool sampled{};
     float yaw{},pitch{},px{},py{},pz{}; int sector{-1}; // this client's own view/pose, sampled with the buttons (v1.14 input)
     Session* session{};
@@ -84,18 +88,30 @@ Byte* instance() { return g.base+0xaf33a0; }
 void* at(profile::Index i) { return g.base+profile::Sites[i].rva; }
 bool thread() { return GetCurrentThreadId()==g.tid; }
 bool gameplay() { return read<int>(instance(),0x24)==3 && read<int>(instance(),0x28)==0; }
+pse::journal::Throttle logThrottle; // guarded by g.logLock
+pse::journal::AsyncWriter journalWriter; // the file is written by its own thread (async_journal.hpp): the game's thread never waits for the disk
+void journalSink(const char* data,std::size_t size,bool) { if(size) std::fwrite(data,1,size,g.journal);std::fflush(g.journal); }
 void log(const char* event,const char* fmt="",...) {
     if(!g.journal) return;
+    {   AcquireSRWLockExclusive(&g.logLock);const bool write=logThrottle.allow(event,GetTickCount64());ReleaseSRWLockExclusive(&g.logLock);if(!write) return; }
     char detail[2200]{};va_list args;va_start(args,fmt);vsnprintf_s(detail,sizeof(detail),_TRUNCATE,fmt,args);va_end(args);
     const auto ns=steadyNs();SYSTEMTIME utc{};GetSystemTime(&utc);
     AcquireSRWLockExclusive(&g.logLock);
-    std::fprintf(g.journal,"{\"event\":\"%s\",\"record\":%llu,\"pid\":%lu,\"tid\":%lu,\"steady_ns\":%llu,\"utc\":\"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ\"%s%s}\n",event,++g.logSeq,GetCurrentProcessId(),GetCurrentThreadId(),ns,utc.wYear,utc.wMonth,utc.wDay,utc.wHour,utc.wMinute,utc.wSecond,utc.wMilliseconds,detail[0]?",":"",detail);
-    if(ns-g.lastFlush>=500000000ULL) { std::fflush(g.journal);g.lastFlush=ns; }
+    char line[2600]{};
+    const int n=_snprintf_s(line,sizeof(line),_TRUNCATE,"{\"event\":\"%s\",\"record\":%llu,\"pid\":%lu,\"tid\":%lu,\"steady_ns\":%llu,\"utc\":\"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ\"%s%s}\n",event,++g.logSeq,GetCurrentProcessId(),GetCurrentThreadId(),ns,utc.wYear,utc.wMonth,utc.wDay,utc.wHour,utc.wMinute,utc.wSecond,utc.wMilliseconds,detail[0]?",":"",detail);
+    if(n>0) journalWriter.append(line,static_cast<std::size_t>(n));
+    (void)g.lastFlush;
     ReleaseSRWLockExclusive(&g.logLock);
 }
-void block(const char* reason) { g.failed=true;log("blocked","\"reason\":\"%s\",\"retry\":false",reason); }
+char lastBlock[64]{};unsigned blockRecoveries{};
+void block(const char* reason) { if(!g.failed) strncpy_s(lastBlock,reason,_TRUNCATE);g.failed=true;log("blocked","\"reason\":\"%s\",\"retry\":false",reason); }
+// See host.cpp processFault(): hooks, threads, exact profiles never recover; a world-level fault ends co-op only until this world is left.
+bool processFault(const char* r) {
+    for(const char* k:{"install","hook","minhook","affinity","prefix","profile","restore","bootstrap","init","seam","detach"}) if(std::strstr(r,k)) return true;
+    return false;
+}
 bool prefix(profile::Index i) { return std::equal(std::begin(profile::Sites[i].prefix),std::end(profile::Sites[i].prefix),static_cast<Byte*>(at(i))); }
-void flushJournal() { AcquireSRWLockExclusive(&g.logLock);std::fflush(g.journal);ReleaseSRWLockExclusive(&g.logLock); }
+void flushJournal() { journalWriter.flush(true); }
 #include "client_self_p16.inc"
 #include "client_respawn_p16.inc"
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -109,17 +125,44 @@ std::uint64_t mapToken58(const map56::Identity& id,std::uint32_t epoch) {
 }
 #endif
 
+// Native overworld map object (global 0xa45e20, vtable 0x14052c330): the location the map screen is "at" is a 16-bit field (+0x10); the exit trigger
+// sets it (setter = vtable slot 0x30 = 0x1d5920, `mov [rcx+0x10],dx`) to the next location BEFORE the game asks state 2, and the map screen opens its cursor
+// (and its "Will you travel to X?" box) on it. A player who is only LED to the map screen must get the same value, or his map opens on a stale location.
+short overworldCurrent() { return read<short>(g.base+0xa45e20,0x10); }
+bool setOverworldCurrent(int id) {
+    static constexpr Byte setter[5]{0x66,0x89,0x51,0x10,0xc3};
+    if(id<0||id>99||!std::equal(std::begin(setter),std::end(setter),g.base+0x1d5920))return false;
+    reinterpret_cast<void(__fastcall*)(void*,short)>(g.base+0x1d5920)(g.base+0xa45e20,static_cast<short>(id));return true;
+}
+// The game's own "Travel" answer of the exit box "Will you travel to X?" (0x1b0e00 -> GameInstance vtable+0xe0 = 0x1b1a50): takes the map name of the
+// overworld location, asks state 2 with the 1 s fade, marks the current level AND that location unlocked (GameInstance+0x10: bool per location, what
+// the map screen's arrows and cursor use) and autosaves. The leader's game did all of it; a follower that only set the location and asked state 2
+// kept its map progress behind: no arrow back to the previous level, the next level locked.
+bool travelToOverworld(int location) {
+    static constexpr Byte travel[28]{0x48,0x8b,0x05,0x99,0x25,0x94,0x00,0x48,0x8d,0x0d,0x92,0x25,0x94,0x00,0xc6,0x05,0x7f,0xb5,0x93,0x00,0x00,0x48,0xff,0xa0,0xe0,0x00,0x00,0x00};
+    static constexpr Byte enter[16]{0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0x05,0xbf,0x43,0x89};
+    if(!std::equal(std::begin(travel),std::end(travel),g.base+0x1b0e00) || !std::equal(std::begin(enter),std::end(enter),g.base+0x1b1a50) ||
+       read<Byte*>(instance())!=g.base+0x52ad08 || read<Byte*>(g.base+0x52ad08,0xe0)!=g.base+0x1b1a50 || !setOverworldCurrent(location)) return false;
+    reinterpret_cast<void(__fastcall*)()>(g.base+0x1b0e00)();
+    return read<int>(instance(),0x28)==2;
+}
 // Only the actual KEX simulation thread owns both SIMULATION bridge operations.
 // Worker uses DTOs only and independently schedules the latest sample at 60 Hz.
 struct Session {
     pse::ThreadBridge bridge;
     pse::ENetWorker worker{bridge,pse::ENetWorkerMode::CLIENT};
     bool started{},stopped{},active{},readySent{},baseline{},reconnectPending{};
-    std::uint16_t worldKeysPending{};std::uint32_t worldOnTicks{},lastEnemySequence{};unsigned useHold{};
+    std::uint16_t worldKeysPending{};std::uint32_t worldOnTicks{},lastEnemySequence{},achPending{};unsigned useHold{};std::vector<pse::world::ScriptCall> scriptPending;std::vector<int> breakPending;std::vector<std::pair<unsigned,std::uint32_t>> soundPending; // (slot, sound) of other players to play at their proxy
+    std::vector<int> gonePending,pickupPending; // map enemies gone at the host, map spheres taken there
+    int difficultyPending{-1}; // the host's difficulty (EvDifficulty), adopted when the world is ready
+    std::vector<std::pair<int,int>> switchPending; // (face, event) of switches pressed at the host: their texture here
     std::array<std::uint16_t,8> hostAmmo{};std::uint8_t hostOwned{};bool hostLoadoutValid{}; // P2's real ammo / owned weapons (host) -> this client's Player
     int hostHealth{};bool hostHealthValid{},vitalsSynced{}; // Milestone 3: the host decides this player's health (P2 takes real AI damage there)
     std::uint8_t slot{};std::uint32_t gen{},epoch{};
     std::uint64_t lastReconnectNs{};
+    std::array<std::uint32_t,pse::MAX_PLAYERS> genWaitLogged16{}; // log throttle for p16_snapshot_generation_wait, per slot
+    std::string followMap; // Milestone 4: the host announced the next map; hookTick calls the native ChangeMap with it
+    std::uint64_t exitTick{};bool followedByUs{},exitSent{}; // followedByUs: the map change in progress is the one WE started on the host's order; exitSent: our own exit was reported
 #ifdef PSE_FEATURE_SNAPSHOT
     snapshot55::Guard snapshots;
 #endif
@@ -137,6 +180,7 @@ struct Session {
             log("client_map_status","\"tick\":%llu,\"fault\":\"%s\",\"local\":\"%s\",\"host\":\"%s\",\"state\":\"%s\",\"stable_ticks\":%u,\"epoch\":%u,\"generation\":%u,\"count_a\":%llu,\"count_b\":%llu",g.ticks,map56::text(fault),id.name.c_str(),mapGate.hostName().c_str(),map56::ClientGate::text(state),mapGate.stableTicks(),mapGate.mapEpoch(),mapGate.connection(),id.countA,id.countB);
         if(state!=lastState && state==map56::ClientGate::State::Mismatch) block("native_map_mismatch_no_ready");
         if(state!=lastState && state==map56::ClientGate::State::Invalidated) {
+            reportExit(); // our own exit (ChangeMap/ending) is what invalidated the map: tell the host before the session flags are reset
             readySent=baseline=false;p7Authority.barrier();p7Admitted=false;pse::self_native_p7::invalidate();p7LifetimeClosed=true;
             log("p16_world_barrier","\"reason\":\"native map invalidated\",\"further_gameplay_writes\":0");
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -147,8 +191,8 @@ struct Session {
     }
 #endif
 #ifdef PSE_FEATURE_VISUAL_PROXY
-    pse::proxy::SnapshotRouter<1> proxies;
-    std::uint64_t routeCounts[6]{};bool lastSafe{},shutdownApplied{},adapterRemoveApplied{};std::uint64_t deferredLogged{},notSafeLogged{};
+    pse::proxy::SnapshotRouter<pse::MAX_PLAYERS-1> proxies; // every other slot (up to 7) is a passive proxy actor
+    std::uint64_t routeCounts[6]{};bool lastSafe{},shutdownApplied{},adapterRemoveApplied{};std::uint32_t retireMask58{},removeAppliedMask58{};std::uint64_t retireRefused58{};std::uint64_t deferredLogged{},notSafeLogged{};
     void logProxies(const char* why) {
         bool any=false;
         proxies.forEach([&](pse::proxy::VisualProxyStateMachine& p) { any=true;
@@ -158,6 +202,24 @@ struct Session {
         log("proxy_route_counts","\"why\":\"%s\",\"routed\":%llu,\"local_excluded\":%llu,\"invalid_slot\":%llu,\"capacity_deferred\":%llu,\"proxy_rejected\":%llu,\"no_local_slot\":%llu",why,routeCounts[0],routeCounts[1],routeCounts[2],routeCounts[3],routeCounts[4],routeCounts[5]);
     }
     void barrier58(const char* why) { proxies.forEach([](pse::proxy::VisualProxyStateMachine& p) { p.onPreUnload(); });log("proxy_teardown_barrier","\"reason\":\"%s\",\"native_calls_after\":\"none_permitted\"",why);logProxies(why); }
+    // One remote player's proxy must go (it stopped sending, started a new life, or the session was rejoined): tell it the player is
+    // gone, then phase58() waits until it owes no native call, rearms that adapter slot and deletes the machine, so that the next
+    // snapshot of the slot spawns a fresh body. Every other slot's proxy keeps running.
+    void retireProxy58(std::uint8_t remoteSlot,const char* why) {
+        auto* p=proxies.proxy(remoteSlot);if(!p) return;
+        p->onDisconnect();retireMask58|=1u<<remoteSlot;removeAppliedMask58&=~(1u<<remoteSlot);
+        log("proxy_slot_retire","\"slot\":%u,\"why\":\"%s\",\"state\":\"%s\"",remoteSlot,why,toString(p->state()));
+    }
+    void sweepRetired58() {
+        for(unsigned i=0;i<pse::MAX_PLAYERS;++i) {
+            const auto bit=1u<<i;if(!(retireMask58&bit)) continue;
+            const auto id=static_cast<std::uint8_t>(i);
+            if(!proxies.proxy(id)) { retireMask58&=~bit;continue; }
+            if(!proxies.slotQuiescent(id)) continue;
+            if(pse::native_proxy::rearmSlot(i) && proxies.resetSlot(id)) { retireMask58&=~bit;log("proxy_slot_reset","\"slot\":%u",i); }
+            else if(++retireRefused58%120==1) log("proxy_slot_reset_refused","\"slot\":%u,\"attempts\":%llu",i,static_cast<unsigned long long>(retireRefused58));
+        }
+    }
     void disconnect58(const char* why) { proxies.forEach([](pse::proxy::VisualProxyStateMachine& p) { p.onDisconnect(); });log("proxy_disconnect","\"reason\":\"%s\"",why);logProxies(why); }
     void route58(const pse::BridgePlayerSnapshot& s) {
         pse::proxy::Rejection rj{};const auto rr=proxies.route(s,gameplay(),rj);++routeCounts[static_cast<unsigned>(rr)];
@@ -175,8 +237,15 @@ struct Session {
         if(proxyShutdown58.load(std::memory_order_acquire) && !shutdownApplied) {
             shutdownApplied=true;proxies.forEach([](VisualProxyStateMachine& p) { p.requestShutdown(); });log("proxy_shutdown_requested","\"source\":\"PSE58B_RequestProxyShutdown\"");logProxies("shutdown_request");
         }
-        if((ready&pse::seam::AdapterRequestsRemove) && !adapterRemoveApplied) {
-            adapterRemoveApplied=true;proxies.forEach([](VisualProxyStateMachine& p) { p.requestRemove(); });log("proxy_adapter_remove_requested","\"ready_flags\":%d",ready);logProxies("adapter_remove_request");
+        if(ready&pse::seam::AdapterRequestsRemove) {
+            // The adapter asks per slot (removeRequestMask); a flag without any bit still means "every proxy" once.
+            const auto asked=pse::native_proxy::removeRequestMask();bool any=false;
+            proxies.forEach([&](VisualProxyStateMachine& p) {
+                const auto bit=1u<<p.targetSlot();
+                if(((asked&bit)||(!asked&&!adapterRemoveApplied)) && !(removeAppliedMask58&bit)) { removeAppliedMask58|=bit;p.requestRemove();any=true; }
+            });
+            if(!asked) adapterRemoveApplied=true;
+            if(any) { log("proxy_adapter_remove_requested","\"ready_flags\":%d,\"slots\":%u",ready,asked);logProxies("adapter_remove_request"); }
         }
         const bool step=gameplay() && g.localThisTick==1 && !g.failed && (ready&pse::seam::LocalTicked) && (ready&pse::seam::AdapterHealthy);
         const TickContext ctx{step,(ready&pse::seam::StableWorld)!=0};
@@ -189,7 +258,8 @@ struct Session {
                 p.targetSlot(),toString(a),toString(before),toString(p.state()),toString(p.quarantineReason()),p.handle() ? p.handle() : p.orphanedHandle(),t.sequence,t.serverTick,t.mapEpoch,t.connectionGeneration,t.entityId,t.entityGeneration,t.coalesced,t.x,t.y,t.z,t.yaw,
                 snapshot55::bits(t.x),snapshot55::bits(t.y),snapshot55::bits(t.z),snapshot55::bits(t.yaw),g.ticks,ctx.simulationStep?"true":"false",ctx.sectorsReady?"true":"false",p.spawnCalls(),p.updateCalls(),p.removeCalls(),p.retiredCount(),p.localGeneration());
         });
-        unsigned st=0;proxies.forEach([&](VisualProxyStateMachine& p) { st=static_cast<unsigned>(p.state())+1; });
+        sweepRetired58();
+        unsigned st=0;proxies.forEach([&](VisualProxyStateMachine& p) { if(!st) st=static_cast<unsigned>(p.state())+1; }); // first (lowest slot) proxy
         status58.store((proxies.quiescent() ? 0x100u : 0u)|(st<<16),std::memory_order_release);
     }
 #endif
@@ -210,8 +280,16 @@ struct Session {
         namespace w=pse::world;
         if(e.mapEpoch!=epoch) return;
         if(e.eventType==w::EvKeys) { worldKeysPending|=static_cast<std::uint16_t>(e.eventValue&0xf);return; } // applied when the world is ready
+        if(e.eventType==w::EvSound && e.sourceEntityId<8 && e.sourceEntityId!=slot && e.eventValue>=0 && soundPending.size()<64) { soundPending.push_back({e.sourceEntityId,static_cast<std::uint32_t>(e.eventValue)});return; }
+        if(e.eventType==w::EvEnemyGone && e.eventValue>=0 && gonePending.size()<512) { gonePending.push_back(e.eventValue);return; }
+        if(e.eventType==w::EvPickup && e.eventValue>=0 && pickupPending.size()<512) { pickupPending.push_back(e.eventValue);return; }
+        if(e.eventType==w::EvDifficulty && e.eventValue>=0 && e.eventValue<8) { difficultyPending=e.eventValue;return; }
+        if(e.eventType==w::EvSwitch && e.eventValue>=0 && switchPending.size()<256) { switchPending.push_back({e.eventValue,static_cast<int>(e.targetEntityId)});return; }
+        if(e.eventType==w::EvBreak && e.eventValue>=0 && breakPending.size()<64) { breakPending.push_back(e.eventValue);return; } // another player broke a vase/urn
+        if(e.eventType==w::EvAchievement && e.eventValue>=0 && e.eventValue<20) { achPending|=1u<<e.eventValue;return; } // another player earned it
+        if(e.eventType==w::EvScript && e.eventValue>0 && e.eventValue<256 && scriptPending.size()<16) { scriptPending.push_back(w::unpackScript(e.eventValue,e.sourceEntityId,static_cast<std::uint16_t>(e.targetEntityId)));return; } // another player crossed a story trigger
         if(e.eventType==w::EvMover && worldReady())
-            w::applyMover({static_cast<std::uint8_t>(e.eventValue>>8),static_cast<std::uint8_t>(e.eventValue),static_cast<std::int16_t>(e.targetEntityId)});
+            w::applyMover(w::moverFromWire(static_cast<std::uint32_t>(e.eventValue),e.targetEntityId));
     }
     void worldSync() {
         namespace w=pse::world;
@@ -221,11 +299,14 @@ struct Session {
         if(worldOnTicks==199) w::debugTeleport(worldPuppet());
         if(++worldOnTicks==300) w::debugSpawn();
         if(worldOnTicks==450) w::debugKeys(primary());
-        if(worldOnTicks%10==0) w::debugCensusOnFile();
+        if(worldOnTicks%10==0) { w::debugCensusOnFile();w::debugHit(worldPuppet());w::debugSelfDamage(worldPuppet()); }
         w::cullLocalProjectiles(); // the client's AI is a replica: enemy projectiles come from the host only
+        w::cullLocalDynamic();     // ... and so are enemies and spheres spawned during play (vases, deaths): this machine's own random ones go
         // Own player: local damage is muted, the host's health is applied (red flash through the native Damage call).
         {
             Byte* me=worldPuppet();w::setOwnPlayer(me);
+            // A native respawn comes back with 200 even where the cap is 100: down to the cap (never below the host's value) without the damage flash.
+            if(me && hostHealthValid && !requestPending16 && !newLocal16 && !stagedConfirm16) w::clampHealth(me,primary(),hostHealth);
             if(me && hostHealthValid && !requestPending16 && !newLocal16 && !stagedConfirm16) { w::applyHostHealth(me,hostHealth,!vitalsSynced);vitalsSynced=true; }
             if(me && hostLoadoutValid && !requestPending16 && !newLocal16 && !stagedConfirm16) {
                 // Ammo and owned weapons are the host's (P2 picks things up and fires there); the weapon in hand stays the client's choice.
@@ -240,9 +321,39 @@ struct Session {
             }
         }
         if(worldKeysPending) { w::applyKeys(primary(),worldPuppet(),worldKeysPending);worldKeysPending=0; }
+        if(achPending) { for(unsigned i=0;i<20;++i) if(achPending>>i&1) w::applyAchievement(i);achPending=0; }
+        if(const auto ach=w::popAchievements()) for(unsigned i=0;i<20;++i) if(ach>>i&1) sendWorld(w::ReqAchievement,i,0);
+        w::debugAchievement();
+        for(const auto& f:soundPending) w::playPlayerSound(pse::native_proxy::actorOf(f.first),f.second); // another player's jump, shot, pain ... at its proxy
+        soundPending.clear();
+        for(auto snd=w::popSound();snd!=0xffffffffu;snd=w::popSound()) sendWorld(w::ReqSound,snd,0); // this player's own sounds: the host and the others hear them
+        for(const int id:gonePending) w::applyEnemyGone(id);
+        gonePending.clear();
+        for(const int id:pickupPending) w::applyPickup(id);
+        pickupPending.clear();
+        for(int id;(id=w::popPickupAsk())>=0;) sendWorld(w::ReqPickup,static_cast<std::uint32_t>(id),0); // this player touched a sphere here: the host gives it
+        for(int id,amount,kind;w::popHit(id,amount,kind);) sendWorld(w::ReqHit,static_cast<std::uint32_t>(id),static_cast<std::uint32_t>(amount)|(static_cast<std::uint32_t>(kind)<<16)); // this player's hits on the host's enemies
+        for(int amount,kind;w::popSelfDamage(amount,kind);) sendWorld(w::ReqSelfDamage,static_cast<std::uint32_t>(amount),static_cast<std::uint32_t>(kind)); // drowning, lava, falls of this player
+        for(int id;(id=w::popCheckpoint())>=0;) sendWorld(w::ReqCheckpoint,static_cast<std::uint32_t>(id),0); // this player's scarab: it respawns there
+        if(difficultyPending>=0) { w::applyDifficulty(difficultyPending);difficultyPending=-1; }
+        for(const auto& [f,ev]:switchPending) w::applySwitch(f,ev);
+        switchPending.clear();
+        for(const int id:breakPending) w::applyBreak(id);
+        breakPending.clear();
+        for(int id;(id=w::popBreak())>=0;) sendWorld(w::ReqBreak,static_cast<std::uint32_t>(id),0);
+        if(!scriptPending.empty()) { Byte* me=worldPuppet();if(me) { for(const auto& c:scriptPending) w::applyScript(c.num,me,&c);scriptPending.clear(); } }
+        for(auto c=w::popScript();c.num>=0;c=w::popScript()) sendWorld(w::ReqScript,static_cast<std::uint32_t>(c.num)|(static_cast<std::uint32_t>(c.pos?w::packZ(c.z):0)<<16),c.pos?w::packXY(c.x,c.y):0);
+        if(worldOnTicks==330) w::debugScript(worldPuppet());
+        if(worldOnTicks>=240 && worldOnTicks%10==0) {   // smoke only: this client's player "walks into the exit": PSE_DEBUG_CHANGE_MAP_CLIENT=maps/X.MAP + PSE_DEBUG_MAP_FILE_CLIENT=<flag file>
+            static bool fired{};char name[64]{},file[MAX_PATH]{};
+            if(!fired && GetEnvironmentVariableA("PSE_DEBUG_CHANGE_MAP_CLIENT",name,sizeof(name)) && GetEnvironmentVariableA("PSE_DEBUG_MAP_FILE_CLIENT",file,sizeof(file)) && GetFileAttributesA(file)!=INVALID_FILE_ATTRIBUTES) {
+                fired=true;log("debug_change_map_client","\"map\":\"%s\"",name);
+                reinterpret_cast<void(__fastcall*)(void*,const char*)>(g.base+0x1b54d0)(instance(),name);
+            }
+        }
         if(const auto gained=w::popKeysGained()) sendWorld(w::ReqKeys,gained,0);
         w::Mover m;
-        while(w::popMover(m)) sendWorld(w::ReqMover,static_cast<std::uint32_t>(m.sector),(static_cast<std::uint32_t>(m.cls)<<8)|m.type);
+        while(w::popMover(m)) sendWorld(w::ReqMover,static_cast<std::uint32_t>(m.sector),w::moverToWire(m));
     }
     bool start() {
         bridge.registerSimulationThread();
@@ -277,7 +388,7 @@ struct Session {
             log("client_input_dispatched","\"slot\":%u,\"generation\":%u,\"input_seq\":%u,\"sample_ordinal\":%llu,\"sample_tick\":%llu,\"sampled_ns\":%llu,\"generated_ns\":%llu,\"forward\":%.1f,\"fresh\":%s,\"stage\":\"enet_dispatch_not_udp_proof\"",d.slotId,d.generation,d.sequence,d.sampleOrdinal,d.simulationTick,d.sampledSteadyNs,d.generatedSteadyNs,d.forward,d.sampleFresh?"true":"false");
         });
         const auto menu=pse::ui::shared().settings();
-        pse::ClientConfig cfg;cfg.hostAddress=menu.address;cfg.hostPort=*pse::ui::port(menu.portText);cfg.joinToken=menu.token;cfg.participantId="p23_client_"+std::to_string(GetCurrentProcessId());cfg.displayName=menu.displayName;cfg.reconnectKey=g.reconnectKey;
+        pse::ClientConfig cfg;cfg.hostAddress=menu.address;cfg.hostPort=*pse::ui::port(menu.portText);cfg.joinToken=menu.token;cfg.participantId="p23_client_"+std::to_string(GetCurrentProcessId())+(g.identity?"_"+std::to_string(g.identity):std::string());cfg.displayName=menu.displayName;cfg.reconnectKey=g.reconnectKey;
         if(!worker.startClient(cfg)) { bridge.unregisterSimulationThread();block("client_worker_start");return false; }
 #ifdef PSE_FEATURE_P4
         started=true;log("client_worker_started","\"target_hz\":60,\"freshness_ms\":100,\"protocol\":275");return true;
@@ -290,22 +401,33 @@ struct Session {
 #ifdef PSE_FEATURE_MAPREADY
         observeMap();
 #endif
-        for(std::size_t n=0;n<pse::THREAD_BRIDGE_INBOUND_CAPACITY && bridge.pollInbound(m);++n) {
+        std::size_t polled=0;
+        for(;polled<pse::THREAD_BRIDGE_INBOUND_CAPACITY && bridge.pollInbound(m);++polled) {
             if(const auto* e=std::get_if<pse::BridgeSessionEvent>(&m)) {
                 log("client_session","\"type\":%u,\"slot\":%u,\"generation\":%u,\"epoch\":%u",static_cast<unsigned>(e->type),e->slotId,e->connectionGeneration,e->mapEpoch);
                 if(e->type==pse::BridgeSessionEvent::Type::CLIENT_JOINED || e->type==pse::BridgeSessionEvent::Type::RECONNECTED) {
                     if(e->connectionGeneration<=gen) continue;
+                    // The key first: a welcome for another level sends this client to the host's level, whose fresh Session must rejoin this
+                    // reserved slot with it. Without the key the host rejected that rejoin as a hijack, for good ("Session already started").
+                    if(e->reconnectKey) g.reconnectKey=e->reconnectKey;
 #ifdef PSE_FEATURE_MAPREADY
                     #ifdef PSE_FEATURE_P4
-                    if(!map111::matches(localMap,e->mapName,e->mapStructure)) { active=readySent=baseline=false;block("welcome_native_map_structure_v111");continue; }
+                    if(!map111::matches(localMap,e->mapName,e->mapStructure)) {
+                        active=readySent=baseline=false;
+                        // This client stands in another level than the host's: go to the host's level instead of staying out of the game for good.
+                        if(e->mapName!=localMap.name && pse::validNativeMapName(e->mapName)) { followMap=e->mapName;log("client_follow_host_map","\"host\":\"%s\",\"local\":\"%s\"",e->mapName.c_str(),localMap.name.c_str()); }
+                        else block("welcome_native_map_structure_v111");
+                        continue;
+                    }
                     #endif
                     if(!mapGate.welcome(e->slotId,e->connectionGeneration,e->mapEpoch,e->mapName)) { block("welcome_map_identity_or_epoch");continue; }
                     slot=e->slotId;gen=e->connectionGeneration;epoch=e->mapEpoch;active=true;readySent=baseline=false;reconnectPending=false;
                     if(e->reconnectKey) g.reconnectKey=e->reconnectKey; // a later session of this process rejoins the same slot
-                    snapshots.reset(gen,epoch);
+                    snapshots.reset(gen,epoch);slots16.quiet();
                     log("client_welcome","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"host_map\":\"%s\",\"local_map\":\"%s\",\"world_synchronized\":false",slot,gen,epoch,mapGate.hostName().c_str(),localMap.name.c_str());
 #ifdef PSE_FEATURE_VISUAL_PROXY
-                    proxies.configureSession(slot,gen,epoch);log("proxy_session_configured","\"local_slot\":%u,\"generation\":%u,\"epoch\":%u,\"spawn_enabled_by_session\":false,\"native_capacity\":1",slot,gen,epoch);
+                    proxies.configureSession(slot,gen,epoch);log("proxy_session_configured","\"local_slot\":%u,\"generation\":%u,\"epoch\":%u,\"spawn_enabled_by_session\":false,\"native_capacity\":%u",slot,gen,epoch,static_cast<unsigned>(pse::MAX_PLAYERS-1));
+                    for(unsigned i=0;i<pse::MAX_PLAYERS;++i) retireProxy58(static_cast<std::uint8_t>(i),"session_rejoined"); // a rejoin: bodies of the old session never carry over (no-op on a first join)
 #endif
 #else
                     if(!e->connectionGeneration || e->slotId==0 || e->slotId>=pse::MAX_PLAYERS || e->mapName!=Domain ||
@@ -317,7 +439,7 @@ struct Session {
                         ) { block("welcome_identity_or_input_domain");continue; }
                     slot=e->slotId;gen=e->connectionGeneration;epoch=e->mapEpoch;active=true;readySent=baseline=false;reconnectPending=false;
 #ifdef PSE_FEATURE_SNAPSHOT
-                    snapshots.reset(gen,epoch);
+                    snapshots.reset(gen,epoch);slots16.quiet();
 #endif
                     log("client_welcome","\"slot\":%u,\"generation\":%u,\"epoch\":%u,\"domain\":\"%s\",\"world_synchronized\":false",slot,gen,epoch,Domain);
 #endif
@@ -330,13 +452,24 @@ struct Session {
                     disconnect58("LOCAL_SESSION_LOST");
 #endif
                 } else if(e->type==pse::BridgeSessionEvent::Type::REJECTED) {
-                    active=readySent=baseline=false;block("session_rejected");
+                    active=readySent=baseline=false;
+                    // The host keeps a departed identity's slot reserved and wants its key back. A Session that was never welcomed (so no proxy of
+                    // it exists) and is refused for its identity rejoins as a new player instead of staying out of the game until a restart.
+                    if(!gen && (e->reasonCode==pse::REJECT_HIJACK_ATTEMPT || e->reasonCode==pse::REJECT_ALREADY_CONNECTED) && g.identityResets<3) {
+                        ++g.identityResets;g.freshIdentity=true;log("client_identity_reset","\"reason\":%u,\"attempt\":%u",static_cast<unsigned>(e->reasonCode),g.identityResets);
+                        continue;
+                    }
+                    block("session_rejected");
 #ifdef PSE_FEATURE_VISUAL_PROXY
                     disconnect58("REJECTED");
 #endif
                 }
             } else if(const auto* map=std::get_if<pse::BridgeMapChange>(&m)) {
                 if(map->connectionGeneration!=gen) continue;
+                if(map->newMapEpoch==0) { // an order, not a session map: the host leads, this client follows (see followHost())
+                    if(active && pse::validNativeMapName(map->mapName)) { followMap=map->mapName;log("client_follow_map_received","\"map\":\"%s\",\"generation\":%u",followMap.c_str(),gen); }
+                    continue;
+                }
 #ifdef PSE_FEATURE_P4
                 if(!map111::matches(localMap,map->mapName,map->mapStructure)) { readySent=baseline=false;block("map_change_native_structure_v111");continue; }
 #endif
@@ -386,29 +519,54 @@ struct Session {
                         o.sector=static_cast<std::int16_t>(ent.stateFlags>>16);o.aiState=static_cast<std::uint16_t>(ent.stateFlags&0xffff);o.anim=ent.subType;o.frame=static_cast<std::uint16_t>(ent.meta);
                     }
                     pse::world::applyEnemies(list,cnt);
+                    pse::world::Dynamic dlist[24];int dn=0;
+                    for(const auto& ent:ws->entities) {
+                        if(ent.type!=3||dn>=24) continue;
+                        auto& d=dlist[dn++];d={};
+                        d.id=ent.entityId;d.type=ent.subType;d.x=ent.posX;d.y=ent.posY;d.z=ent.posZ;d.vx=ent.velX;d.vy=ent.velY;d.vz=ent.velZ;d.yaw=ent.yaw;d.scale=ent.pitch;
+                        d.hp=static_cast<std::int16_t>(ent.health);d.aiState=static_cast<std::uint16_t>(ent.stateFlags&0xffff);d.sector=static_cast<std::int16_t>(ent.stateFlags>>16);
+                        d.anim=static_cast<std::uint16_t>(ent.meta>>16);d.frame=static_cast<std::uint16_t>(ent.meta&0xffff);
+                    }
+                    pse::world::applyDynamic(dlist,dn);
+                    pse::world::Platform plat[24];int pln=0; // floating platform ticks / drop pad states of the host (type 4)
+                    for(const auto& ent:ws->entities) if(ent.type==4 && pln<24 && ent.entityId<32768) plat[pln++]={static_cast<std::int16_t>(ent.entityId),static_cast<std::uint8_t>(ent.subType),ent.meta};
+                    pse::world::applyPlatforms(plat,pln);
                 }
 #ifdef PSE_FEATURE_SNAPSHOT
             } else if(const auto* c=std::get_if<pse::BridgeRespawnConfirm>(&m)) {
-                if(!active||!readySent||!baseline||c->mapEpoch!=epoch||c->slotId>=2||!c->deathSequence||
-                   c->newEntityId!=0x5500u+c->slotId||c->newGeneration!=expectedGeneration16[c->slotId]+1||!(c->defaultWeapons&1u))continue;
+                // Broadcast: the confirm may concern ANY slot 0..7 (own slot: local revive; another slot: bookkeeping + a fresh proxy).
+                if(!active||!readySent||!baseline||!slots16.admitConfirm(*c,slot,epoch))continue;
                 if(c->slotId==slot&&!stageLocal16(*c,slot,gen,epoch))continue;
-                expectedGeneration16[c->slotId]=c->newGeneration;
+                slots16.applyConfirm(snapshots,*c);
                 if(c->slotId==slot){hostHealthValid=false;vitalsSynced=false;hostLoadoutValid=false;} // the pre-death health must not hit the fresh body: wait for a new-generation snapshot
-                auto& prior=snapshots.slots[c->slotId];prior.entity=c->newEntityId;prior.generation=c->newGeneration;
-                log("p16_generation_admitted","\"slot\":%u,\"epoch\":%u,\"generation\":%u,\"death\":%u",c->slotId,epoch,c->newGeneration,c->deathSequence);
+                log("p16_generation_admitted","\"slot\":%u,\"epoch\":%u,\"generation\":%u,\"death\":%u,\"own\":%s",c->slotId,epoch,c->newGeneration,c->deathSequence,c->slotId==slot?"true":"false");
+#ifdef PSE_FEATURE_VISUAL_PROXY
+                if(c->slotId!=slot) retireProxy58(c->slotId,"respawn_confirm"); // the old body is gone, the next snapshot spawns the new one
+#endif
             } else if(const auto* s=std::get_if<pse::BridgePlayerSnapshot>(&m)) {
-                if(s->slotId>=2||s->entityGeneration!=expectedGeneration16[s->slotId]){
-                    log("p16_snapshot_generation_wait","\"slot\":%u,\"generation\":%u",s->slotId,s->entityGeneration);continue;
-                }
+                // Per slot (Tracker::intake): the own slot only follows its own respawn handshake; another slot's newer generation is
+                // adopted (late join, missed confirm); an older one is a stale in-flight record and waits.
 #ifdef PSE_FEATURE_MAPREADY
                 const bool mapEligible=mapGate.snapshotEligible(s->connectionGeneration,s->mapEpoch);
 #else
                 const bool mapEligible=true;
 #endif
-                const auto verdict=snapshots.accept(*s,active && readySent && baseline && gameplay() && !g.failed && !g.stopped && mapEligible);
+                const auto in=slots16.intake(snapshots,*s,active && readySent && baseline && gameplay() && !g.failed && !g.stopped && mapEligible,slot,steadyNs());
+                if(in.waited){
+                    if(s->slotId<genWaitLogged16.size() && genWaitLogged16[s->slotId]++%120==0)
+                        log("p16_snapshot_generation_wait","\"slot\":%u,\"generation\":%u",s->slotId,s->entityGeneration);
+                    continue;
+                }
+                if(in.adopted){
+                    log("p16_generation_adopted","\"slot\":%u,\"generation\":%u,\"entity\":%u",s->slotId,s->entityGeneration,s->entityId);
+#ifdef PSE_FEATURE_VISUAL_PROXY
+                    if(in.replaced) retireProxy58(s->slotId,"generation_adopted");
+#endif
+                }
+                const auto verdict=in.verdict;
                 if(verdict==snapshot55::Verdict::EntityMismatch || verdict==snapshot55::Verdict::Nonfinite) { block("snapshot_unexplained_entity_or_transform");continue; }
                 if(verdict!=snapshot55::Verdict::Accept) { log("native_snapshot_rejected","\"slot\":%u,\"snapshot_seq\":%u,\"reason\":%u",s->slotId,s->sequence,static_cast<unsigned>(verdict));continue; }
-                lastDeath16[s->slotId]=s->deathSequence;lastDead16[s->slotId]=s->lifeState==pse::LIFE_DEAD;
+                genWaitLogged16[s->slotId]=0;
                 if(s->slotId==slot){hostDeath16=s->deathSequence;hostDead16=s->lifeState==pse::LIFE_DEAD;hostHealth=s->health;hostHealthValid=true;hostAmmo=s->ammoByWeapon;hostOwned=static_cast<std::uint8_t>(s->weaponMask);hostLoadoutValid=true;}
                 log("native_snapshot_received","\"slot\":%u,\"snapshot_seq\":%u,\"server_tick\":%u,\"map_epoch\":%u,\"connection_generation\":%u,\"entity_id\":%u,\"entity_generation\":%u,\"pos\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"pitch\":%.9g,\"bits\":[%u,%u,%u,%u,%u],\"player_writes\":0",
                     s->slotId,s->sequence,s->serverTick,s->mapEpoch,s->connectionGeneration,s->entityId,s->entityGeneration,s->posX,s->posY,s->posZ,s->yaw,s->pitch,snapshot55::bits(s->posX),snapshot55::bits(s->posY),snapshot55::bits(s->posZ),snapshot55::bits(s->yaw),snapshot55::bits(s->pitch));
@@ -418,6 +576,19 @@ struct Session {
 #endif
             }
         }
+#ifdef PSE_FEATURE_SNAPSHOT
+        // A remote slot that stopped sending (player left, or the slot is reused) is not kept as a frozen proxy: forget it so that a
+        // later snapshot starts from scratch. Only when this tick drained the inbox, so a backlog cannot fake silence.
+        if(active&&readySent&&baseline&&polled<pse::THREAD_BRIDGE_INBOUND_CAPACITY)
+            if(const auto stale=slots16.collectStale(snapshots,steadyNs(),slot))
+                for(unsigned i=0;i<pse::client_slots::Slots;++i) if(stale>>i&1u) {
+                    genWaitLogged16[i]=0;
+                    log("p16_slot_stale","\"slot\":%u,\"silent_ms\":%llu",i,static_cast<unsigned long long>(pse::client_slots::StaleNs/1000000ULL));
+#ifdef PSE_FEATURE_VISUAL_PROXY
+                    retireProxy58(static_cast<std::uint8_t>(i),"stale_slot");
+#endif
+                }
+#endif
         if(bridge.consumeResyncReasons()) { active=readySent=baseline=false;reconnectPending=true; }
         if(reconnectPending && steadyNs()-lastReconnectNs>=1000000000ULL) {
             pse::BridgeControl c;c.type=pse::BridgeControl::Type::RECONNECT;c.slotId=slot;c.connectionGeneration=gen;
@@ -554,6 +725,9 @@ void stop(const char* reason) {
 // proxy adapter) and let a fresh Session rejoin with the saved reconnect key when the next gameplay world is stable.
 void worldTransition(const char* reason) {
     if(!thread() || g.stopped) return;
+    if(g.failed && !processFault(lastBlock) && blockRecoveries<16) { // the next world rejoins the host by itself (no game restart)
+        g.failed=false;++blockRecoveries;log("client_recovered_after_block","\"reason\":\"%s\",\"recoveries\":%u,\"at\":\"%s\"",lastBlock,blockRecoveries,reason);lastBlock[0]=0;
+    }
     ++g.worldSerial;
     log("world_transition","\"reason\":\"%s\",\"world\":%llu",reason,g.worldSerial);
     if(g.session) g.session->barrier58(reason);
@@ -563,11 +737,72 @@ void worldTransition(const char* reason) {
     p7Authority=ss7::Authority{};p7Admitted=false;pse::self_native_p7::invalidate();
     p7LifetimeClosed=false;p7PinnedActor=p7PinnedNode=0;p7PinnedAllocation=0;
     inputBound16=false;hostDead16=false;hostDeath16=0;localGeneration16=1;startValid16=false;
-    lastDeath16={};lastDead16={};expectedGeneration16={1,1};
+    slots16.reset();
     // The in-game Together UI stays up: the menu request is kept so the next gameplay world rejoins on its own.
     if(g.session) g.session->stop(reason);
     g.session=nullptr; // the stopped Session is retained (never freed): its worker has joined, nothing references it
     if(!pse::native_proxy::rearm()) block("native_proxy_rearm");
+    pse::world::resetWorld();
+}
+// Host leads, client follows: kexSlaveGameInstanceLocal::ChangeMap (0x1b54d0, "maps/NAME.MAP") is what the game itself calls from an exit
+// trigger: it starts the 1 s fade and sets the pending map; the usual StateExit -> worldTransition() -> new Session path does the rest.
+// Only from the simulation thread, only in a stable gameplay world (never mid-fade or mid-load).
+void followHost() {
+    if(!g.session || g.session->followMap.empty() || !thread() || !g.inTick) return;
+    if(read<int>(instance(),0x24)!=3 || read<int>(instance(),0x20)!=3 || read<int>(instance(),0x28)!=0) return;
+    static constexpr Byte prefixBytes[16]{0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0xc7,0x41,0x28,0x04,0x00,0x00};
+    const std::string name=std::move(g.session->followMap);g.session->followMap.clear();
+    if(name.rfind("@STATE:",0)==0) {
+        // GameInstance::SetGameState (vtable+0x98 = 0x1ae650): 2 = the overworld map screen (where the level exit leads: everybody picks the next location
+        // on the game's own map), 6 (bad) / 7 (good) = the story ending, exactly what EndGame(bool) ends with.
+        static constexpr Byte stateBytes[9]{0x89,0x51,0x28,0x0f,0x57,0xd2,0x48,0x8b,0x0d};
+        const int state=std::atoi(name.c_str()+7);
+        if(state==2) {   // "@STATE:2:<location>": the same "Travel" the leader's game made (location, unlocks, autosave); the bare state only as a fallback
+            const auto colon=name.find(':',7);
+            const int at=colon!=std::string::npos ? std::atoi(name.c_str()+colon+1) : -1;
+            if(at>=0 && travelToOverworld(at)) {
+                log("client_follow_state","\"state\":2,\"location\":%d,\"native_travel\":true,\"tick\":%llu",at,g.ticks);
+                g.session->followedByUs=true;return;
+            }
+            if(colon!=std::string::npos && !setOverworldCurrent(at)) log("client_overworld_location_refused","\"order\":\"%s\"",name.c_str());
+        }
+        if((state!=2 && state!=6 && state!=7) || !std::equal(std::begin(stateBytes),std::end(stateBytes),g.base+0x1ae650)) { block("end_game_profile");return; }
+        log("client_follow_state","\"state\":%d,\"tick\":%llu",state,g.ticks);
+        g.session->followedByUs=true;
+        reinterpret_cast<void(__fastcall*)(void*,int)>(g.base+0x1ae650)(instance(),state);
+        return;
+    }
+    if(!std::equal(std::begin(prefixBytes),std::end(prefixBytes),g.base+0x1b54d0)) { block("change_map_profile");return; }
+    log("client_follow_map_change","\"map\":\"%s\",\"tick\":%llu",name.c_str(),g.ticks);
+    g.session->followedByUs=true;
+    reinterpret_cast<void(__fastcall*)(void*,const char*)>(g.base+0x1b54d0)(instance(),name.c_str());
+}
+// Any player's exit moves everybody: when THIS client's own game starts a map change / an ending (its player walked into the exit trigger),
+// the host is told which one (world request ReqMap); the host runs the same native call and orders every client to follow.
+void reportExit() {
+    auto* ss=g.session;
+    {   static unsigned why=0;if(ss && ss->exitSent==false && read<int>(instance(),0x28)!=0 && ++why<=3) log("client_exit_gate","\"followedByUs\":%s,\"followMap\":%zu,\"inTick\":%s,\"active\":%s,\"ready\":%s,\"baseline\":%s",ss->followedByUs?"true":"false",ss->followMap.size(),g.inTick?"true":"false",ss->active?"true":"false",ss->readySent?"true":"false",ss->baseline?"true":"false"); }
+    if(!ss || ss->exitSent || ss->followedByUs || !ss->followMap.empty() || !thread() || !g.inTick || !ss->active || !ss->readySent || !ss->baseline) return;
+    const auto o=map56::observe(g.base);
+    if(o.state!=3) return;
+    if(o.pending!=0) { static unsigned probes=0;if(++probes<=3) log("client_exit_probe","\"pending\":%d,\"readable\":%s,\"len\":%llu,\"name\":\"%.40s\"",o.pending,o.nameReadable?"true":"false",static_cast<unsigned long long>(o.nameLength),o.nameReadable?o.name.data():""); }
+    std::string stem;
+    if(o.pending==4 && o.nameReadable && o.nameLength>5 && o.nameLength<=map56::NameReadMax) {
+        const std::string name(o.name.data(),static_cast<std::size_t>(o.nameLength));
+        const auto dot=name.rfind('.');
+        if(name.compare(0,5,"maps/")==0 && dot!=std::string::npos && dot>5) stem=name.substr(5,dot-5);
+    } else if(o.pending==2) {   // the overworld map: the exit trigger sent THIS player there; "STATE2" + the 2-digit location it chose (fits the 8 characters of the request)
+        const int at=overworldCurrent();char buf[16]{};
+        if(at<0||at>99) { ss->exitSent=true;return; }
+        sprintf_s(buf,"STATE2%02d",at);stem=buf;
+    } else if(o.pending==6 || o.pending==7) stem="STATE"+std::to_string(o.pending);
+    else return;
+    if(stem.empty() || stem.size()>8 || !std::all_of(stem.begin(),stem.end(),[](char ch){return (ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_';})) { ss->exitSent=true;return; }
+    std::uint32_t lo=0,hi=0;
+    for(std::size_t i=0;i<stem.size();++i) (i<4?lo:hi)|=static_cast<std::uint32_t>(static_cast<unsigned char>(stem[i]))<<(8*(i%4));
+    ss->exitSent=true;ss->exitTick=g.ticks;
+    log("client_exit_reported","\"stem\":\"%s\",\"pending\":%d,\"tick\":%llu",stem.c_str(),o.pending,g.ticks);
+    ss->sendWorld(pse::world::ReqMap,lo,hi);
 }
 void __fastcall hookUpdate(void* p) {
 #ifdef PSE_FEATURE_P4
@@ -637,8 +872,11 @@ void __fastcall hookTick(void* self) {
     if(!g.stopped) {
         if(!g.session && g.permit.load(std::memory_order_acquire) && pse::ui::shared().requested.load(std::memory_order_acquire) && !g.failed && gameplay() && g.localThisTick==1) { g.session=new Session;g.session->start(); }
         if(g.session && g.session->started && !g.session->stopped) {
+            reportExit(); // before consume(): the map change we just started invalidates this session's gate in consume(), too late to report
             g.session->consume();
-            if(g.session->mapGate.state()==map56::ClientGate::State::Invalidated) worldTransition("native_map_invalidated");
+            followHost();
+            // our own exit was just reported: give the worker a few ticks to put the request on the wire before this world's session is torn down
+            if(g.session->mapGate.state()==map56::ClientGate::State::Invalidated && !(g.session->exitSent && g.ticks-g.session->exitTick<20)) worldTransition("native_map_invalidated");
             if(g.session) {
             DWORD foregroundPid{};GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
             {
@@ -653,6 +891,7 @@ void __fastcall hookTick(void* self) {
             g.session->worldSync();
             }
         }
+        if(g.freshIdentity && g.session) { g.freshIdentity=false;++g.identity;g.reconnectKey=0;g.session->stop("identity_reset");g.session=nullptr; } // next tick: a new Session
         if((g.localUpdates==1 && g.localThisTick==1) || g.ticks<=3 || g.ticks%120==0)
             log("tick_status","\"ticks\":%llu,\"state\":%d,\"pending\":%d,\"local_updates\":%llu,\"local_this_tick\":%u",g.ticks,read<int>(instance(),0x24),read<int>(instance(),0x28),g.localUpdates,g.localThisTick);
     }
@@ -758,6 +997,7 @@ extern "C" DWORD WINAPI client_M11Prepare(const wchar_t* logfile,DWORD tid) {
     // Permit the read-only isolation/acceptance observer while retaining sole
     // write ownership. Secure fopen's default sharing blocked the smoke gate.
     g.journal=_wfsopen(path,L"wx",_SH_DENYWR);
+    journalWriter.bind(&journalSink);
     if(!g.journal) return ERROR_OPEN_FAILED;std::setvbuf(g.journal,g.buffer,_IOFBF,sizeof(g.buffer));
     log("client_dll_prepared","\"binary_sha256\":\"%s\",\"image_base\":\"%p\",\"expected_primary_tid\":%lu,\"player_writes\":0,\"kex_calls\":0",profile::Sha256,g.base,tid);
     HANDLE th=OpenThread(THREAD_SET_CONTEXT|THREAD_QUERY_LIMITED_INFORMATION,FALSE,tid);if(!th) return GetLastError();

@@ -20,7 +20,7 @@ using Difficulty=int(__fastcall*)(void*);
 struct State {
     Byte* base{}; std::uint32_t tid{}; Host host{};
     void* original[5]{}; bool enabled[5]{};
-    bool stopped{},busy{},armed{}; unsigned team{};
+    bool stopped{},busy{},armed{},remoteTouch{}; unsigned team{};
     void* scoped{}; std::uintptr_t returnAddress{};
     See see{}; Angle angle{}; Give give{}; Touch consume{};
     Difficulty difficulty{};
@@ -115,10 +115,22 @@ void touch(void* pickup,void* actor,unsigned index,unsigned returnRva) {
     Busy busy;
     const auto m=owner(actor,s.host.roster());
     if (!m.player) { s.host.event("p14_touch_rejected",8,index); return; }
+    // A remote player's body takes a sphere only when its player touched it in its own game and asked (world_sync takePickup -> allowRemoteTouch):
+    // the body is only re-placed to that player's pose here, so whether it touched a sphere was chance, and the player saw something else.
+    if (m.slot && !s.remoteTouch) return;
     Scope scope(m.player,returnRva);
     if (!scope.ok) { fail("p14_touch_scope"); return; }
     s.host.event("p14_touch_owner",m.slot,index);
+    // Ammo sphere: native OnTouch gives ammo to the weapon in Player+0x8c (pending). A remote player's body here switches by itself off an empty
+    // weapon (empty pistol -> machete, which takes no ammo), while that player still holds the empty weapon in its own game: the sphere then gave
+    // nothing and stayed under it. For the sphere the body's weapon is the one its player holds; the field is put back right after.
+    int* pending=index==3 && m.slot && s.host.heldWeapon ? reinterpret_cast<int*>(static_cast<Byte*>(m.player)+0x8c) : nullptr;
+    const int held=pending ? s.host.heldWeapon(m.slot) : -1, before=pending ? *pending : -1;
+    const bool swap=held>0 && held<8 && held!=before && read<Byte>(m.player,0xcc+static_cast<unsigned>(held))==1;
+    if (swap) *pending=held;
     reinterpret_cast<Touch>(s.original[index])(pickup,actor);
+    if (swap && *pending==held) *pending=before;
+    if (swap) s.host.event("p14_ammo_for_held_weapon",m.slot,static_cast<unsigned>(held));
     // Native OnTouch may have consumed pickup. Do not read it here.
 }
 void __fastcall health(void* pickup,void* actor) { touch(pickup,actor,2,0x1d8807); }
@@ -173,6 +185,7 @@ void __fastcall ankh(void* pickup,void* actor) {
     s.consume(pickup,actor);
 }
 }
+void allowRemoteTouch(bool on) { if (thread()) s.remoteTouch=on; }
 void* scopedPlayer(std::uint32_t tid,const void* returnAddress) {
     return allowGetter(s.tid,tid,s.returnAddress,reinterpret_cast<std::uintptr_t>(returnAddress),!s.stopped && s.scoped!=nullptr)
         ? s.scoped : nullptr;

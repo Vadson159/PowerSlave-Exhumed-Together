@@ -56,30 +56,48 @@ public:
     std::int32_t worldReady(std::uint64_t t) { if(!attached()) return 0;bool f{};const auto r=sehI(reinterpret_cast<std::int32_t(*)(std::uint64_t)>(m_table.worldReady),t,f);fault(f);return f ? 0 : r; }
     void tickLeave(std::uint64_t t,std::uint32_t v) { if(attached()) { bool f{};sehLeave(m_table.tickLeave,t,v,f);fault(f); } }
     void worldExit(std::uint32_t reason) { if(attached()) { bool f{};sehExit(m_table.worldExit,reason,f);fault(f); } }
+    // One Seam and one table serve every slot's state machine, which take turns on the simulation thread. The per-machine
+    // m_inSeamCall flag cannot see a call made by ANOTHER machine, so the Seam keeps its own in-call latch: a state-machine call
+    // made while another is in flight (or off the bound thread) makes no native call and returns the fail-closed answer.
+    // Bind once (simulation thread id); 0 = unbound, no affinity check.
+    void bindSimulationThread(DWORD tid) { m_simTid=tid; }
+    std::uint64_t blocked() const { return m_blocked; }
     pse::proxy::SpawnOutcome spawn(const ProxyCommand& c,ProxyHandle& out) noexcept override {
         out=0;if(!attached()) return pse::proxy::SpawnOutcome::Deferred; // no adapter: no native call possible
+        Call call(*this);if(!call.ok) return pse::proxy::SpawnOutcome::Deferred; // proven: no native call was made
         bool f{};std::uint64_t h{};const auto r=sehSpawn(m_table.spawn,&c,&h,f);fault(f);
         out=h;return f ? pse::proxy::SpawnOutcome::Unknown : static_cast<pse::proxy::SpawnOutcome>(r);
     }
     pse::proxy::UpdateOutcome update(ProxyHandle h,const ProxyCommand& c) noexcept override {
         if(!attached()) return pse::proxy::UpdateOutcome::Unknown;
+        Call call(*this);if(!call.ok) return pse::proxy::UpdateOutcome::Refused; // no write
         bool f{};const auto r=sehUpdate(m_table.update,h,&c,f);fault(f);
         return f ? pse::proxy::UpdateOutcome::Unknown : static_cast<pse::proxy::UpdateOutcome>(r);
     }
     pse::proxy::RemoveOutcome remove(ProxyHandle h) noexcept override {
         if(!attached()) return pse::proxy::RemoveOutcome::Unknown;
+        Call call(*this);if(!call.ok) return pse::proxy::RemoveOutcome::DefiniteNoCall;
         bool f{};const auto r=sehI(m_table.remove,h,f);fault(f);
         return f ? pse::proxy::RemoveOutcome::Unknown : static_cast<pse::proxy::RemoveOutcome>(r);
     }
     pse::proxy::RetirementStatus retirement(ProxyHandle h) noexcept override {
         if(!attached()) return pse::proxy::RetirementStatus::Unknown;
+        Call call(*this);if(!call.ok) return pse::proxy::RetirementStatus::Pending; // read-only witness: ask again next step
         bool f{};const auto r=sehI(m_table.retirement,h,f);fault(f);
         return f ? pse::proxy::RetirementStatus::Unknown : static_cast<pse::proxy::RetirementStatus>(r);
     }
 private:
+    struct Call {
+        Seam& s;bool ok;
+        explicit Call(Seam& seam) noexcept : s(seam),ok(!seam.m_inCall && (!seam.m_simTid || GetCurrentThreadId()==seam.m_simTid)) { if(ok) s.m_inCall=true;else ++s.m_blocked; }
+        ~Call() { if(ok) s.m_inCall=false; }
+        Call(const Call&)=delete;Call& operator=(const Call&)=delete;
+    };
     void fault(bool f) { if(f) { ++m_faults;m_status.store(Faulted,std::memory_order_release); } }
     SeamTable m_table{};
     std::atomic<std::uint32_t> m_status{None};
-    std::uint64_t m_faults{};
+    std::uint64_t m_faults{},m_blocked{};
+    DWORD m_simTid{};
+    bool m_inCall{};
 };
 } // namespace pse::seam

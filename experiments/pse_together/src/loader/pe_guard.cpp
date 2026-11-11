@@ -216,8 +216,22 @@ int objectPath(ObjAttr* oa, wchar_t* path) {
     if (n && path[0] == L'\\') return 1;
     if (!oa->root) { if (!n) text("<empty native path>"); return 0; }
     wchar_t rootPath[PATH_CAP];
-    const DWORD rootLen = GetFinalPathNameByHandleW(oa->root, rootPath, PATH_CAP, 0);
-    if (!rootLen) { text("<unresolved RootDirectory>"); return 0; }
+    DWORD rootLen = GetFinalPathNameByHandleW(oa->root, rootPath, PATH_CAP, 0);
+    if (!rootLen) {
+        // Not a file on a volume (named pipe directory, device object ...): take the object's own NT name; deviceName() then decides.
+        // A root that cannot be named at all stays unresolved and write-intent opens relative to it are denied as before.
+        using QueryFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+        static const auto query = reinterpret_cast<QueryFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryObject"));
+        alignas(8) unsigned char nameBuffer[2 * PATH_CAP + 64]{};
+        ULONG returned = 0;
+        const LONG queried = query ? query(oa->root, 1 /*ObjectNameInformation*/, nameBuffer, sizeof(nameBuffer), &returned) : -1;
+        if (queried >= 0) {
+            const auto* us = reinterpret_cast<const UStr*>(nameBuffer);
+            const unsigned chars = us->length / 2;
+            if (chars && chars < PATH_CAP && us->buffer) { for (unsigned i = 0; i < chars; ++i) rootPath[i] = us->buffer[i]; rootPath[chars] = 0; rootLen = chars; }
+        }
+    }
+    if (!rootLen) { text("<unresolved RootDirectory>"); return 0; }  // (NtQueryObject could not name it either)
     if (rootLen >= PATH_CAP || rootLen + (n ? 1 + n : 0) >= PATH_CAP) { text("<RootDirectory path overflow>"); return -2; }
     unsigned total = rootLen;
     for (unsigned i = 0; i < rootLen; ++i) path[i] = rootPath[i];
@@ -275,6 +289,44 @@ Kind decideRead(unsigned api, ACCESS_MASK access, ObjAttr* oa, ULONG disposition
     return Kind::Redirect;
 }
 
+// Diagnostics for a denied open whose target the guard cannot classify: who asked (module+offset of the first frames).
+void appendCallers(wchar_t* text, unsigned cap) {
+    void* frames[12]{};
+    const USHORT n = RtlCaptureStackBackTrace(2, 12, frames, nullptr);
+    unsigned at = len(text, cap);
+    auto put = [&](const wchar_t* s, unsigned count) { for (unsigned i = 0; i < count && at + 1 < cap; ++i) text[at++] = s[i]; text[at] = 0; };
+    put(L" callers=", 9);
+    for (USHORT i = 0; i < n; ++i) {
+        HMODULE module{};
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(frames[i]), &module) || !module) continue;
+        wchar_t file[260]{};
+        const DWORD fl = GetModuleFileNameW(module, file, 260);
+        unsigned b = fl; while (b && file[b - 1] != 0x5c) --b;
+        put(file + b, fl - b);
+        wchar_t hex[20]{}; unsigned h = 0; hex[h++] = L'+';
+        const auto off = static_cast<unsigned long long>(reinterpret_cast<ULONG_PTR>(frames[i]) - reinterpret_cast<ULONG_PTR>(module));
+        for (int sh = 28; sh >= 0; sh -= 4) { const unsigned d = (off >> sh) & 0xf; hex[h++] = static_cast<wchar_t>(d < 10 ? L'0' + d : L'a' + d - 10); }
+        hex[h++] = L' ';
+        put(hex, h);
+    }
+}
+
+// SteamAPI_Init: steamclient64.dll opens its IPC channel to the running Steam client relative to a root HANDLE that is not a file on a volume
+// (a pipe/device directory). Such an open cannot touch the disk; it is allowed only when the caller is Steam's own client library.
+bool calledBySteamClient() {
+    void* frames[10]{};
+    const USHORT n = RtlCaptureStackBackTrace(2, 10, frames, nullptr);
+    for (USHORT i = 0; i < n; ++i) {
+        HMODULE module{};
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(frames[i]), &module) || !module) continue;
+        wchar_t file[260]{};
+        const DWORD fl = GetModuleFileNameW(module, file, 260);
+        unsigned b = fl; while (b && file[b - 1] != 0x5c) --b;
+        if (eqCi(file + b, fl - b, L"steamclient64.dll")) return true;
+    }
+    return false;
+}
+
 Kind decide(unsigned api, ACCESS_MASK access, ObjAttr* oa, ULONG disposition, ULONG options, Decision& out) {
     out.kind = Kind::Allow;
     if (!(access & WriteMask) && disposition == DispOpen && !(options & OptDeleteOnClose)) return decideRead(api, access, oa, disposition, options, out);
@@ -310,11 +362,19 @@ Kind decide(unsigned api, ACCESS_MASK access, ObjAttr* oa, ULONG disposition, UL
                 }
             }
         } else if (deviceName(path)) { kind = Kind::Allow; reason = rDevice; }
-    }
+        else if (calledBySteamClient()) { kind = Kind::Allow; reason = rDevice; }
+    } else if (r == 0 && oa && oa->root && calledBySteamClient()) { kind = Kind::Allow; reason = rDevice; }
     if (kind == Kind::Allow) { InterlockedIncrement64(&g.counts[reason == rDevice ? cDevice : cAllowed]); return Kind::Allow; }
     if (kind == Kind::Redirect) { InterlockedIncrement64(&g.counts[cRedirected]); record(Kind::Redirect, api, reason, logPath, logTo, access, disposition, options); out.kind = kind; return kind; }
     InterlockedIncrement64(&g.counts[cDenied]);
     if (error) InterlockedIncrement64(&g.counts[cErrors]);
+    wchar_t annotated[PATH_CAP + 400]{};
+    if (reason == rExternal) {
+        const unsigned n = len(logPath, 512);
+        for (unsigned i = 0; i < n && i < PATH_CAP - 1; ++i) annotated[i] = logPath[i];
+        appendCallers(annotated, PATH_CAP + 400);
+        logPath = annotated;
+    }
     record(Kind::Deny, api, reason, logPath, nullptr, access, disposition, options);
     return Kind::Deny;
 }

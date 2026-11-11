@@ -368,8 +368,9 @@ private:
     std::uint32_t m_spawnCalls{},m_removeCalls{},m_updateCalls{},m_retired{},m_affinityViolations{},m_reentrancyBlocked{},m_unloadDuringSeam{};
 };
 
-// Slot demultiplexer (G9). Local slot is excluded before any proxy sees the record; one native
-// proxy is the DOC58B capacity bound even though slots 0..7 are addressable.
+// Slot demultiplexer (G9). Local slot is excluded before any proxy sees the record. Capacity bounds the number of simultaneously
+// existing state machines (Capacity=1: the DOC58B bound; Capacity=7: every remote slot of an 8-player session). The machine of the
+// local slot never counts: after a session reassigns the local slot, a leftover machine of that slot does not take a remote's place.
 enum class RouteResult : std::uint8_t { Routed, LocalExcluded, InvalidSlot, CapacityDeferred, ProxyRejected, NoLocalSlot };
 inline const char* toString(RouteResult r) noexcept {
     switch(r) {
@@ -397,6 +398,32 @@ public:
         m_localSlot=localSlot;m_hasLocal=localSlot<pse::MAX_PLAYERS;
         for(auto* p:m_proxies) if(p) p->configureSession(gen,epoch);
         m_gen=gen;m_epoch=epoch;
+        for(auto& v:m_slotGen) v=0; // the router-wide session supersedes every per-slot one
+        for(auto& v:m_slotEpoch) v=0;
+    }
+    // Host side: every remote client has its OWN connection generation, a snapshot of slot K carries generation(K). Stores gen/epoch
+    // for that slot only (creates nothing); an existing machine is told, a machine created later by route() starts with it
+    // (falling back to the router-wide gen/epoch when none was set). Other slots are not affected.
+    void configureSessionSlot(std::uint8_t slot,std::uint32_t gen,std::uint32_t epoch) noexcept {
+        if(slot>=pse::MAX_PLAYERS) return;
+        m_slotGen[slot]=gen;m_slotEpoch[slot]=epoch;
+        if(auto* p=m_proxies[slot]) p->configureSession(gen,epoch);
+    }
+    // No machine, or one that owes no native call (ABSENT or terminal): resetSlot may delete it.
+    bool slotQuiescent(std::uint8_t slot) const noexcept { return slot<pse::MAX_PLAYERS && (!m_proxies[slot] || m_proxies[slot]->quiescent()); }
+    // One client left/rejoined while the others stay: deletes ONLY that slot's machine when it is quiescent (the host first calls
+    // onDisconnect() on it and ticks until slotQuiescent). The next route() for the slot builds a fresh machine (new spawn budget,
+    // fresh snapshot guard); its per-slot gen/epoch is cleared and must be set again with configureSessionSlot().
+    // Refused (false) while a native call may still be owed, from another thread, or from inside a seam call.
+    bool resetSlot(std::uint8_t slot) noexcept {
+        if(slot>=pse::MAX_PLAYERS) return false;
+        auto*& p=m_proxies[slot];
+        if(p) {
+            if(!p->onSimulationThread() || p->inSeamCall() || !p->quiescent()) return false;
+            delete p;p=nullptr;
+        }
+        m_slotGen[slot]=0;m_slotEpoch[slot]=0;
+        return true;
     }
     void onNativeMapReady(std::uint32_t epoch,std::uint64_t token) noexcept { m_mapEpoch=epoch;m_mapToken=token;for(auto* p:m_proxies) if(p) p->onNativeMapReady(epoch,token); }
     RouteResult route(const pse::BridgePlayerSnapshot& s,bool gameplay,Rejection& rejection) noexcept {
@@ -406,12 +433,13 @@ public:
         if(s.slotId==m_localSlot) return RouteResult::LocalExcluded;
         auto*& p=m_proxies[s.slotId];
         if(!p) {
-            std::size_t used=0;for(auto* q:m_proxies) used+=q!=nullptr;
+            std::size_t used=0;for(std::size_t i=0;i<pse::MAX_PLAYERS;++i) used+=m_proxies[i]!=nullptr && i!=m_localSlot;
             if(used>=Capacity) return RouteResult::CapacityDeferred;
             p=new (std::nothrow) VisualProxyStateMachine(s.slotId,m_tidFn);
             if(!p) return RouteResult::CapacityDeferred;
             p->bindSimulationThread(m_simTid);
-            if(m_gen) p->configureSession(m_gen,m_epoch);
+            if(m_slotGen[s.slotId]) p->configureSession(m_slotGen[s.slotId],m_slotEpoch[s.slotId]);
+            else if(m_gen) p->configureSession(m_gen,m_epoch);
             if(m_mapToken) p->onNativeMapReady(m_mapEpoch,m_mapToken);
         }
         rejection=p->handleSnapshot(s,gameplay);
@@ -427,6 +455,7 @@ private:
     std::uint8_t m_localSlot{0xff};bool m_hasLocal{};
     std::uint32_t m_gen{},m_epoch{},m_mapEpoch{};std::uint64_t m_mapToken{};
     VisualProxyStateMachine* m_proxies[pse::MAX_PLAYERS]{};
+    std::uint32_t m_slotGen[pse::MAX_PLAYERS]{},m_slotEpoch[pse::MAX_PLAYERS]{};
 };
 
 } // namespace pse::proxy

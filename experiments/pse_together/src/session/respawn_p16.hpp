@@ -87,6 +87,17 @@ public:
         for(auto& p:pickups_)p.consumedLife[id.slot]=0;
         return Result::Accepted;
     }
+    // The same player's connection was re-established inside this map (its client reconnected: new connection generation, same slot and
+    // body). Life, death count and native generations stay; only the connection token moves forward, so the player's later death and
+    // respawn requests (which carry the NEW connection) are still recognised. Refused while a respawn is in flight (Busy).
+    Result rebind(Identity id) noexcept {
+        if(!valid(id))return Result::Invalid;
+        auto& s=slots_[id.slot];
+        if(s.life==Life::Absent)return Result::Stale;
+        if(id.connection<=s.who.connection)return Result::Stale;
+        if(s.life==Life::Respawning)return Result::Busy;
+        s.who=id;s.confirmed.reset();return Result::Accepted;
+    }
     Result disconnect(Identity id) noexcept {
         if(!bound(id))return Result::Stale;
         auto& s=slots_[id.slot];

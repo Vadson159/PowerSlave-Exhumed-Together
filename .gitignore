@@ -58,3 +58,7 @@ tools/enet-prototype/third_party/enet/
 
 # Установки для смоука (копии игры, профили, скриншоты)
 play_m*/
+
+# Test game copies (p27.py install)
+/play_*/
+*.zip

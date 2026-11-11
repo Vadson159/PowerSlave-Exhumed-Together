@@ -94,8 +94,12 @@ int main() {
         at<void*>(ai.data(),0x28)=nullptr;
         invocation(1);check(chosen==players[slot].data(),"chase fallback selects all slots");
         for (unsigned kind:{2u,3u}) {
-            nested=true;invocation(kind,actors[slot].data());
+            nested=true;allowRemoteTouch(true);invocation(kind,actors[slot].data());allowRemoteTouch(false);
             check(chosen==players[slot].data(),"touch to owner, nested touch rejected");
+            if (slot) {
+                const auto before=originalCalls;chosen=nullptr;nested=false;invocation(kind,actors[slot].data());
+                check(originalCalls==before && !chosen,"remote body touch without its player's request does nothing");
+            }
         }
     }
     reset();rejectedLOS=actors[0].data();invocation(0);
@@ -108,7 +112,7 @@ int main() {
     invocation(0);invocation(1);check(originalCalls==0,"no candidate: no singleton or assertion");
     reset();base[0xaeb11d]=1;invocation(1);check(originalCalls==0,"native no-target respected");
     reset();invocation(2,foreign.data());check(originalCalls==0,"foreign toucher rejected before dereference");
-    reset();getterWorks=false;invocation(3,actors[3].data());check(originalCalls==0 && faults==1,"scope failure stops native action");
+    reset();getterWorks=false;allowRemoteTouch(true);invocation(3,actors[3].data());allowRemoteTouch(false);check(originalCalls==0 && faults==1,"scope failure stops native action");
     getterWorks=true;invocation(2,actors[0].data());invocation(0);invocation(1);
     check(originalCalls==3,"after a latched failure the stock handlers run (AI and pickups never freeze)");
     reset();invocation(0);const auto calls=originalCalls;eligible=false;invocation(1);invocation(2,actors[0].data());

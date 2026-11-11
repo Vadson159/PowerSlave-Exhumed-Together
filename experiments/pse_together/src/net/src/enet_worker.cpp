@@ -100,6 +100,7 @@ bool ENetWorker::startHost(const HostConfig& config) {
     m_inputs = {};
     m_slotActive = {};
     m_slotGen = {};
+    m_uiPoseSeen = {};
     m_running.store(true, std::memory_order_release);
     m_thread = std::thread(&ENetWorker::threadLoop, this);
     return true;
@@ -149,6 +150,9 @@ void ENetWorker::setupHostCallbacks() {
         evt.type = isReconnect ? BridgeSessionEvent::Type::RECONNECTED : BridgeSessionEvent::Type::CLIENT_JOINED;
         evt.slotId = slotId;
         evt.connectionGeneration = gen;
+        // Stable identity of the occupant (the client's join participantId); written by this same thread in onMsgHello.
+        evt.participantId = m_hostServer->getSimulation().getSlot(slotId).participantId;
+        evt.displayName = m_hostServer->getSimulation().getSlot(slotId).displayName;
         deliverInbound(std::move(evt));
     };
 
@@ -646,13 +650,17 @@ void ENetWorker::sendOutboundMessage(const BridgeMessage& msg) {
                 } else if (auto* peer = resolveOutboundPeer(val.targetSlot, val.connectionGeneration)) {
                     m_hostServer->sendPacket(peer, CHANNEL_UNRELIABLE_SEQUENCED, encoded, false);
                 } else return;
-                // The accepted native adapter has two slots. Source generation
-                // comes from the same validated recipient binding for P2, never
-                // from a client pose request or its local simulation.
-                if(m_uiHost && val.slotId<2) {
-                    const auto sourceGen=val.slotId==0?1u:val.connectionGeneration;
-                    m_uiHost->nativePose({val.slotId,sourceGen,val.mapEpoch,val.sequence,val.posX,val.posY,val.posZ,val.yaw,0,val.stateTimeNs},
-                        val.lifeState==LIFE_DEAD?ui::State::Dead:ui::State::Alive);
+                // Lobby map marker of the SUBJECT slot (any of 8, not the recipient). Source generation comes from the host's
+                // own session ledger (slot 0 = 1), never from a client pose request. The same subject state is sent to every
+                // recipient; publish it to the lobby once per (epoch, tick, state time), not once per recipient.
+                if(m_uiHost && val.slotId<MAX_PLAYERS) {
+                    auto& last=m_uiPoseSeen[val.slotId];
+                    const uint32_t sourceGen=val.slotId==0 ? 1u : (m_slotActive[val.slotId] ? m_slotGen[val.slotId] : 0u);
+                    if(sourceGen && !(last.valid && last.epoch==val.mapEpoch && last.gen==sourceGen && last.tick==val.serverTick && last.stateNs==val.stateTimeNs)) {
+                        last={true,val.mapEpoch,sourceGen,val.serverTick,val.stateTimeNs};
+                        m_uiHost->nativePose({val.slotId,sourceGen,val.mapEpoch,val.sequence,val.posX,val.posY,val.posZ,val.yaw,0,val.stateTimeNs},
+                            val.lifeState==LIFE_DEAD?ui::State::Dead:ui::State::Alive);
+                    }
                 }
                 if (m_playerSnapshotObserver) m_playerSnapshotObserver(true, val, encoded.size());
                 m_packetsSent.fetch_add(1, std::memory_order_relaxed);
