@@ -1,2 +1,2 @@
-Exhumed Together build 2026-11-11 23:51
-pse_together.dll sha256 858fbd50477393a0
+Exhumed Together build 2026-11-12 02:21
+pse_together.dll sha256 36f7769cd61f6571
