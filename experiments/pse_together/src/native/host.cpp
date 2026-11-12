@@ -296,6 +296,10 @@ void proxyPhase() {
     const TickContext ctx{step,(ready&pse::seam::StableWorld)!=0};
     if(step!=proxySafe) { proxySafe=step;log("proxy_safe_phase","\"safe\":%s,\"ready_flags\":%d,\"tick\":%llu",step?"true":"false",ready,g.ticks); }
     proxies->forEach([&](VisualProxyStateMachine& p) {
+        // A client's proxy that faulted on its own (quarantine) is replaced with the next snapshot (see proxyRoute), not left invisible.
+        if(p.state()==VisualProxyState::QUARANTINED && !p.teardownBarrier() && p.targetSlot()<8 && !proxyRebuild[p.targetSlot()]) {
+            proxyRebuild[p.targetSlot()]=true;log("proxy_quarantine_rebuild","\"slot\":%u",p.targetSlot());
+        }
         const auto before=p.state();
         const auto a=p.tick(&proxySeam,ctx);
         if(a==TickAction::None || (a==TickAction::NotSafe && ++proxyNotSafeLogged%600!=1) || (a==TickAction::SpawnDeferred && ++proxyDeferredLogged%120!=1)) return;
@@ -349,6 +353,7 @@ void captureNativeSnapshots() {
     // A client uses its own slot's snapshot for self state and shows the others as proxies (the router excludes the local slot).
     for(unsigned slot=0;slot<=MaxRemote;++slot) {
         if(slot && (!R(slot).exists || R(slot).p2Tick!=g.ticks))continue; // a remote that did not update this tick has nothing new to say
+        if(slot && !g.network->wantsPlayer(slot))continue; // its player left (or rejoined as someone else): no ghost of the old body for the others
         if(p16Pending(slot))continue;
         std::optional<Ctx> ctx;if(slot)ctx.emplace(slot);
         const auto& id=slot ? R().p2 : g.p1;
@@ -669,7 +674,8 @@ pse::p14::Roster p14Roster() {
     pse::p14::Roster result{};
     if (!p14Eligible()) return result;
     if (live(g.p1,primary())) result[0]={primary(),g.p1.actor,0};
-    for (unsigned s = 1; s <= MaxRemote; ++s) if (R(s).exists && live(R(s).p2, R(s).storage.bytes)) result[s] = {R(s).storage.bytes, R(s).p2.actor, s};
+    // Only bodies of connected players: enemies do not hunt the invisible body a departed player left in the level.
+    for (unsigned s = 1; s <= MaxRemote; ++s) if (R(s).exists && live(R(s).p2, R(s).storage.bytes) && g.network->wantsPlayer(s)) result[s] = {R(s).storage.bytes, R(s).p2.actor, s};
     return result;
 }
 // The Player() getter hook stays on once a P14 scope needed it: outside a scope hookGetter only forwards (scopedPlayer() is null). It used to be

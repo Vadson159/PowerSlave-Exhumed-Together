@@ -564,14 +564,34 @@ int achOrdinal(const char* key) {
 }
 // Игра зовёт SetAchievement на этой машине: свой Steam получает ключ как обычно, а ординал уходит второй стороне (один раз за ключ).
 // PSE_ACH_DRYRUN=1 (смоук/разработка): нативный вызов не делается совсем, достижения пользователя не трогаются.
+// SetAchievement (0x184110) silently refuses while the "modified game" byte 0xae90f4 is set; the pak mounter (0xb6790) sets it for any file
+// from mods/ — our player sprite pak coop_sprites_john.kpf — so with the mod NO Steam achievement was ever granted (friend's run 2026-11-12:
+// ACH_SANDALS called natively, nothing in Steam). The byte is read only by the achievement/stat calls (0x184110/0x184460/0x184640): it is
+// cleared just around our native call and restored.
+constexpr std::uint32_t ModdedFlagRva = 0xae90f4;
+constexpr std::array<Byte, 7> ModdedCheck{0x80, 0x3d, 0x93, 0x4f, 0x96, 0x00, 0x00}; // cmp byte ptr [rip+0x964f93],0 at 0x18415a
+std::uint8_t nativeAchievement(void* service, const char* key, int flag) {
+    const bool exact = std::equal(ModdedCheck.begin(), ModdedCheck.end(), s.base + 0x18415a);
+    Byte* modded = s.base + ModdedFlagRva;
+    const Byte was = exact ? *modded : 0;
+    if (exact) *modded = 0;
+    const auto result = reinterpret_cast<AchFn>(s.ach)(service, key, flag);
+    if (exact) *modded = was;
+    note("ach_native", "\"key\":\"%s\",\"result\":%u,\"modded_flag\":%u,\"profile\":%s", key ? key : "", static_cast<unsigned>(result), static_cast<unsigned>(was), exact ? "true" : "false");
+    return result;
+}
 std::uint8_t __fastcall hookAch(void* service, const char* key, int flag) {
     const int ord = thread() && s.installed ? achOrdinal(key) : -1;
     if (ord >= 0 && !s.replaying && s.active && !(s.achSeen >> ord & 1)) {
         s.achSeen |= 1u << ord; s.achLocal |= 1u << ord;
         note("ach_local", "\"key\":\"%s\",\"ordinal\":%d,\"dry_run\":%s", key, ord, s.achDryRun ? "true" : "false");
     }
-    if (s.achDryRun && ord >= 0) return 1;
-    return reinterpret_cast<AchFn>(s.ach)(service, key, flag);
+    if (s.achDryRun && ord >= 0) { // tests: Steam is never touched; what the native call WOULD have met is logged
+        note("ach_dryrun_native_state", "\"key\":\"%s\",\"modded_flag\":%u,\"profile\":%s", key, static_cast<unsigned>(*(s.base + ModdedFlagRva)),
+            std::equal(ModdedCheck.begin(), ModdedCheck.end(), s.base + 0x18415a) ? "true" : "false");
+        return 1;
+    }
+    return nativeAchievement(service, key, flag);
 }
 
 // Повтор чужого события (мовер, ключи, скрипт, разбитая ваза) — не действие этого игрока: его HUD-надписи и вспышки не показываются.
@@ -953,7 +973,7 @@ bool applyAchievement(unsigned ordinal) {
     bool done = s.achDryRun;
     if (!s.achDryRun && service) {
         s.replaying = true;
-        __try { reinterpret_cast<AchFn>(s.ach)(service, AchKey[ordinal], 0); done = true; } __except (EXCEPTION_EXECUTE_HANDLER) { done = false; }
+        __try { nativeAchievement(service, AchKey[ordinal], 0); done = true; } __except (EXCEPTION_EXECUTE_HANDLER) { done = false; }
         s.replaying = false;
     }
     note("ach_applied", "\"key\":\"%s\",\"ordinal\":%u,\"native\":%s,\"dry_run\":%s", AchKey[ordinal], ordinal, done && !s.achDryRun ? "true" : "false", s.achDryRun ? "true" : "false");
@@ -1253,7 +1273,9 @@ int collectEnemies(Enemy* out, int max) {
             return false;
         });
         for (auto it = s.enemySeen.begin(); it != s.enemySeen.end();) {
-            if (it->second == round || s.goneCount >= s.goneQueue.size()) { ++it; continue; } // a full queue: the rest goes next round
+            // Gone only after 10 collections in a row without it (~0.5 s): an actor briefly out of every sector list (relinked between sectors, a
+            // teleport) is not gone, and a client must never lose an enemy the host still has. A full queue: the rest goes next round.
+            if (round - it->second < 10 || s.goneCount >= s.goneQueue.size()) { ++it; continue; }
             s.goneQueue[(s.goneHead + s.goneCount++) % s.goneQueue.size()] = it->first;
             it = s.enemySeen.erase(it);
         }
@@ -1356,7 +1378,7 @@ int projTypeOf(const Byte* a) {
     return -1;
 }
 std::unordered_map<Byte*, std::uint32_t> hostProjIds; std::uint32_t nextProjId = 1;
-struct Mirror { std::uint64_t lastSeen{}; };
+struct Mirror { std::uint64_t lastSeen{}; bool spawned{}; };
 std::unordered_map<std::uint32_t, Mirror> mirrors;  // клиент: id хоста -> когда последний раз виден
 std::unordered_map<std::uint32_t, std::uint64_t> deadMirrors; // id, чьё отражение погибло само: до этого тика не ставим заново
 void removeActor(Byte* a) { if (!read<Byte>(a, 0x40)) reinterpret_cast<void(__fastcall*)(void*)>(s.base + RemoveRva)(a); }
@@ -1402,17 +1424,22 @@ void applyProjectiles(const Projectile* in, int count) {
     for (int i = 0; i < count; ++i) {
         const Projectile& p = in[i];
         if (!std::isfinite(p.x + p.y + p.z + p.vx + p.vy + p.vz + p.yaw) || p.sector < 0) continue;
-        mirrors[p.id].lastSeen = s.ticks;
+        auto& mirror = mirrors[p.id];
+        mirror.lastSeen = s.ticks;
         auto it = local.find(p.id);
         Byte* a = it != local.end() ? it->second : nullptr;
         if (!a) {
+            // A mirror that was here and is gone hit something HERE first (the host's projectile is still flying a little longer): it already
+            // exploded once on this screen and is not spawned again ("bursting" trap fireballs). Its id stays dead while the host still sends it.
+            if (mirror.spawned) { deadMirrors[p.id] = s.ticks + 90; mirror.spawned = false; continue; }
             auto dead = deadMirrors.find(p.id);
-            if (dead != deadMirrors.end() && s.ticks < dead->second) continue;
+            if (dead != deadMirrors.end()) { if (s.ticks < dead->second) { dead->second = s.ticks + 90; continue; } deadMirrors.erase(dead); }
             const float pos[3]{p.x, p.y, p.z};
             a = static_cast<Byte*>(reinterpret_cast<void*(__fastcall*)(void*, int, const float*, float, int)>(s.base + SpawnActorRva)(s.base + FactoryRva, p.type, pos, p.yaw, p.sector));
             if (!a) continue;
             *reinterpret_cast<int*>(a + 0x180) = static_cast<int>(ProjTag | (p.id & 0x00ffffffu));
-            note("world_projectile_spawned", "\"id\":%u,\"type\":%u,\"pos\":[%.0f,%.0f,%.0f]", p.id, p.type, p.x, p.y, p.z);
+            mirror.spawned = true;
+            static unsigned spawnedLogged = 0; if (++spawnedLogged <= 60 || spawnedLogged % 200 == 0) note("world_projectile_spawned", "\"id\":%u,\"type\":%u,\"pos\":[%.0f,%.0f,%.0f]", p.id, p.type, p.x, p.y, p.z);
         } else {
             const float dx = p.x - read<float>(a, 0x18), dy = p.y - read<float>(a, 0x1c), dz = p.z - read<float>(a, 0x20);
             if (dx * dx + dy * dy + dz * dz > 16.0f) {
@@ -1433,10 +1460,10 @@ void applyProjectiles(const Projectile* in, int count) {
         auto m = mirrors.find(id);
         if (m == mirrors.end() || s.ticks - m->second.lastSeen > 15) { removeActor(a); if (m != mirrors.end()) mirrors.erase(m); }
     }
+    for (auto it = deadMirrors.begin(); it != deadMirrors.end();) { if (s.ticks > it->second) it = deadMirrors.erase(it); else ++it; }
     for (auto it = mirrors.begin(); it != mirrors.end();) {
         if (!local.count(it->first) && s.ticks - it->second.lastSeen > 15) it = mirrors.erase(it); else ++it;
     }
-    for (auto& [id, a] : local) if (!read<Byte>(a, 0x40) && read<std::int16_t>(a, 0x17a) <= 0 && false) deadMirrors[id] = s.ticks + 60; // место под «погиб сам» (сейчас не нужно)
 }
 
 void cullLocalProjectiles() {
@@ -1885,7 +1912,7 @@ void applyPlatforms(const Platform* in, int count) {
     }
 }
 void resetWorld() {
-    sectorBusySince.clear(); sectorEverMoved.clear();
+    sectorBusySince.clear(); sectorEverMoved.clear(); mirrors.clear(); deadMirrors.clear();
     if (!thread()) return;
     s.switchHead = s.switchCount = 0; s.platformsScanned = false; s.floatSectors.clear(); s.padSectors.clear();
     s.enemySeen.clear(); s.goneHead = s.goneCount = 0; s.pickupHead = s.pickupCount = 0;

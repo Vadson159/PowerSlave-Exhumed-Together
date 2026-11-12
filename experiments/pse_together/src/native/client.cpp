@@ -279,6 +279,12 @@ struct Session {
                 p.targetSlot(),toString(a),toString(before),toString(p.state()),toString(p.quarantineReason()),p.handle() ? p.handle() : p.orphanedHandle(),t.sequence,t.serverTick,t.mapEpoch,t.connectionGeneration,t.entityId,t.entityGeneration,t.coalesced,t.x,t.y,t.z,t.yaw,
                 snapshot55::bits(t.x),snapshot55::bits(t.y),snapshot55::bits(t.z),snapshot55::bits(t.yaw),g.ticks,ctx.simulationStep?"true":"false",ctx.sectorsReady?"true":"false",p.spawnCalls(),p.updateCalls(),p.removeCalls(),p.retiredCount(),p.localGeneration());
         });
+        // A proxy that faulted on its own (quarantine) is replaced by a fresh one, like a respawned player's: that player is not left invisible
+        // for the rest of the level (native_proxy::rearmSlot allows it a few times per world).
+        proxies.forEach([&](VisualProxyStateMachine& p) {
+            const auto bit=1u<<p.targetSlot();
+            if(p.state()==VisualProxyState::QUARANTINED && !p.teardownBarrier() && !(retireMask58&bit)) retireProxy58(p.targetSlot(),"quarantined");
+        });
         sweepRetired58();
         unsigned st=0;proxies.forEach([&](VisualProxyStateMachine& p) { if(!st) st=static_cast<unsigned>(p.state())+1; }); // first (lowest slot) proxy
         status58.store((proxies.quiescent() ? 0x100u : 0u)|(st<<16),std::memory_order_release);
@@ -304,7 +310,7 @@ struct Session {
         // follows the host's level through followCheck when the host's binding changes.
         if(!followMap.empty()) log("client_order_superseded","\"order\":\"%s\"",followMap.c_str());
         followMap.clear();
-        readySent=baseline=false;exitSent=false;followedByUs=false;exitTick=0;
+        readySent=baseline=false;exitSent=false;followedByUs=false;exitTick=0;worldPending.clear();
         hostHealthValid=vitalsSynced=hostLoadoutValid=false;
         mapGate.newWorld();
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -319,7 +325,7 @@ struct Session {
     void newBindingState() {
         ++bindings;
         worldKeysPending=0;scriptPending.clear();breakPending.clear();soundPending.clear();gonePending.clear();pickupPending.clear();switchPending.clear();
-        hostHealthValid=vitalsSynced=hostLoadoutValid=false;
+        hostHealthValid=vitalsSynced=hostLoadoutValid=false;worldPending.clear();
         bindingReset16();
 #ifdef PSE_FEATURE_VISUAL_PROXY
         proxies.configureSession(slot,gen,epoch);
@@ -341,6 +347,52 @@ struct Session {
         static const bool dropMovers=[]{char v[8]{};return GetEnvironmentVariableA("PSE_DEBUG_DROP_MOVERS",v,sizeof(v))>0 && v[0]=='1';}(); // smoke only: as if the relay was lost
         if(e.eventType==w::EvMover && worldReady() && !dropMovers)
             w::applyMover(w::moverFromWire(static_cast<std::uint32_t>(e.eventValue),e.targetEntityId));
+    }
+    // The host's world snapshots of this frame, applied by worldStep() inside the next world tick.
+    std::vector<pse::BridgeWorldSnapshot> worldPending;
+    void applyWorldSnapshot(const pse::BridgeWorldSnapshot* ws) {
+                    pse::world::Projectile plist[24];int pn=0;
+                    for(const auto& ent:ws->entities) {
+                        if(ent.type!=2||pn>=24) continue;
+                        auto& q=plist[pn++];q={};
+                        q.id=ent.entityId;q.type=ent.subType;q.x=ent.posX;q.y=ent.posY;q.z=ent.posZ;q.vx=ent.velX;q.vy=ent.velY;q.vz=ent.velZ;q.yaw=ent.yaw;
+                        q.sector=static_cast<std::int16_t>(ent.stateFlags);q.anim=static_cast<std::uint16_t>(ent.meta);
+                    }
+                    pse::world::applyProjectiles(plist,pn);
+                    pse::world::Enemy list[64];int cnt=0;
+                    for(const auto& ent:ws->entities) {
+                        if(cnt>=64||ent.type!=1) continue;
+                        auto& o=list[cnt++];o={};
+                        o.id=ent.entityId;o.x=ent.posX;o.y=ent.posY;o.z=ent.posZ;o.vx=ent.velX;o.vy=ent.velY;o.vz=ent.velZ;o.yaw=ent.yaw;o.hp=static_cast<std::int16_t>(ent.health);
+                        o.sector=static_cast<std::int16_t>(ent.stateFlags>>16);o.aiState=static_cast<std::uint16_t>(ent.stateFlags&0xffff);o.anim=ent.subType;o.frame=static_cast<std::uint16_t>(ent.meta);
+                    }
+                    pse::world::applyEnemies(list,cnt);
+                    pse::world::Dynamic dlist[24];int dn=0;
+                    for(const auto& ent:ws->entities) {
+                        if(ent.type!=3||dn>=24) continue;
+                        auto& d=dlist[dn++];d={};
+                        d.id=ent.entityId;d.type=ent.subType;d.x=ent.posX;d.y=ent.posY;d.z=ent.posZ;d.vx=ent.velX;d.vy=ent.velY;d.vz=ent.velZ;d.yaw=ent.yaw;d.scale=ent.pitch;
+                        d.hp=static_cast<std::int16_t>(ent.health);d.aiState=static_cast<std::uint16_t>(ent.stateFlags&0xffff);d.sector=static_cast<std::int16_t>(ent.stateFlags>>16);
+                        d.anim=static_cast<std::uint16_t>(ent.meta>>16);d.frame=static_cast<std::uint16_t>(ent.meta&0xffff);
+                    }
+                    pse::world::applyDynamic(dlist,dn);
+                    pse::world::Platform plat[24];int pln=0; // floating platform ticks / drop pad states of the host (type 4)
+                    for(const auto& ent:ws->entities) if(ent.type==4 && pln<24 && ent.entityId<32768) plat[pln++]={static_cast<std::int16_t>(ent.entityId),static_cast<std::uint8_t>(ent.subType),ent.meta};
+                    pse::world::applyPlatforms(plat,pln);
+                    pse::world::SectorState sect[48];int sn=0; // sector heights of the host (type 5, stage 4)
+                    for(const auto& ent:ws->entities) if(ent.type==5 && sn<48 && ent.entityId<32768) sect[sn++]={static_cast<std::int16_t>(ent.entityId),ent.posX,ent.posY};
+                    pse::world::applySectors(sect,sn);
+    }
+    // The host's world on this machine changes only INSIDE a world tick: called from the local player's Update, before the engine moves
+    // actors spawned this tick into the world (0x1b61d0, end of GameInstance::Tick). Replica actors (projectiles, enemies, spawned items)
+    // used to be spawned and removed after the tick and even while the game was paused (no world tick): a mirror spawned in the last
+    // frame before a pause, then removed during the pause, stayed a dangling entry in that queue; leaving to the title and loading a save
+    // crashed the engine there (0x1b62c3, friend's run 2026-11-12). When the world does not tick (pause, menus), nothing is applied.
+    void worldStep() {
+        worldSync();
+        if(!worldReady()) { worldPending.clear();return; }
+        for(const auto& ws:worldPending) applyWorldSnapshot(&ws);
+        worldPending.clear();
     }
     void worldSync() {
         namespace w=pse::world;
@@ -550,39 +602,11 @@ struct Session {
             } else if(const auto* we=std::get_if<pse::BridgeWorldEvent>(&m)) {
                 worldEvent(*we);
             } else if(const auto* ws=std::get_if<pse::BridgeWorldSnapshot>(&m)) {
+                // Not applied here: replica actors are spawned/removed only inside a world tick (worldStep from the player's Update), see there.
                 if(ws->mapEpoch==epoch && worldReady() && ws->snapshotSequence>=lastEnemySequence) {
                     lastEnemySequence=ws->snapshotSequence;
-                    pse::world::Projectile plist[24];int pn=0;
-                    for(const auto& ent:ws->entities) {
-                        if(ent.type!=2||pn>=24) continue;
-                        auto& q=plist[pn++];q={};
-                        q.id=ent.entityId;q.type=ent.subType;q.x=ent.posX;q.y=ent.posY;q.z=ent.posZ;q.vx=ent.velX;q.vy=ent.velY;q.vz=ent.velZ;q.yaw=ent.yaw;
-                        q.sector=static_cast<std::int16_t>(ent.stateFlags);q.anim=static_cast<std::uint16_t>(ent.meta);
-                    }
-                    pse::world::applyProjectiles(plist,pn);
-                    pse::world::Enemy list[64];int cnt=0;
-                    for(const auto& ent:ws->entities) {
-                        if(cnt>=64||ent.type!=1) continue;
-                        auto& o=list[cnt++];o={};
-                        o.id=ent.entityId;o.x=ent.posX;o.y=ent.posY;o.z=ent.posZ;o.vx=ent.velX;o.vy=ent.velY;o.vz=ent.velZ;o.yaw=ent.yaw;o.hp=static_cast<std::int16_t>(ent.health);
-                        o.sector=static_cast<std::int16_t>(ent.stateFlags>>16);o.aiState=static_cast<std::uint16_t>(ent.stateFlags&0xffff);o.anim=ent.subType;o.frame=static_cast<std::uint16_t>(ent.meta);
-                    }
-                    pse::world::applyEnemies(list,cnt);
-                    pse::world::Dynamic dlist[24];int dn=0;
-                    for(const auto& ent:ws->entities) {
-                        if(ent.type!=3||dn>=24) continue;
-                        auto& d=dlist[dn++];d={};
-                        d.id=ent.entityId;d.type=ent.subType;d.x=ent.posX;d.y=ent.posY;d.z=ent.posZ;d.vx=ent.velX;d.vy=ent.velY;d.vz=ent.velZ;d.yaw=ent.yaw;d.scale=ent.pitch;
-                        d.hp=static_cast<std::int16_t>(ent.health);d.aiState=static_cast<std::uint16_t>(ent.stateFlags&0xffff);d.sector=static_cast<std::int16_t>(ent.stateFlags>>16);
-                        d.anim=static_cast<std::uint16_t>(ent.meta>>16);d.frame=static_cast<std::uint16_t>(ent.meta&0xffff);
-                    }
-                    pse::world::applyDynamic(dlist,dn);
-                    pse::world::Platform plat[24];int pln=0; // floating platform ticks / drop pad states of the host (type 4)
-                    for(const auto& ent:ws->entities) if(ent.type==4 && pln<24 && ent.entityId<32768) plat[pln++]={static_cast<std::int16_t>(ent.entityId),static_cast<std::uint8_t>(ent.subType),ent.meta};
-                    pse::world::applyPlatforms(plat,pln);
-                    pse::world::SectorState sect[48];int sn=0; // sector heights of the host (type 5, stage 4)
-                    for(const auto& ent:ws->entities) if(ent.type==5 && sn<48 && ent.entityId<32768) sect[sn++]={static_cast<std::int16_t>(ent.entityId),ent.posX,ent.posY};
-                    pse::world::applySectors(sect,sn);
+                    if(worldPending.size()>=32) worldPending.erase(worldPending.begin());
+                    worldPending.push_back(*ws);
                 }
 #ifdef PSE_FEATURE_SNAPSHOT
             } else if(const auto* c=std::get_if<pse::BridgeRespawnConfirm>(&m)) {
@@ -885,6 +909,7 @@ void __fastcall hookUpdate(void* p) {
     }
     Byte* node=read<Byte*>(p,0xd8);Byte* actor=node?read<Byte*>(node,0x28):nullptr;
     if(!actor || read<Byte*>(actor,0x10)!=node || read<void*>(actor,0x1b8)!=p || read<Byte*>(actor)!=g.base+0x52d198) { block("local_player_graph");return; }
+    if(g.session && g.session->started && !g.session->stopped) g.session->worldStep(); // inside the world tick, also while this player is dead
     if(read<std::int16_t>(actor,0x17a)<=0 || (read<unsigned>(actor,0x1c0)&0x200u)) {
         static std::uint64_t lastDeadLog=0;
         if(g.ticks-lastDeadLog>=300) { lastDeadLog=g.ticks;log("client_player_dead","\"tick\":%llu,\"health\":%d,\"flags1c0\":%u,\"pos\":[%.1f,%.1f,%.1f],\"sector\":%d",g.ticks,read<std::int16_t>(actor,0x17a),read<unsigned>(actor,0x1c0),read<float>(actor,0x18),read<float>(actor,0x1c),read<float>(actor,0x20),read<int>(actor,0x3c)); }
@@ -948,7 +973,6 @@ void __fastcall hookTick(void* self) {
 #ifdef PSE_FEATURE_VISUAL_PROXY
             if(seam58.attached()) g.session->phase58(seam58.worldReady(g.ticks));
 #endif
-            g.session->worldSync();
             }
         }
         if(g.freshIdentity && g.session) { g.freshIdentity=false;++g.identity;g.reconnectKey=0;g.session->stop("identity_reset");g.session=nullptr; } // next tick: a new Session

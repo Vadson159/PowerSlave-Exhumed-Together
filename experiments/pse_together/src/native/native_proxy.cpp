@@ -341,7 +341,10 @@ void reset(Byte* p) { reinterpret_cast<void(__fastcall*)(void*)>(at(profile::int
 #ifdef PSE_FEATURE_P8
 void animate(Instance& I) {
     using namespace pse::player_art;
-    scope();require(I.life.phase==Phase::Live && !I.faulted && !I.controllerStopped,"P8_LIVE_SCOPE");
+    scope();
+    // A proxy whose controller just stopped (its Actor was moved or removed by someone else: it is being removed and replaced) is simply not
+    // animated any more. This used to be a fault: the host's sprite went to quarantine for the rest of the level (friend's run 2026-11-12).
+    if(I.life.phase!=Phase::Live || I.faulted || I.controllerStopped) return;
     const auto& c=I.command;
     // The pose follows the command on screen (I.command: the last transform actually applied, ~160 ms behind the newest snapshot because of
     // the presentation buffer; a refused out-of-area target keeps the previous one, and so does its pose).
@@ -730,11 +733,13 @@ void permitSpawn() { g.spawnPermit.store(1,std::memory_order_release); }
 // proxy Actors itself) or after every previous Actor was fully retired in the same world. Only drops weak identities and
 // per-world caches; hooks stay installed and no engine call is made. Refused while ANY Actor may still be alive.
 void acceptLocalRespawn() { if(thread()) localRespawned=true; }
+unsigned blockedRearms[MaxSlots]{}; // per world: how many times a slot came back after its own fault (rearmSlot)
 bool rearm() {
     if(!g.installed || !thread()) return false;
     for(const auto& I:g.inst) if(!(g.stopping || quiet(I))) return false;
     unsigned previous[MaxSlots]{};for(unsigned s=0;s<MaxSlots;++s) previous[s]=static_cast<unsigned>(g.inst[s].life.phase);
     for(auto& I:g.inst) resetInstance(I);
+    for(auto& n:blockedRearms) n=0;
     g.stopping=g.inTick=g.inSweep=g.sharedFault=g.baseline=g.area=false;
     g.p1ThisTick=0;g.steps=0;
     g.hasStamp=g.hasP1Stamp=false;g.local={};g.sectors.clear();
@@ -752,7 +757,11 @@ bool rearm() {
 bool rearmSlot(unsigned slot) {
     if(!g.installed || !thread() || slot>=MaxSlots) return false;
     auto& I=g.inst[slot];
-    if(!(g.stopping || quiet(I))) return false;
+    // A slot that faulted on its own (Blocked: every weak pointer of it is already null, no native call is owed) may start a fresh proxy:
+    // otherwise that player stayed invisible until the next level. Not after a shared fault, at most 8 times per slot and world.
+    const bool blockedSlot=I.life.phase==Phase::Blocked && !g.sharedFault && !I.life.actor && !I.life.node && blockedRearms[slot]<8;
+    if(!(g.stopping || quiet(I) || blockedSlot)) return false;
+    if(blockedSlot && !g.stopping && !quiet(I)) ++blockedRearms[slot];
     const auto phase=I.life.phase;
     resetInstance(I);
     emit("native_proxy_rearmed","\"slot\":%u,\"previous_phase\":%u",slot,static_cast<unsigned>(phase));
