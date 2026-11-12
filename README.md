@@ -6,7 +6,7 @@
 **PowerSlave Exhumed (2022, KEX)** on Windows. One player hosts; friends connect
 over LAN or Radmin VPN.
 
-**[Download the mod](https://github.com/Vadson159/PowerSlave-Exhumed-Together/releases/latest)**
+**[Download the mod](https://github.com/Vadson159/PowerSlave-Exhumed-Together/releases)**
 · [Инструкция на русском](docs/INSTALL_RU.md)
 · [Report a bug](https://github.com/Vadson159/PowerSlave-Exhumed-Together/issues)
 

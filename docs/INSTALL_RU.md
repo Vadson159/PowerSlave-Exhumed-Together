@@ -6,7 +6,7 @@
 
 1. У каждого — своя Steam-версия игры и запущенный Steam. Установите одинаковую
    версию мода; для Radmin войдите в одну сеть.
-2. Скачайте ZIP из [Releases](https://github.com/Vadson159/PowerSlave-Exhumed-Together/releases/latest)
+2. Скачайте ZIP из [Releases](https://github.com/Vadson159/PowerSlave-Exhumed-Together/releases)
    и распакуйте, например, в `D:\PSE_Together`.
 3. Запустите `install.bat`. Он найдёт игру, проверит версию и создаст отдельную
    копию в папке `game`. При необходимости укажите папку из Steam → Управление
