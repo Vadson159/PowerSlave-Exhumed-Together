@@ -180,6 +180,8 @@ struct Dynamic { std::uint32_t id{}; std::uint16_t type{}, anim{0xffff}, aiState
 int collectDynamic(Dynamic* out, int max);       // хост: порождённые враги и шары (не актёры карты)
 void applyDynamic(const Dynamic* in, int count); // клиент: применить (на каждый пакет снимка, count может быть 0)
 void cullLocalDynamic();                         // клиент: убрать порождённых здесь врагов, шары и их вспышки появления
+void checkEnemies();
+void debugSpawnAi(unsigned char* anchor); // тест: PSE_DEBUG_SPAWN_AI[_CLIENT]="число" + PSE_DEBUG_SPAWN_AI_FILE — порождённые враги во время игры                             // клиент, раз в 2 с: сверка врагов со снимками хоста (world_enemy_mismatch)
 void debugFireball(unsigned char* target);               // тест (хост): PSE_DEBUG_FIREBALL="дистанция,скорость" + PSE_DEBUG_FIREBALL_FILE — огненный шар Анубиса в цель
 void debugCensusOnFile(); // тест: PSE_DEBUG_CENSUS_FILE=<путь> — переписать акторы мира, когда файл появится (один раз)
 void debugPullEnemy(unsigned char* anchor); // тест (хост): PSE_DEBUG_PULL_ENEMY="id,дистанция" — поставить врага перед актором anchor (по его взгляду)

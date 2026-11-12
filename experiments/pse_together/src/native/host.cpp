@@ -483,7 +483,7 @@ void worldSyncHost() {
         // Alone in the level (no client ready yet): still note the map enemies that vanish and the spheres taken, for whoever joins later.
         if(gameplay() && !g.failed && !g.shutdown && !g.worldExit && live(g.p1,primary())) {
             w::prepareHud();
-            if(g.ticks%3==0) { static w::Enemy scratch[128];w::collectEnemies(scratch,128); }
+            if(g.ticks%3==0) { static w::Enemy scratch[512];w::collectEnemies(scratch,512); }
             for(int id;(id=w::popEnemyGone())>=0;) enemiesGone.push_back(id);
             for(int id;(id=w::popPickup())>=0;) pickupsTaken.push_back(id);
             for(int f,e;w::popSwitch(f,e);) switchesPressed.push_back({f,e});
@@ -575,9 +575,32 @@ void worldSyncHost() {
         const int pc=w::collectProjectiles(projectiles,16);
         const bool enemyTick=worldOnTicks%3==0,platformTick=worldOnTicks%15==0;
         if(enemyTick || pc>0) {
-            static w::Enemy enemies[128];static w::Dynamic dynamics[64];
-            const int n=enemyTick ? w::collectEnemies(enemies,128) : 0;
-            const int dn=enemyTick ? w::collectDynamic(dynamics,64) : 0;
+            static w::Enemy enemies[512];static w::Dynamic dynamics[128];
+            const int n=enemyTick ? w::collectEnemies(enemies,512) : 0;
+            const int dn=enemyTick ? w::collectDynamic(dynamics,128) : 0;
+            // Every enemy of the level, not the first 128 any more (the rest stood frozen at the client). The nearest 96 to any player go every
+            // enemy tick (20 Hz); the others in a rotating window of 32 per tick, so a far one is refreshed within a second or two.
+            static int order[512];int sendCount=0;
+            {
+                static unsigned rotate=0;
+                auto nearest=[&](const w::Enemy& e) {
+                    float best=1e30f;
+                    auto consider=[&](Byte* a) { if(!a) return; const float dx=read<float>(a,0x18)-e.x,dy=read<float>(a,0x1c)-e.y,dz=read<float>(a,0x20)-e.z;best=(std::min)(best,dx*dx+dy*dy+dz*dz); };
+                    consider(g.p1.actor);for(unsigned s=1;s<=MaxRemote;++s) if(R(s).exists && g.network->wantsPlayer(s)) consider(R(s).p2.actor);
+                    return best;
+                };
+                static float dist[512];
+                for(int i=0;i<n;++i) { order[i]=i;dist[i]=nearest(enemies[i]); }
+                if(n>96) {
+                    std::partial_sort(order,order+96,order+n,[](int a,int b){return dist[a]<dist[b];});
+                    const int farCount=n-96,take=(std::min)(32,farCount);
+                    static int window[32];
+                    for(int k=0;k<take;++k) window[k]=order[96+static_cast<int>((rotate+static_cast<unsigned>(k))%static_cast<unsigned>(farCount))];
+                    rotate=(rotate+static_cast<unsigned>(take))%static_cast<unsigned>(farCount);
+                    for(int k=0;k<take;++k) order[96+k]=window[k];
+                    sendCount=96+take;
+                } else sendCount=n;
+            }
             std::vector<pse::EntitySnapshot> out;out.reserve(static_cast<std::size_t>(n)+static_cast<std::size_t>(pc)+static_cast<std::size_t>(dn));
             static w::Platform platforms[128];
             const int pn=platformTick ? w::collectPlatforms(platforms,128) : 0;
@@ -604,8 +627,8 @@ void worldSyncHost() {
                 s.stateFlags=static_cast<std::uint32_t>(static_cast<std::uint16_t>(p.sector));s.meta=p.anim;
                 out.push_back(s);
             }
-            for(int i=0;i<n;++i) {
-                const auto& e=enemies[i];pse::EntitySnapshot s;
+            for(int k=0;k<sendCount;++k) {
+                const auto& e=enemies[order[k]];pse::EntitySnapshot s;
                 s.entityId=e.id;s.generation=1;s.type=1;s.subType=e.anim;s.posX=e.x;s.posY=e.y;s.posZ=e.z;s.velX=e.vx;s.velY=e.vy;s.velZ=e.vz;s.yaw=e.yaw;
                 s.health=e.hp;s.stateFlags=static_cast<std::uint32_t>(e.aiState)|(static_cast<std::uint32_t>(static_cast<std::uint16_t>(e.sector))<<16);s.meta=e.frame;
                 out.push_back(s);
@@ -621,7 +644,7 @@ void worldSyncHost() {
     if(worldOnTicks==400) w::debugKeys(primary());
     if(worldOnTicks==500) w::debugKillEnemy();
     const unsigned dbg=firstRemote();Byte* const dbgActor=dbg?R(dbg).p2.actor:nullptr;
-    if(dbgActor && worldOnTicks>=230 && worldOnTicks%10==0) {w::debugPullEnemy(dbgActor);w::debugCensusOnFile();w::debugRemove();}
+    if(dbgActor && worldOnTicks>=230 && worldOnTicks%10==0) {w::debugPullEnemy(dbgActor);w::debugCensusOnFile();w::debugRemove();w::debugSpawnAi(dbgActor);}
     if(dbgActor && worldOnTicks>=230) w::debugFireball(dbgActor);
     static bool grantedOnce{};
     if(worldOnTicks==300 && !grantedOnce && dbg) { Ctx dctx(dbg);   // smoke only: PSE_DEBUG_P2_GRANT="weapon,ammo" gives host P2 a weapon and its ammo (once per process: the next map must carry it)

@@ -108,6 +108,7 @@ struct State {
     std::array<int, 64> goneQueue{}; std::size_t goneHead{}, goneCount{};
     std::array<int, 64> pickupQueue{}; std::size_t pickupHead{}, pickupCount{};
     std::unordered_map<int, std::uint64_t> enemySeen; // номер врага карты -> номер сбора, в котором он был в мире
+    std::unordered_map<std::uint32_t, std::uint64_t> enemyHostSeen; // клиент: номер врага карты -> тик последнего снимка хоста с ним (сверка)
     std::uint64_t enemyRound{};
     // Лифт «встань и жди» (класс Lift): пересылается, когда он здесь поехал (см. trackMovers). Двери: слежение за ходом потолка (обратный ход).
     struct PendingLift { int sector{-1}; std::uint8_t type{}; float floor{}; std::uint64_t since{}; void* mover{}; };
@@ -1325,16 +1326,17 @@ void steerEnemy(Byte* a, const Enemy& e) {
 }
 void applyEnemies(const Enemy* in, int count) {
     if (!thread() || !s.installed || !s.client || !s.active || count <= 0) return;
-    Byte* found[256]{}; std::uint32_t ids[256]{}; int known = 0;
+    // Every AI actor of the map by its number (it used to be the first 256 only: the rest were never steered and stood frozen).
+    std::unordered_map<std::uint32_t, Byte*> byId; int known = 0;
     forEachActor([&](Byte* a, int) {
-        if (read<Byte*>(a) == s.base + AiVtable && known < 256) { ids[known] = static_cast<std::uint32_t>(read<int>(a, 0x180)); found[known++] = a; }
+        if (read<Byte*>(a) == s.base + AiVtable) { byId[static_cast<std::uint32_t>(read<int>(a, 0x180))] = a; ++known; }
         return false;
     });
     s.lastEnemyTick = s.ticks;
     for (int i = 0; i < count; ++i) {
-        Byte* a = nullptr;
-        for (int k = 0; k < known; ++k) if (ids[k] == in[i].id) { a = found[k]; break; }
-        if (a) steerEnemy(a, in[i]);
+        if (in[i].hp > 0) s.enemyHostSeen[in[i].id] = s.ticks; // alive at the host (the check in checkEnemies)
+        const auto it = byId.find(in[i].id);
+        if (it != byId.end()) steerEnemy(it->second, in[i]);
     }
     if (s.ticks % 120 == 0) note("world_enemy_apply", "\"applied\":%llu,\"moved\":%llu,\"known\":%d,\"batch\":%d", s.enemyApplies, s.enemyMoves, known, count);
 }
@@ -1556,11 +1558,21 @@ int dynTypeOf(const Byte* a) {
     for (int i = 0; i < dynDefCount; ++i) if (dynDefs[i].def == def) return dynDefs[i].type;
     return -1;
 }
+// An enemy spawned during play of ANY type (not only the ones in DynTypes): an AI actor's definition starts with its type number (the
+// factory key, like 1007 of the player sprite). Such enemies were not mirrored to clients and the client's own were not removed: different
+// scorpions/enemies on each machine (friend's run 2026-11-12).
+int aiDynTypeOf(const Byte* a) {
+    if (read<Byte*>(a) != s.base + AiVtable) return -1;
+    const auto* def = read<Byte*>(a, 0x170);
+    const int t = def ? read<int>(def) : -1;
+    return t > 0 && t < 10000 ? t : -1;
+}
 bool aiType(int t) { return t < 40 || t >= 1100; }
 bool flashType(int t) { return t == 63 || t == 64 || t == 67; }
 std::unordered_map<Byte*, std::uint32_t> hostDynIds; std::uint32_t nextDynId = 1;
 std::unordered_map<std::uint32_t, std::uint64_t> dynSeen;   // клиент: id хоста -> тик, когда хост последний раз его прислал
 std::unordered_map<std::uint32_t, std::uint64_t> dynMine;   // клиент: отражения, поставленные здесь (id -> тик постановки)
+std::unordered_map<std::uint32_t, std::uint64_t> dynAiSeen; // клиент: id хоста порождённого живого врага -> тик (сверка)
 std::unordered_map<std::uint32_t, std::uint64_t> dynHold;   // клиент: отражение пропало здесь (шар подобран) — до этого тика заново не ставить
 }
 int collectDynamic(Dynamic* out, int max) {
@@ -1572,7 +1584,8 @@ int collectDynamic(Dynamic* out, int max) {
     forEachActor([&](Byte* a, int) {
         if (n >= max) return true;
         if (read<int>(a, 0x180) >= 0 || read<Byte>(a, 0x40)) return false; // актёр карты (у них свои пути) или уже убран
-        const int type = dynTypeOf(a);
+        int type = dynTypeOf(a);
+        if (type < 0) type = aiDynTypeOf(a);
         if (type < 0 || flashType(type) || !read<Byte*>(a, 0x10)) return false;
         auto it = hostDynIds.find(a);
         const std::uint32_t id = it != hostDynIds.end() ? it->second : (nextDynId++ & 0x00ffffffu);
@@ -1584,7 +1597,7 @@ int collectDynamic(Dynamic* out, int max) {
         d.vx = read<float>(a, 0xe0); d.vy = read<float>(a, 0xe4); d.vz = read<float>(a, 0xe8);
         d.yaw = read<float>(a, 0x38); d.scale = read<float>(a, 0x124); d.sector = static_cast<std::int16_t>(read<int>(a, 0x3c));
         d.hp = read<std::int16_t>(a, 0x17a); d.frame = static_cast<std::uint16_t>(read<int>(a, 0x178));
-        if (aiType(type)) { d.aiState = static_cast<std::uint16_t>(read<int>(a, 0x1b8)); const int off = animOffset(a); d.anim = off >= 0 ? static_cast<std::uint16_t>(off) : 0xffff; }
+        if (aiType(type) || read<Byte*>(a) == s.base + AiVtable) { d.aiState = static_cast<std::uint16_t>(read<int>(a, 0x1b8)); const int off = animOffset(a); d.anim = off >= 0 ? static_cast<std::uint16_t>(off) : 0xffff; }
         return false;
     });
     hostDynIds.swap(seen);
@@ -1785,7 +1798,8 @@ void applyDynamic(const Dynamic* in, int count) {
             static unsigned logged = 0; if (++logged <= 40) note("world_dynamic_spawned", "\"id\":%u,\"type\":%u,\"pos\":[%.0f,%.0f,%.0f]", d.id, d.type, d.x, d.y, d.z);
         }
         if (d.scale > 0 && d.scale < 16) *reinterpret_cast<float*>(a + 0x124) = d.scale; // шар двойного размера (A_RandomItem: Scale 2) — и больше даёт
-        if (aiType(d.type)) {
+        if (aiType(d.type) || read<Byte*>(a) == s.base + AiVtable) {
+            if (d.hp > 0) dynAiSeen[d.id] = s.ticks;
             Enemy e; e.x = d.x; e.y = d.y; e.z = d.z; e.vx = d.vx; e.vy = d.vy; e.vz = d.vz; e.yaw = d.yaw; e.hp = d.hp; e.sector = d.sector; e.aiState = d.aiState; e.anim = d.anim; e.frame = d.frame;
             steerEnemy(a, e);
         } else {
@@ -1804,13 +1818,94 @@ void applyDynamic(const Dynamic* in, int count) {
     for (auto it = dynSeen.begin(); it != dynSeen.end();) { if (s.ticks - it->second > 300) it = dynSeen.erase(it); else ++it; }
     for (auto it = dynHold.begin(); it != dynHold.end();) { if (s.ticks > it->second + 300) it = dynHold.erase(it); else ++it; }
 }
+// Client, every 2 s: are the enemies here the host's? Logs what differs (world_enemy_mismatch), so a play session shows the cause of any
+// "his mobs are not mine" report: local_only = alive here, not alive at the host (missed death/removal); host_only = alive at the host, not
+// here (removed here wrongly, never appeared); local_dynamic = an enemy spawned by this machine itself (should never live); host_dynamic_missing
+// = an enemy the host spawned during play that has no mirror here.
+// Test: PSE_DEBUG_SPAWN_AI[_CLIENT]="count" + PSE_DEBUG_SPAWN_AI_FILE — when the file appears, spawn `count` enemies of the type of the first
+// map enemy in front of `anchor` (as a vase or a dying enemy spawns one during play). Host: they must be mirrored at the client; client: its
+// own must be removed (the host decides the enemies).
+void debugSpawnAi(Byte* anchor) {
+    static bool fired = false; char v[16]{}, file[MAX_PATH]{};
+    if (fired || !thread() || !s.installed || !s.active || !anchor) return;
+    if (!GetEnvironmentVariableA(s.client ? "PSE_DEBUG_SPAWN_AI_CLIENT" : "PSE_DEBUG_SPAWN_AI", v, sizeof(v)) || !GetEnvironmentVariableA("PSE_DEBUG_SPAWN_AI_FILE", file, sizeof(file)) ||
+        GetFileAttributesA(file) == INVALID_FILE_ATTRIBUTES) return;
+    fired = true;
+    // Prefer an enemy type the fixed DynTypes list does not know (the generic path); otherwise the first map enemy's type.
+    int type = -1, known = -1; std::string types;
+    forEachActor([&](Byte* a, int) {
+        if (read<Byte*>(a) != s.base + AiVtable || read<int>(a, 0x180) < 0) return false;
+        const auto* d = read<Byte*>(a, 0x170); const int t = d ? read<int>(d) : -1;
+        if (t <= 0) return false;
+        if (types.size() < 120 && types.find(std::to_string(t) + ",") == std::string::npos) types += std::to_string(t) + ",";
+        if (std::find(DynTypes.begin(), DynTypes.end(), static_cast<std::uint16_t>(t)) == DynTypes.end()) { if (type < 0) type = t; }
+        else if (known < 0) known = t;
+        return false;
+    });
+    if (type < 0) type = known;
+    note("world_debug_ai_types", "\"map_enemy_types\":\"%s\"", types.c_str());
+    const int count = std::clamp(std::atoi(v), 1, 8);
+    const float yaw = read<float>(anchor, 0x38), fx = std::sin(yaw), fy = std::cos(yaw);
+    int made = 0;
+    for (int i = 0; i < count && type > 0; ++i) {
+        const float side = (i - (count - 1) * 0.5f) * 90.0f;
+        const float pos[3]{read<float>(anchor, 0x18) + fx * 260 + fy * side, read<float>(anchor, 0x1c) + fy * 260 - fx * side, read<float>(anchor, 0x20)};
+        const int sector = findSector(pos[0], pos[1], pos[2]);
+        if (sector < 0) continue;
+        if (reinterpret_cast<void*(__fastcall*)(void*, int, const float*, float, int)>(s.base + SpawnActorRva)(s.base + FactoryRva, type, pos, yaw + 3.14159265f, sector)) ++made;
+    }
+    note("world_debug_spawn_ai", "\"type\":%d,\"asked\":%d,\"spawned\":%d,\"in_dyn_types\":%s", type, count, made, std::find(DynTypes.begin(), DynTypes.end(), static_cast<std::uint16_t>(type)) != DynTypes.end() ? "true" : "false");
+}
+void checkEnemies() {
+    if (!thread() || !s.installed || !s.client || !s.active || !replicaOn()) return;
+    static unsigned lines = 0;
+    if (lines >= 300) return;
+    struct Item { std::int64_t id; int type; float x, y, z; };
+    std::vector<Item> localOnly, hostOnly, localDyn, dynMissing;
+    std::unordered_map<std::uint32_t, bool> localMap, localMirror;
+    forEachActor([&](Byte* a, int) {
+        if (read<Byte*>(a) != s.base + AiVtable || read<Byte>(a, 0x40)) return false;
+        const int id = read<int>(a, 0x180);
+        const auto tag = static_cast<std::uint32_t>(id);
+        const auto* def = read<Byte*>(a, 0x170);
+        const Item it{id, def ? read<int>(def) : -1, read<float>(a, 0x18), read<float>(a, 0x1c), read<float>(a, 0x20)};
+        if ((tag & 0xff000000u) == DynTag) { localMirror[tag & 0x00ffffffu] = true; return false; }
+        if (id < 0) { localDyn.push_back(it); return false; }
+        if (read<std::int16_t>(a, 0x17a) <= 0) return false;
+        localMap[tag] = true;
+        const auto seen = s.enemyHostSeen.find(tag);
+        if (seen == s.enemyHostSeen.end() || s.ticks - seen->second > 600) localOnly.push_back(it);
+        return false;
+    });
+    for (const auto& [id, t] : s.enemyHostSeen) if (s.ticks - t <= 120 && !localMap.count(id)) hostOnly.push_back({id, -1, 0, 0, 0});
+    std::string hostOnlyLocal; // what this machine has under the number of a host-only enemy (a dead copy, another class, nothing)
+    for (std::size_t i = 0; i < hostOnly.size() && i < 4; ++i) {
+        Byte* found = nullptr;
+        forEachActor([&](Byte* a, int) { if (read<int>(a, 0x180) != hostOnly[i].id) return false; found = a; return true; });
+        char b[160];
+        if (found) sprintf_s(b, "%s[%lld,\"%llx\",%d,%u,\"%x\"]", i ? "," : "", hostOnly[i].id, static_cast<unsigned long long>(read<Byte*>(found) - s.base),
+            static_cast<int>(read<std::int16_t>(found, 0x17a)), static_cast<unsigned>(read<Byte>(found, 0x40)), read<unsigned>(found, 0x16c));
+        else sprintf_s(b, "%s[%lld,\"none\"]", i ? "," : "", hostOnly[i].id);
+        hostOnlyLocal += b;
+    }
+    for (const auto& [id, t] : dynAiSeen) if (s.ticks - t <= 60 && !localMirror.count(id)) dynMissing.push_back({id, -1, 0, 0, 0});
+    if (localOnly.empty() && hostOnly.empty() && localDyn.empty() && dynMissing.empty()) return;
+    auto list = [](const std::vector<Item>& v) {
+        std::string out; char b[96];
+        for (std::size_t i = 0; i < v.size() && i < 6; ++i) { sprintf_s(b, "%s[%lld,%d,%.0f,%.0f,%.0f]", i ? "," : "", v[i].id, v[i].type, v[i].x, v[i].y, v[i].z); out += b; }
+        return out;
+    };
+    ++lines;
+    note("world_enemy_mismatch", "\"local_only\":%zu,\"host_only\":%zu,\"local_dynamic\":%zu,\"host_dynamic_missing\":%zu,\"local_only_list\":[%s],\"host_only_list\":[%s],\"local_dynamic_list\":[%s],\"missing_list\":[%s],\"host_only_here\":[%s]",
+        localOnly.size(), hostOnly.size(), localDyn.size(), dynMissing.size(), list(localOnly).c_str(), list(hostOnly).c_str(), list(localDyn).c_str(), list(dynMissing).c_str(), hostOnlyLocal.c_str());
+}
 void cullLocalDynamic() {
     if (!thread() || !s.installed || !s.client || !s.active || !replicaOn()) return;
     buildDynDefs();
     if (dynDefCount <= 0) return;
     unsigned culled = 0;
     forEachActor([&](Byte* a, int) {
-        if (read<int>(a, 0x180) >= 0 || read<Byte>(a, 0x40) || dynTypeOf(a) < 0) return false; // карта, отражение (метка > 0) или уже убран
+        if (read<int>(a, 0x180) >= 0 || read<Byte>(a, 0x40) || (dynTypeOf(a) < 0 && aiDynTypeOf(a) < 0)) return false; // карта, отражение (метка > 0), уже убран, не наш тип
         removeActor(a); ++culled;
         return false;
     });
@@ -1912,7 +2007,7 @@ void applyPlatforms(const Platform* in, int count) {
     }
 }
 void resetWorld() {
-    sectorBusySince.clear(); sectorEverMoved.clear(); mirrors.clear(); deadMirrors.clear();
+    sectorBusySince.clear(); sectorEverMoved.clear(); mirrors.clear(); deadMirrors.clear(); dynAiSeen.clear(); s.enemyHostSeen.clear();
     if (!thread()) return;
     s.switchHead = s.switchCount = 0; s.platformsScanned = false; s.floatSectors.clear(); s.padSectors.clear();
     s.enemySeen.clear(); s.goneHead = s.goneCount = 0; s.pickupHead = s.pickupCount = 0;
