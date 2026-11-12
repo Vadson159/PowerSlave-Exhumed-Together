@@ -1,0 +1,3 @@
+[submodule "tools/enet-prototype/third_party/enet"]
+	path = tools/enet-prototype/third_party/enet
+	url = https://github.com/lsalzman/enet

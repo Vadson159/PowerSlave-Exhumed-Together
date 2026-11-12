@@ -44,6 +44,7 @@ experiments/kpf_extracted/
 *.jsonl
 *.csv
 # Служебное
+.publishing/
 *.tlog
 *.recipe
 .vs/
