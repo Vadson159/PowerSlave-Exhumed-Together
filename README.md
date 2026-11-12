@@ -10,6 +10,10 @@ over LAN or Radmin VPN.
 · [Инструкция на русском](docs/INSTALL_RU.md)
 · [Report a bug](https://github.com/Vadson159/PowerSlave-Exhumed-Together/issues)
 
+Also available on [ModDB](https://www.moddb.com/mods/powerslave-exhumed-together)
+and [Nexus Mods](https://www.nexusmods.com/powerslaveexhumed/mods/6).
+Their downloads are awaiting platform review; the GitHub ZIP is available now.
+
 ## Features and status
 
 - Support for 2–8 players, visible teammates and their weapon fire.
@@ -112,10 +116,16 @@ Mod by **Vadson159 / Vadson**. Uses [ENet](https://github.com/lsalzman/enet)
 and [MinHook](https://github.com/TsudaKageyu/minhook); notices are included in
 the download. John player sprites: PC Exhumed sprites ripped by Dunkelschwamm
 for The Spriters Resource, from the supplied PowerSlave EX 2015 Co-Op Edition
-sprite set; attribution is retained inside the KPF.
+sprite set ([source mod](https://www.moddb.com/mods/powerslave-ex-co-op-edition));
+attribution is retained inside the KPF.
 
 An unofficial fan project, not affiliated with the game's developers or
 publishers. The download contains the mod and installer, without the commercial
 game. Game names and artwork belong to their respective owners. Third-party
 components retain their own licenses; publishing this repository does not
 assign a new license to those resources.
+
+## Support
+
+Optional support: **[Buy Me a Coffee](https://buymeacoffee.com/vadson)**.
+The mod is free; donations do not unlock files, updates or support services.
