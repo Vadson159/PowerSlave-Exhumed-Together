@@ -110,6 +110,14 @@ struct State {
     std::unordered_map<int, std::uint64_t> enemySeen; // номер врага карты -> номер сбора, в котором он был в мире
     std::unordered_map<std::uint32_t, std::uint64_t> enemyHostSeen; // клиент: номер врага карты -> тик последнего снимка хоста с ним (сверка)
     std::uint64_t enemyRound{};
+    // Смерть врага у хоста (EvEnemyDeath): очередь хоста; клиент — когда пришла смерть врага с этим номером (устаревший снимок, отправленный до
+    // смерти, не должен его «оживить») и сколько чужого урона по отражениям не ушло хосту.
+    struct Death { int id{}; bool extreme{}; };
+    std::array<Death, 64> deathQueue{}; std::size_t deathHead{}, deathCount{}; unsigned deathLogged{}, deathAppliedLogged{};
+    std::unordered_map<std::uint32_t, std::uint64_t> enemyDeadAt; std::uint64_t foreignHitsDropped{};
+    // Ловушки карты (kexFireballSpawner): перехват выстрела и тик последнего выстрела каждой (по номеру актора карты) — см. hookSpawnerFire.
+    void* spawnerFire{}; std::unordered_map<int, std::uint64_t> spawnerFired; std::uint64_t spawnerSkipped{}; bool trapNoLimit{};
+    int trapDebugId{-1}; unsigned trapDebugShots{}, trapDebugSkips{}; // test (debugTrapThrash): shots and skipped shots of the trap under test
     // Лифт «встань и жди» (класс Lift): пересылается, когда он здесь поехал (см. trackMovers). Двери: слежение за ходом потолка (обратный ход).
     struct PendingLift { int sector{-1}; std::uint8_t type{}; float floor{}; std::uint64_t since{}; void* mover{}; };
     std::array<PendingLift, 16> lifts{};
@@ -311,16 +319,49 @@ int enemyWireId(const void* a) {
     if ((static_cast<std::uint32_t>(id) & 0xff000000u) == SphereMirrorTag) return id;
     return -1;
 }
-// Хост: урон, нанесённый телом игрока-клиента (Puppet) или его снарядом (владелец снаряда — цель +0x28: узел -> актор, как в 2015 SetTarget).
+// Владелец снаряда (кто его выпустил): Actor+0x148 — узел владельца (узел +0x28 = актор), счётчик ссылок узла +0x40. Так его ставит сам движок
+// (ловушка 0x1e7c51; SpawnProjectile 0x1a1530 и SetTarget 0x1a17c0 — ими стреляют скрипты врагов и оружия игрока), читают реакция ИИ на урон
+// (0x19514e) и проверка столкновений (0x1a7572: владельца снаряд не задевает); снимает kexActor::Spawn при следующем использовании объекта
+// (0x1a03de). Поле +0x28 — цель объекта (за кем гонится ИИ): раньше владельца искали только в нём.
+constexpr std::size_t OwnerNodeOffset = 0x148, TargetNodeOffset = 0x28;
+constexpr std::uint32_t ProjMirrorTag = 0x70000000u; // метка отражения снаряда хоста в Actor+0x180 (см. applyProjectiles)
+bool isPuppet(const void* actor);
+std::uint32_t hostDynamicId(const Byte* actor); // хост: номер порождённого актора на проводе (см. collectDynamic); 0xffffffff — нет
+void forgetDynamicAlive(std::uint32_t wireId);  // клиент: порождённый враг хоста с этим номером на проводе больше не «жив у хоста» (сверка)
+Byte* actorByNode(void* holder, std::size_t offset) {
+    __try {
+        auto* node = read<Byte*>(holder, offset);
+        auto* owner = node ? read<Byte*>(node, 0x28) : nullptr;
+        return owner && read<Byte*>(owner, 0x10) == node ? owner : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+Byte* ownerOf(void* projectile) { return actorByNode(projectile, OwnerNodeOffset); }
+// Хост: урон, нанесённый телом игрока-клиента (Puppet) или его снарядом (владелец +0x148; прежняя проверка по +0x28 оставлена).
 bool remoteOwned(void* instigator) {
     if (!instigator || !s.remoteTest) return false;
     if (s.remoteTest(instigator)) return true;
+    if (isPuppet(instigator)) return false;
+    auto* owner = ownerOf(instigator);
+    if (owner && s.remoteTest(owner)) return true;
+    owner = actorByNode(instigator, TargetNodeOffset);
+    return owner && s.remoteTest(owner);
+}
+// Клиент: урон нанёс СВОЙ игрок — сам (мачете, пистолет, М60) или его снаряд (пламя, бомба, кобра, кольцо).
+bool ownInstigator(void* instigator) {
+    if (!instigator || !s.ownActor) return false;
+    return instigator == s.ownActor || ownerOf(instigator) == s.ownActor || actorByNode(instigator, TargetNodeOffset) == s.ownActor;
+}
+// Клиент: урон по отражению врага нанесло то, что считает сам хост, — другой враг, отражение снаряда хоста (метка в +0x180) или снаряд,
+// владелец которого враг. Только то, что опознано наверняка: всё прочее (взрыв, Fx без владельца) уходит хосту, как раньше, — иначе оружие
+// игрока, чей урон идёт не от него самого, перестало бы ранить врагов.
+bool enemyOriginated(void* instigator) {
+    if (!instigator) return false;
     __try {
-        if (read<const Byte*>(instigator) == s.base + PuppetVtable) return false;
-        auto* node = read<Byte*>(instigator, 0x28);
-        auto* owner = node ? read<Byte*>(node, 0x28) : nullptr;
-        return owner && read<Byte*>(owner, 0x10) == node && s.remoteTest(owner);
+        if (read<Byte*>(instigator) == s.base + AiVtable) return true;
+        if ((static_cast<std::uint32_t>(read<int>(instigator, 0x180)) & 0xff000000u) == ProjMirrorTag) return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    auto* owner = ownerOf(instigator);
+    return owner && read<Byte*>(owner) == s.base + AiVtable;
 }
 // Клиент: вместо ИИ - базовый тик актора (анимация, физика), без решений, атак и урона; хост присылает остальное.
 void __fastcall hookAiTick(void* actor) {
@@ -345,6 +386,14 @@ void __fastcall hookDamage(void* actor, void* instigator, int kind, short amount
     if (thread() && s.client && s.installed && s.active && !s.hostDamage && !s.replicaKill && actor && read<Byte*>(actor) == s.base + AiVtable && replicaOn()) {
         const int id = enemyWireId(actor);
         if (id >= 0) {
+            // Хосту уходят попадания игрока, а не то, что хост считает сам. Отражение снаряда врага появляется внутри стрелка: синий шар Анубиса
+            // «попадал» в самого Анубиса в момент выстрела, клиент сообщал это хосту как попадание своего игрока, и хост снимал Анубису 20
+            // здоровья за каждый его собственный выстрел (friend's run 2026-11-12: world_projectile_spawned и world_hit_local в одну и ту же мс).
+            // Раньше хосту уходил любой урон по врагу; теперь урон от врага, от отражения снаряда хоста и от снаряда врага — нет.
+            if (!ownInstigator(instigator) && enemyOriginated(instigator)) {
+                if (++s.foreignHitsDropped % 60 == 1) note("world_foreign_hit_dropped", "\"id\":%d,\"amount\":%d,\"kind\":%d,\"total\":%llu", id, static_cast<int>(amount), kind, s.foreignHitsDropped);
+                return;
+            }
             if ((read<unsigned>(actor, 0x16c) & 0x20u) && read<std::int16_t>(actor, 0x17a) > 0 && amount > 0) {
                 *reinterpret_cast<unsigned*>(static_cast<Byte*>(actor) + 0x16c) |= 0x10u; *reinterpret_cast<int*>(static_cast<Byte*>(actor) + 0x134) = 1;
                 if (s.hitCount < s.hitQueue.size()) s.hitQueue[(s.hitHead + s.hitCount++) % s.hitQueue.size()] = {id, static_cast<std::uint16_t>(amount), static_cast<std::uint8_t>(kind & 0xff)};
@@ -394,6 +443,23 @@ void __fastcall hookDamage(void* actor, void* instigator, int kind, short amount
             s.brokenSeen[id] = s.ticks;
             s.breakQueue[(s.breakHead + s.breakCount++) % s.breakQueue.size()] = id;
             if (++s.breakLogged <= 30) note("world_break_local", "\"id\":%d,\"vt_rva\":%llu,\"flags\":%u,\"kind\":%d,\"amount\":%d", id, static_cast<unsigned long long>(read<Byte*>(actor) - s.base), read<unsigned>(actor, 0x16c), kind, static_cast<int>(amount));
+        }
+        return;
+    }
+    if (thread() && s.installed && !s.client && s.active && actor && read<Byte*>(actor) == s.base + AiVtable) {
+        // Хост: этим ударом враг погиб — сразу сообщить клиентам (EvEnemyDeath). «Разрывная» смерть (здоровье ниже -2 - здоровье/16 либо урон
+        // типа 1/2: анимация дефиниции +0xc8) убирает врага из мира в тот же тик — снимок с его смертью клиент не получал вовсе, только
+        // «актор исчез» через полсекунды: у клиента живой враг замирал и пропадал (friend's run 2026-11-12: «мобы диспавнятся»).
+        const auto before = read<std::int16_t>(actor, 0x17a);
+        reinterpret_cast<DamageFn>(s.damage)(actor, instigator, kind, amount);
+        if (before > 0 && read<std::int16_t>(actor, 0x17a) <= 0) {
+            int id = read<int>(actor, 0x180);
+            if (id < 0 || id >= 100000) { const auto dyn = hostDynamicId(static_cast<Byte*>(actor)); id = dyn != 0xffffffffu ? static_cast<int>(SphereMirrorTag | dyn) : -1; }
+            const auto* def = read<Byte*>(actor, 0x170);
+            const auto* extremeAnim = def ? read<Byte*>(def, 0xc8) : nullptr;
+            const bool extreme = extremeAnim && read<Byte*>(actor, 0x108) == extremeAnim;
+            if (id >= 0 && s.deathCount < s.deathQueue.size()) s.deathQueue[(s.deathHead + s.deathCount++) % s.deathQueue.size()] = {id, extreme};
+            if (++s.deathLogged <= 60) note("world_enemy_death", "\"id\":%d,\"extreme\":%s,\"hp\":%d,\"kind\":%d", id, extreme ? "true" : "false", static_cast<int>(read<std::int16_t>(actor, 0x17a)), kind);
         }
         return;
     }
@@ -727,6 +793,51 @@ void __fastcall hookWeaponTouch(void* weapon, void* toucher) {
     if (thread() && s.installed && s.client && s.active && weapon && toucher && toucher == s.ownActor) pushTouch(TouchWeapon, read<int>(weapon, 0x180));
     original(weapon, toucher);
 }
+// Ловушки карты (kexFireballSpawner: огненные шары, лазеры, валуны). Игрок в секторе-триггере с меткой T включает ловушки с меткой T и выключает
+// ловушки с меткой T-1 (0x1bed90, каждый тик, пока он там стоит); включение взводит таймер ловушки, и она стреляет сразу (OnActivate 0x1e7400).
+// В одиночной игре игрок один и стоит в одном секторе. У хоста игроков несколько: один стоит в секторе, включающем ловушку, другой — в секторе,
+// её выключающем, и ловушка каждый тик выключается и включается заново — стреляет КАЖДЫЙ тик: сплошная «змея» шаров и звука (friend's run
+// 2026-11-12). Собственный период ловушки (тик 0x1e7200) — 120 тиков у шаров и валунов, 20 у лазера; выстрел той же ловушки (SpawnFireball
+// 0x1e7860) раньше чем через 100 / 16 тиков после предыдущего пропускается (чуть меньше периода, чтобы не съесть законный выстрел).
+constexpr std::uint32_t SpawnerFireRva = 0x1e7860, SpawnerVtable = 0x52da40, MapActorsRva = 0xa459e0, MapActorCountRva = 0xa459e8, MapActorStride = 20;
+constexpr std::array<Byte, 16> SpawnerFirePrefix{0x40, 0x53, 0x56, 0x57, 0x48, 0x83, 0xec, 0x70, 0x0f, 0x29, 0x74, 0x24, 0x60, 0x48, 0x8b, 0xf1};
+constexpr int LaserSpawnerType = 126; // defs/defines.txt: Special_FireballSpawner 25, Special_LaserSpawner 126, Special_BoulderSpawner 128
+void __fastcall hookSpawnerFire(void* spawner, int face, int poly) {
+    if (thread() && s.installed && !s.client && s.active && spawner) {
+        const int index = read<int>(spawner, 0x180);
+        auto* actors = read<Byte*>(s.base, MapActorsRva);
+        if (index >= 0 && actors && static_cast<std::uint64_t>(index) < read<std::uint64_t>(s.base, MapActorCountRva)) {
+            const std::uint64_t period = read<std::int16_t>(actors + static_cast<std::size_t>(index) * MapActorStride) == LaserSpawnerType ? 16 : 100;
+            auto& last = s.spawnerFired[index];
+            if (last && s.ticks - last < period && !s.trapNoLimit) {
+                if (++s.spawnerSkipped % 120 == 1) note("world_trap_refire_skipped", "\"actor\":%d,\"since\":%llu,\"total\":%llu", index, s.ticks - last, s.spawnerSkipped);
+                if (index == s.trapDebugId) ++s.trapDebugSkips;
+                return;
+            }
+            last = s.ticks;
+            if (index == s.trapDebugId) ++s.trapDebugShots;
+        }
+    }
+    reinterpret_cast<void(__fastcall*)(void*, int, int)>(s.spawnerFire)(spawner, face, poly);
+}
+// Тест (хост): PSE_DEBUG_TRAP_THRASH="номер ловушки карты" + PSE_DEBUG_TRAP_FILE — пока файл есть (240 тиков), каждый тик выключать и включать эту
+// ловушку родными OnDeactivate / OnActivate (vtable +0x60 / +0x58): то, что делает движок, когда один игрок стоит в секторе её включения, а
+// другой — в секторе выключения. PSE_DEBUG_TRAP_NOLIMIT=1 — без ограничителя выстрелов (поведение движка как есть: выстрел каждый тик).
+void debugTrapThrash() {
+    static int id = -2; static unsigned left = 240;
+    if (id == -2) { char v[16]{}; id = GetEnvironmentVariableA("PSE_DEBUG_TRAP_THRASH", v, sizeof(v)) ? std::atoi(v) : -1; }
+    if (id < 0 || !left || !thread() || !s.installed || s.client || !s.active) return;
+    char file[MAX_PATH]{};
+    if (!GetEnvironmentVariableA("PSE_DEBUG_TRAP_FILE", file, sizeof(file)) || GetFileAttributesA(file) == INVALID_FILE_ATTRIBUTES) return;
+    Byte* trap = nullptr;
+    forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + SpawnerVtable || read<int>(a, 0x180) != id || read<Byte>(a, 0x40)) return false; trap = a; return true; });
+    if (!trap) { left = 0; note("world_debug_trap", "\"id\":%d,\"found\":false", id); return; }
+    s.trapDebugId = id;
+    auto* vt = read<Byte**>(trap);
+    reinterpret_cast<void(__fastcall*)(void*, void*)>(vt[12])(trap, nullptr); // OnDeactivate (0x1e74f0)
+    reinterpret_cast<void(__fastcall*)(void*, void*)>(vt[11])(trap, nullptr); // OnActivate (0x1e7400): the timer is primed, the trap fires on its next tick
+    if (--left % 60 == 0) note("world_debug_trap", "\"id\":%d,\"found\":true,\"left\":%u,\"shots\":%u,\"skipped\":%u,\"limit\":%s", id, left, s.trapDebugShots, s.trapDebugSkips, s.trapNoLimit ? "false" : "true");
+}
 bool install(Byte* base, std::uint32_t simTid, Logger log, bool host) {
     s.base = base; s.tid = simTid; s.log = log;
     if (GetCurrentThreadId() != simTid) return false;
@@ -786,6 +897,11 @@ bool install(Byte* base, std::uint32_t simTid, Logger log, bool host) {
     if (host) {
         if (!std::equal(ConsumePrefix.begin(), ConsumePrefix.end(), base + ConsumeRva)) note("world_profile_mismatch", "\"site\":\"consume\"");
         else if (MH_CreateHook(base + ConsumeRva, reinterpret_cast<void*>(&hookConsume), &s.consume) != MH_OK || MH_EnableHook(base + ConsumeRva) != MH_OK) note("world_hook_failed", "\"site\":\"Consume\"");
+        // Ловушки карты стреляют не чаще собственного периода (несколько игроков в секторах включения и выключения — см. hookSpawnerFire).
+        if (!std::equal(SpawnerFirePrefix.begin(), SpawnerFirePrefix.end(), base + SpawnerFireRva)) note("world_profile_mismatch", "\"site\":\"trap_fire\"");
+        else if (MH_CreateHook(base + SpawnerFireRva, reinterpret_cast<void*>(&hookSpawnerFire), &s.spawnerFire) != MH_OK || MH_EnableHook(base + SpawnerFireRva) != MH_OK) note("world_hook_failed", "\"site\":\"TrapFire\"");
+        else note("trap_hook_ready", "\"rva\":%u", SpawnerFireRva);
+        { char v[4]{}; s.trapNoLimit = GetEnvironmentVariableA("PSE_DEBUG_TRAP_NOLIMIT", v, sizeof(v)) > 0 && v[0] == '1'; } // test only
     } else { // клиент: шары своего игрока берёт хост (у хоста на этих адресах хуки P14)
         if (!std::equal(HealthTouchPrefix.begin(), HealthTouchPrefix.end(), base + HealthTouchRva) || !std::equal(AmmoTouchPrefix.begin(), AmmoTouchPrefix.end(), base + AmmoTouchRva) ||
             !std::equal(ConsumePrefix.begin(), ConsumePrefix.end(), base + ConsumeRva)) note("world_profile_mismatch", "\"site\":\"sphere_touch\"");
@@ -1310,6 +1426,8 @@ void steerEnemy(Byte* a, const Enemy& e) {
     // The host says it is dead and here it is not: the engine's own death (Damage 0x1a1370 at hp <= 0: death animation, no longer shootable,
     // OnDeath). Writing hp alone could leave a walking "phantom" (a vase scorpion stayed alive for the client after the host killed it).
     if (e.hp <= 0 && read<std::int16_t>(a, 0x17a) > 0 && (read<unsigned>(a, 0x16c) & 0x20u)) {
+        // (The death event EvEnemyDeath normally comes first; a snapshot collected in the tick of the death can overtake it by a tick.)
+        static unsigned logged = 0; if (++logged <= 40) note("world_enemy_death_snapshot", "\"id\":%d,\"host_hp\":%d,\"hp_before\":%d", read<int>(a, 0x180), static_cast<int>(e.hp), static_cast<int>(read<std::int16_t>(a, 0x17a)));
         s.replicaKill = true;
         reinterpret_cast<DamageFn>(s.base + DamageRva)(a, nullptr, 0, static_cast<short>(read<std::int16_t>(a, 0x17a)));
         s.replicaKill = false;
@@ -1323,6 +1441,40 @@ void steerEnemy(Byte* a, const Enemy& e) {
     }
     ++s.enemyApplies;
 }
+// Клиент: смерть врага с этим номером на проводе пришла событием меньше 2 с назад (снимки и события идут разными каналами: снимок, отправленный
+// до смерти, может быть применён после неё).
+bool deadByEvent(std::uint32_t wireId) {
+    const auto it = s.enemyDeadAt.find(wireId);
+    return it != s.enemyDeadAt.end() && s.ticks - it->second < 120;
+}
+}
+bool popEnemyDeath(int& id, bool& extreme) {
+    if (!s.deathCount) return false;
+    const auto d = s.deathQueue[s.deathHead]; s.deathHead = (s.deathHead + 1) % s.deathQueue.size(); --s.deathCount;
+    id = d.id; extreme = d.extreme;
+    return true;
+}
+// Клиент: враг погиб у хоста — та же родная смерть здесь и сразу (анимация, звук, OnDeath; «разрывная» — с тем же запасом урона, что решает
+// движок в Damage 0x1a1452: здоровье ниже -2 - здоровье дефиниции/16, после неё актор убирает себя сам, как у хоста).
+bool applyEnemyDeath(int id, bool extreme) {
+    if (!thread() || !s.installed || !s.client || !s.active || id < 0) return false;
+    Byte* target = nullptr;
+    forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + AiVtable || read<int>(a, 0x180) != id || read<Byte>(a, 0x40)) return false; target = a; return true; });
+    const int hp = target ? read<std::int16_t>(target, 0x17a) : 0;
+    const bool kill = target && hp > 0 && (read<unsigned>(target, 0x16c) & 0x20u);
+    if (kill) {
+        const auto* def = read<Byte*>(target, 0x170);
+        const int over = extreme && def ? 3 + (read<std::int16_t>(def, 0x50) >> 4) : 0;
+        s.replicaKill = true;
+        reinterpret_cast<DamageFn>(s.base + DamageRva)(target, nullptr, 0, static_cast<short>(std::min(hp + over, 32767)));
+        s.replicaKill = false;
+    }
+    s.enemyDeadAt[static_cast<std::uint32_t>(id)] = s.ticks;
+    s.enemyHostSeen.erase(static_cast<std::uint32_t>(id)); // not "alive at the host" any more (the check in checkEnemies)
+    forgetDynamicAlive(static_cast<std::uint32_t>(id));
+    if (++s.deathAppliedLogged <= 60) note("world_enemy_death_applied", "\"id\":%d,\"extreme\":%s,\"found\":%s,\"killed\":%s,\"hp_before\":%d,\"removed\":%s", id, extreme ? "true" : "false",
+        target ? "true" : "false", kill ? "true" : "false", hp, target && read<Byte>(target, 0x40) ? "true" : "false");
+    return kill;
 }
 void applyEnemies(const Enemy* in, int count) {
     if (!thread() || !s.installed || !s.client || !s.active || count <= 0) return;
@@ -1334,6 +1486,7 @@ void applyEnemies(const Enemy* in, int count) {
     });
     s.lastEnemyTick = s.ticks;
     for (int i = 0; i < count; ++i) {
+        if (in[i].hp > 0 && deadByEvent(in[i].id)) continue; // a snapshot sent before the death that already arrived here: never "revive" it
         if (in[i].hp > 0) s.enemyHostSeen[in[i].id] = s.ticks; // alive at the host (the check in checkEnemies)
         const auto it = byId.find(in[i].id);
         if (it != byId.end()) steerEnemy(it->second, in[i]);
@@ -1349,7 +1502,7 @@ constexpr std::array<Byte, 16> SpawnActorPrefix{0x48, 0x89, 0x5c, 0x24, 0x20, 0x
 constexpr std::array<Byte, 16> RemovePrefix{0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x81, 0xa1, 0x6c, 0x01, 0x00, 0x00, 0x5d, 0xfc, 0xff, 0xff};
 // Только снаряды врагов/ловушек; оружие игроков (пламя, бомба Амуна, кобра) каждая сторона считает сама.
 constexpr std::array<std::uint16_t, 9> ProjTypes{18, 19, 20, 23, 26, 1008, 1010, 1012, 201};
-constexpr std::uint32_t ProjTag = 0x70000000u; // метка отражения в Actor+0x180 (у снарядов это поле не занято)
+constexpr std::uint32_t ProjTag = ProjMirrorTag; // метка отражения в Actor+0x180 (у снарядов это поле не занято)
 struct ProjDef { void* def{}; std::uint16_t type{}; };
 std::array<ProjDef, ProjTypes.size()> projDefs{};
 int projDefCount = -1; // -1: ещё не строили
@@ -1379,7 +1532,43 @@ int projTypeOf(const Byte* a) {
     for (int i = 0; i < projDefCount; ++i) if (projDefs[i].def == def) return projDefs[i].type;
     return -1;
 }
-std::unordered_map<Byte*, std::uint32_t> hostProjIds; std::uint32_t nextProjId = 1;
+// Хост: номер на проводе для порождённого во время игры актора (снаряд, враг из вазы, шар) держится за указателем на объект. Движок раздаёт
+// объекты убранных акторов заново (очередь на класс), поэтому «тот же указатель» — ещё не «тот же актор»: тот же номер остаётся, только если
+// совпали узел актора, тип и он не оказался вдруг далеко от места прошлого сбора. Иначе у клиента отражение нового актора считалось старым
+// (в том числе «уже взорвавшимся здесь» снарядом — и не ставилось вовсе).
+struct HostId { std::uint32_t id{}; std::uint16_t type{}; const Byte* node{}; float x{}, y{}, z{}; };
+bool sameIncarnation(const HostId& was, int type, const Byte* node, float x, float y, float z) {
+    const float dx = x - was.x, dy = y - was.y, dz = z - was.z;
+    return was.type == type && was.node == node && dx * dx + dy * dy + dz * dz <= 512.0f * 512.0f;
+}
+std::unordered_map<Byte*, HostId> hostProjIds; std::uint32_t nextProjId = 1;
+// Хост: кто выпустил снаряд — номер врага на проводе (номер карты или метка порождённого); -1 — не враг (ловушка, никто).
+int ownerWireId(Byte* projectile) {
+    auto* owner = ownerOf(projectile);
+    if (!owner || read<Byte*>(owner) != s.base + AiVtable || read<Byte>(owner, 0x40)) return -1;
+    const int id = read<int>(owner, 0x180);
+    if (id >= 0 && id < 100000) return id;
+    const auto dyn = hostDynamicId(owner);
+    return dyn != 0xffffffffu ? static_cast<int>(SphereMirrorTag | dyn) : -1;
+}
+// Клиент: отражению снаряда врага — тот же владелец, что у хоста (узел врага в +0x148 и ссылка на узел, как ставит движок, 0x1a15d1). Проверка
+// столкновений движка пропускает владельца (0x1a7572, 0x1a5959): без него отражение появлялось внутри стрелка и тут же взрывалось об него —
+// шар Анубиса «попадал» в самого Анубиса и не летел. Ссылку снимает сам движок при следующем использовании объекта (kexActor::Spawn 0x1a03de).
+bool linkOwner(Byte* projectile, Byte* owner) {
+    auto* node = owner ? read<Byte*>(owner, 0x10) : nullptr;
+    if (!node || read<Byte*>(node, 0x28) != owner || read<Byte*>(projectile, OwnerNodeOffset)) return false;
+    *reinterpret_cast<Byte**>(projectile + OwnerNodeOffset) = node;
+    _InterlockedIncrement(reinterpret_cast<volatile long*>(node + 0x40));
+    return true;
+}
+void setMirrorOwner(Byte* projectile, int ownerWire) {
+    static const bool skip = [] { char v[4]{}; return GetEnvironmentVariableA("PSE_DEBUG_NO_MIRROR_OWNER", v, sizeof(v)) > 0 && v[0] == '1'; }(); // test only: mirrors as before
+    if (ownerWire < 0 || skip) return;
+    Byte* owner = nullptr;
+    forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + AiVtable || read<int>(a, 0x180) != ownerWire || read<Byte>(a, 0x40)) return false; owner = a; return true; });
+    const bool linked = linkOwner(projectile, owner);
+    static unsigned logged = 0; if (++logged <= 30) note("world_projectile_owner", "\"owner\":%d,\"found\":%s,\"linked\":%s", ownerWire, owner ? "true" : "false", linked ? "true" : "false");
+}
 struct Mirror { std::uint64_t lastSeen{}; bool spawned{}; };
 std::unordered_map<std::uint32_t, Mirror> mirrors;  // клиент: id хоста -> когда последний раз виден
 std::unordered_map<std::uint32_t, std::uint64_t> deadMirrors; // id, чьё отражение погибло само: до этого тика не ставим заново
@@ -1391,23 +1580,28 @@ int collectProjectiles(Projectile* out, int max) {
     if (!thread() || !s.installed) return 0;
     buildProjDefs();
     if (projDefCount <= 0) return 0;
-    std::unordered_map<Byte*, std::uint32_t> seen;
+    std::unordered_map<Byte*, HostId> seen;
     forEachActor([&](Byte* a, int) {
-        if (n >= max) return true;
         const int type = projTypeOf(a);
         if (type < 0) return false;
         const auto* node = read<Byte*>(a, 0x10);
         if (!node || (read<Byte>(a, 0x40) && read<int>(node, 0x40) < 1)) return false; // удалён
-        auto it = hostProjIds.find(a);
-        const std::uint32_t id = it != hostProjIds.end() ? it->second : nextProjId++;
-        seen[a] = id;
+        const float x = read<float>(a, 0x18), y = read<float>(a, 0x1c), z = read<float>(a, 0x20);
+        // Every projectile of the world keeps its number, also one that does not fit into this packet. The walk used to stop at `max`: with
+        // more projectiles than that, the ones left out lost their numbers and got new ones a moment later — a second mirror of the same
+        // fireball at the client (and its sound) while the first was still flying ("stacking" at busy traps).
+        const auto it = hostProjIds.find(a);
+        const std::uint32_t id = it != hostProjIds.end() && sameIncarnation(it->second, type, node, x, y, z) ? it->second.id : nextProjId++;
+        seen[a] = {id, static_cast<std::uint16_t>(type), node, x, y, z};
+        if (n >= max) return false;
         Projectile& p = out[n++];
         p = Projectile{};
         p.id = id; p.type = static_cast<std::uint16_t>(type);
-        p.x = read<float>(a, 0x18); p.y = read<float>(a, 0x1c); p.z = read<float>(a, 0x20);
+        p.x = x; p.y = y; p.z = z;
         p.vx = read<float>(a, 0xe0); p.vy = read<float>(a, 0xe4); p.vz = read<float>(a, 0xe8);
         p.yaw = read<float>(a, 0x38); p.sector = static_cast<std::int16_t>(read<int>(a, 0x3c));
         const int off = animOffset(a); p.anim = off >= 0 ? static_cast<std::uint16_t>(off) : 0xffff;
+        p.owner = ownerWireId(a);
         return false;
     });
     hostProjIds.swap(seen);
@@ -1440,6 +1634,7 @@ void applyProjectiles(const Projectile* in, int count) {
             a = static_cast<Byte*>(reinterpret_cast<void*(__fastcall*)(void*, int, const float*, float, int)>(s.base + SpawnActorRva)(s.base + FactoryRva, p.type, pos, p.yaw, p.sector));
             if (!a) continue;
             *reinterpret_cast<int*>(a + 0x180) = static_cast<int>(ProjTag | (p.id & 0x00ffffffu));
+            setMirrorOwner(a, p.owner);
             mirror.spawned = true;
             static unsigned spawnedLogged = 0; if (++spawnedLogged <= 60 || spawnedLogged % 200 == 0) note("world_projectile_spawned", "\"id\":%u,\"type\":%u,\"pos\":[%.0f,%.0f,%.0f]", p.id, p.type, p.x, p.y, p.z);
         } else {
@@ -1491,6 +1686,7 @@ bool applyEnemyGone(int id) {
     static unsigned logged = 0;
     if (++logged <= 60) note("world_enemy_gone_applied", "\"id\":%d,\"found\":%s,\"hp\":%d,\"ai\":%s,\"vt\":\"%llx\"", id, target ? "true" : "false", target ? static_cast<int>(read<std::int16_t>(target, 0x17a)) : 0,
         target && read<Byte*>(target) == s.base + AiVtable ? "true" : "false", target ? static_cast<unsigned long long>(read<Byte*>(target) - s.base) : 0ull);
+    s.enemyHostSeen.erase(static_cast<std::uint32_t>(id)); // gone at the host: not "alive there" for the check in checkEnemies
     if (!target) return false;
     removeActor(target);
     return true;
@@ -1569,31 +1765,43 @@ int aiDynTypeOf(const Byte* a) {
 }
 bool aiType(int t) { return t < 40 || t >= 1100; }
 bool flashType(int t) { return t == 63 || t == 64 || t == 67; }
-std::unordered_map<Byte*, std::uint32_t> hostDynIds; std::uint32_t nextDynId = 1;
+std::unordered_map<Byte*, HostId> hostDynIds; std::uint32_t nextDynId = 1;
+std::uint32_t hostDynamicId(const Byte* actor) {
+    const auto it = hostDynIds.find(const_cast<Byte*>(actor));
+    return it != hostDynIds.end() && it->second.node == read<Byte*>(actor, 0x10) ? it->second.id : 0xffffffffu;
+}
+// Хост: объект порождённого актора с этим номером на проводе, если он ещё тот же актор (перед любым чтением сверить со списками секторов).
+Byte* hostDynamicActor(std::uint32_t id) {
+    for (const auto& [a, dyn] : hostDynIds) if (dyn.id == id) return a;
+    return nullptr;
+}
 std::unordered_map<std::uint32_t, std::uint64_t> dynSeen;   // клиент: id хоста -> тик, когда хост последний раз его прислал
 std::unordered_map<std::uint32_t, std::uint64_t> dynMine;   // клиент: отражения, поставленные здесь (id -> тик постановки)
 std::unordered_map<std::uint32_t, std::uint64_t> dynAiSeen; // клиент: id хоста порождённого живого врага -> тик (сверка)
 std::unordered_map<std::uint32_t, std::uint64_t> dynHold;   // клиент: отражение пропало здесь (шар подобран) — до этого тика заново не ставить
+void forgetDynamicAlive(std::uint32_t wireId) { if ((wireId & 0xff000000u) == DynTag) dynAiSeen.erase(wireId & 0x00ffffffu); }
 }
 int collectDynamic(Dynamic* out, int max) {
     int n = 0;
     if (!thread() || !s.installed) return 0;
     buildDynDefs();
     if (dynDefCount <= 0) return 0;
-    std::unordered_map<Byte*, std::uint32_t> seen;
+    std::unordered_map<Byte*, HostId> seen;
     forEachActor([&](Byte* a, int) {
-        if (n >= max) return true;
         if (read<int>(a, 0x180) >= 0 || read<Byte>(a, 0x40)) return false; // актёр карты (у них свои пути) или уже убран
         int type = dynTypeOf(a);
         if (type < 0) type = aiDynTypeOf(a);
-        if (type < 0 || flashType(type) || !read<Byte*>(a, 0x10)) return false;
-        auto it = hostDynIds.find(a);
-        const std::uint32_t id = it != hostDynIds.end() ? it->second : (nextDynId++ & 0x00ffffffu);
-        seen[a] = id;
+        const auto* node = read<Byte*>(a, 0x10);
+        if (type < 0 || flashType(type) || !node) return false;
+        const float x = read<float>(a, 0x18), y = read<float>(a, 0x1c), z = read<float>(a, 0x20);
+        const auto it = hostDynIds.find(a);   // every one keeps its number, also beyond `max` (see collectProjectiles)
+        const std::uint32_t id = it != hostDynIds.end() && sameIncarnation(it->second, type, node, x, y, z) ? it->second.id : (nextDynId++ & 0x00ffffffu);
+        seen[a] = {id, static_cast<std::uint16_t>(type), node, x, y, z};
+        if (n >= max) return false;
         Dynamic& d = out[n++];
         d = Dynamic{};
         d.id = id; d.type = static_cast<std::uint16_t>(type);
-        d.x = read<float>(a, 0x18); d.y = read<float>(a, 0x1c); d.z = read<float>(a, 0x20);
+        d.x = x; d.y = y; d.z = z;
         d.vx = read<float>(a, 0xe0); d.vy = read<float>(a, 0xe4); d.vz = read<float>(a, 0xe8);
         d.yaw = read<float>(a, 0x38); d.scale = read<float>(a, 0x124); d.sector = static_cast<std::int16_t>(read<int>(a, 0x3c));
         d.hp = read<std::int16_t>(a, 0x17a); d.frame = static_cast<std::uint16_t>(read<int>(a, 0x178));
@@ -1609,7 +1817,7 @@ int takePickup(int id, Byte* body) {
     Byte* target = nullptr;
     const bool dynamic = (static_cast<std::uint32_t>(id) & 0xff000000u) == SphereMirrorTag;
     Byte* wanted = nullptr;
-    if (dynamic) for (const auto& [a, dyn] : hostDynIds) if (dyn == (static_cast<std::uint32_t>(id) & 0x00ffffffu)) { wanted = a; break; }
+    if (dynamic) wanted = hostDynamicActor(static_cast<std::uint32_t>(id) & 0x00ffffffu);
     if (dynamic && !wanted) return 0;
     // Only a sphere still in the world (the pointer of a dynamic one is checked against the sector lists before any read of it).
     forEachActor([&](Byte* a, int) {
@@ -1752,7 +1960,7 @@ bool applyHit(int id, int amount, int kind, Byte* body) {
     if (!thread() || !s.installed || s.client || !s.active || id < 0 || amount <= 0) return false;
     const bool dynamic = (static_cast<std::uint32_t>(id) & 0xff000000u) == SphereMirrorTag;
     Byte* wanted = nullptr;
-    if (dynamic) { for (const auto& [a, dyn] : hostDynIds) if (dyn == (static_cast<std::uint32_t>(id) & 0x00ffffffu)) { wanted = a; break; } if (!wanted) return false; }
+    if (dynamic) { wanted = hostDynamicActor(static_cast<std::uint32_t>(id) & 0x00ffffffu); if (!wanted) return false; }
     Byte* target = nullptr;
     forEachActor([&](Byte* a, int) {
         if (dynamic ? a != wanted : read<int>(a, 0x180) != id) return false;
@@ -1784,6 +1992,7 @@ void applyDynamic(const Dynamic* in, int count) {
     for (int i = 0; i < count; ++i) {
         const Dynamic& d = in[i];
         if (!std::isfinite(d.x + d.y + d.z + d.vx + d.vy + d.vz + d.yaw + d.scale) || d.sector < 0) continue;
+        if (d.hp > 0 && deadByEvent(DynTag | (d.id & 0x00ffffffu))) continue; // sent before its death arrived here: neither revived nor set up again
         dynSeen[d.id] = s.ticks;
         auto it = local.find(d.id);
         Byte* a = it != local.end() ? it->second : nullptr;
@@ -1846,15 +2055,17 @@ void debugSpawnAi(Byte* anchor) {
     note("world_debug_ai_types", "\"map_enemy_types\":\"%s\"", types.c_str());
     const int count = std::clamp(std::atoi(v), 1, 8);
     const float yaw = read<float>(anchor, 0x38), fx = std::sin(yaw), fy = std::cos(yaw);
-    int made = 0;
+    int made = 0; std::string numbers; // +0x180 of each spawned enemy: -1, also when the engine handed out the object of a removed map enemy
     for (int i = 0; i < count && type > 0; ++i) {
         const float side = (i - (count - 1) * 0.5f) * 90.0f;
         const float pos[3]{read<float>(anchor, 0x18) + fx * 260 + fy * side, read<float>(anchor, 0x1c) + fy * 260 - fx * side, read<float>(anchor, 0x20)};
         const int sector = findSector(pos[0], pos[1], pos[2]);
         if (sector < 0) continue;
-        if (reinterpret_cast<void*(__fastcall*)(void*, int, const float*, float, int)>(s.base + SpawnActorRva)(s.base + FactoryRva, type, pos, yaw + 3.14159265f, sector)) ++made;
+        if (auto* made_actor = static_cast<Byte*>(reinterpret_cast<void*(__fastcall*)(void*, int, const float*, float, int)>(s.base + SpawnActorRva)(s.base + FactoryRva, type, pos, yaw + 3.14159265f, sector))) {
+            numbers += (made++ ? "," : "") + std::to_string(read<int>(made_actor, 0x180));
+        }
     }
-    note("world_debug_spawn_ai", "\"type\":%d,\"asked\":%d,\"spawned\":%d,\"in_dyn_types\":%s", type, count, made, std::find(DynTypes.begin(), DynTypes.end(), static_cast<std::uint16_t>(type)) != DynTypes.end() ? "true" : "false");
+    note("world_debug_spawn_ai", "\"type\":%d,\"asked\":%d,\"spawned\":%d,\"in_dyn_types\":%s,\"numbers\":[%s]", type, count, made, std::find(DynTypes.begin(), DynTypes.end(), static_cast<std::uint16_t>(type)) != DynTypes.end() ? "true" : "false", numbers.c_str());
 }
 void checkEnemies() {
     if (!thread() || !s.installed || !s.client || !s.active || !replicaOn()) return;
@@ -2011,15 +2222,20 @@ void resetWorld() {
     if (!thread()) return;
     s.switchHead = s.switchCount = 0; s.platformsScanned = false; s.floatSectors.clear(); s.padSectors.clear();
     s.enemySeen.clear(); s.goneHead = s.goneCount = 0; s.pickupHead = s.pickupCount = 0;
-    hostDynIds.clear(); dynSeen.clear(); dynMine.clear(); dynHold.clear();
+    hostDynIds.clear(); hostProjIds.clear(); dynSeen.clear(); dynMine.clear(); dynHold.clear();
+    s.enemyDeadAt.clear(); s.spawnerFired.clear(); s.deathHead = s.deathCount = 0;
     for (auto& l : s.lifts) l.sector = -1;
     s.doors.clear(); s.reopen.clear();
     s.pickupAsked.clear(); s.touchAsked.clear(); s.touchHead = s.touchCount = 0; s.hitHead = s.hitCount = 0; s.selfHead = s.selfCount = 0;
     s.lastCheckpoint = -1; s.cpHead = s.cpCount = 0;
 }
 void debugFireball(Byte* target) {
-    static bool read_env = false; static float dist = 300, speed = 500; static bool on = false; static std::uint64_t last = 0, ticks = 0;
-    if (!read_env) { read_env = true; char v[48]{}; if (GetEnvironmentVariableA("PSE_DEBUG_FIREBALL", v, sizeof(v))) { on = true; sscanf_s(v, "%f,%f", &dist, &speed); } }
+    static bool read_env = false; static float dist = 300, speed = 500; static bool on = false; static std::uint64_t last = 0, ticks = 0; static int ownerId = -1;
+    if (!read_env) {
+        read_env = true; char v[48]{};
+        if (GetEnvironmentVariableA("PSE_DEBUG_FIREBALL", v, sizeof(v))) { on = true; sscanf_s(v, "%f,%f", &dist, &speed); }
+        if (GetEnvironmentVariableA("PSE_DEBUG_FIREBALL_OWNER", v, sizeof(v))) ownerId = std::atoi(v); // the map enemy that "fires" it (as an Anubis does)
+    }
     if (!on || !thread() || !s.installed || !target) return;
     ++ticks;
     char file[400]{};
@@ -2028,6 +2244,24 @@ void debugFireball(Byte* target) {
     last = ticks;
     buildProjDefs();
     if (!projProfile()) return;
+    if (ownerId >= 0) {
+        // Like an enemy's own shot: the fireball appears INSIDE the enemy, owned by it (so it does not hit its shooter), and flies at the target.
+        Byte* owner = nullptr;
+        forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + AiVtable || read<int>(a, 0x180) != ownerId || read<Byte>(a, 0x40) || read<std::int16_t>(a, 0x17a) <= 0) return false; owner = a; return true; });
+        if (!owner) return;
+        const float from[3]{read<float>(owner, 0x18), read<float>(owner, 0x1c), read<float>(owner, 0x20) + 48.0f};
+        float dx = read<float>(target, 0x18) - from[0], dy = read<float>(target, 0x1c) - from[1], dz = read<float>(target, 0x20) + 48.0f - from[2];
+        const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (!(len > 1.0f)) return;
+        dx /= len; dy /= len; dz /= len;
+        auto* shot = static_cast<Byte*>(reinterpret_cast<void*(__fastcall*)(void*, int, const float*, float, int)>(s.base + SpawnActorRva)(s.base + FactoryRva, 18, from, std::atan2(dx, dy), read<int>(owner, 0x3c)));
+        if (!shot) { note("world_debug_fireball", "\"ok\":false,\"owner\":%d", ownerId); return; }
+        *reinterpret_cast<float*>(shot + 0xe0) = dx * speed; *reinterpret_cast<float*>(shot + 0xe4) = dy * speed; *reinterpret_cast<float*>(shot + 0xe8) = dz * speed;
+        const bool linked = linkOwner(shot, owner);
+        note("world_debug_fireball", "\"ok\":true,\"owner\":%d,\"linked\":%s,\"owner_hp\":%d,\"pos\":[%.0f,%.0f,%.0f],\"speed\":%.0f", ownerId, linked ? "true" : "false",
+             static_cast<int>(read<std::int16_t>(owner, 0x17a)), from[0], from[1], from[2], speed);
+        return;
+    }
     const float yaw = read<float>(target, 0x38), fx = std::sin(yaw), fy = std::cos(yaw);
     const float pos[3]{read<float>(target, 0x18) + fx * dist, read<float>(target, 0x1c) + fy * dist, read<float>(target, 0x20) + 48.0f};
     const int sector = read<int>(target, 0x3c);

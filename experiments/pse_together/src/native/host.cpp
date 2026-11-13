@@ -523,6 +523,7 @@ void worldSyncHost() {
         else if(r.interactionType==w::ReqScript) { const auto c=w::unpackScript(static_cast<int>(r.targetEntityId&0xffff),r.targetGeneration,static_cast<std::uint16_t>(r.targetEntityId>>16));w::applyScript(c.num,g.p1.actor,&c); } // the client crossed a story trigger: the host's player plays the scene too
     }
     for(int id;(id=w::popBreak())>=0;) g.network->publishWorldEvent(w::EvBreak,0,0,id); // a vase/urn broke here (host or its P2 body): everyone breaks it
+    { int id=-1;bool extreme=false;while(w::popEnemyDeath(id,extreme)) g.network->publishWorldEvent(w::EvEnemyDeath,0,extreme?1u:0u,id); } // an enemy died here: the same native death at every client, at once
     for(int id;(id=w::popCheckpoint())>=0;) markCheckpoint16(0,id); // the host's own scarab
     for(auto snd=w::popSound();snd!=0xffffffffu;snd=w::popSound()) g.network->publishWorldEvent(w::EvSound,0,0,static_cast<std::int32_t>(snd)); // the host's own player
     // Enemies of the map gone here and spheres of the map taken here: once to everyone now, and again to a client that became ready later
@@ -571,8 +572,8 @@ void worldSyncHost() {
     {
         // Milestone 3: the host owns AI and damage; the client only mirrors. Enemies go out at 20 Hz; enemy projectiles are fast, so while
         // any exist they go out EVERY tick (first in the snapshot = first batch) - a fireball must be seen in flight to be dodged.
-        static w::Projectile projectiles[16];
-        const int pc=w::collectProjectiles(projectiles,16);
+        static w::Projectile projectiles[48];   // (it was 16: more than that at once lost their numbers, see collectProjectiles)
+        const int pc=w::collectProjectiles(projectiles,48);
         const bool enemyTick=worldOnTicks%3==0,platformTick=worldOnTicks%15==0;
         if(enemyTick || pc>0) {
             static w::Enemy enemies[512];static w::Dynamic dynamics[128];
@@ -625,6 +626,7 @@ void worldSyncHost() {
                 const auto& p=projectiles[i];pse::EntitySnapshot s;
                 s.entityId=p.id;s.generation=1;s.type=2;s.subType=p.type;s.posX=p.x;s.posY=p.y;s.posZ=p.z;s.velX=p.vx;s.velY=p.vy;s.velZ=p.vz;s.yaw=p.yaw;
                 s.stateFlags=static_cast<std::uint32_t>(static_cast<std::uint16_t>(p.sector));s.meta=p.anim;
+                s.health=p.owner;   // the enemy that fired it (wire number, -1 = a trap / nobody): the mirror must not hit its own shooter
                 out.push_back(s);
             }
             for(int k=0;k<sendCount;++k) {
@@ -646,6 +648,7 @@ void worldSyncHost() {
     const unsigned dbg=firstRemote();Byte* const dbgActor=dbg?R(dbg).p2.actor:nullptr;
     if(dbgActor && worldOnTicks>=230 && worldOnTicks%10==0) {w::debugPullEnemy(dbgActor);w::debugCensusOnFile();w::debugRemove();w::debugSpawnAi(dbgActor);}
     if(dbgActor && worldOnTicks>=230) w::debugFireball(dbgActor);
+    if(worldOnTicks>=230) w::debugTrapThrash();
     static bool grantedOnce{};
     if(worldOnTicks==300 && !grantedOnce && dbg) { Ctx dctx(dbg);   // smoke only: PSE_DEBUG_P2_GRANT="weapon,ammo" gives host P2 a weapon and its ammo (once per process: the next map must carry it)
         grantedOnce=true;char v[32]{};int wp=-1,am=0;

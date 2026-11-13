@@ -162,6 +162,7 @@ struct Session {
     bool started{},stopped{},active{},readySent{},baseline{},reconnectPending{};
     std::uint16_t worldKeysPending{};std::uint32_t worldOnTicks{},lastEnemySequence{},achPending{};unsigned useHold{};std::vector<pse::world::ScriptCall> scriptPending;std::vector<int> breakPending;std::vector<std::pair<unsigned,std::uint32_t>> soundPending; // (slot, sound) of other players to play at their proxy
     std::vector<int> gonePending,pickupPending; // map enemies gone at the host, map spheres taken there
+    std::vector<std::pair<int,bool>> deathPending; // enemies that died at the host (wire number, extreme death): the same native death here
     int difficultyPending{-1}; // the host's difficulty (EvDifficulty), adopted when the world is ready
     std::vector<std::pair<int,int>> switchPending; // (face, event) of switches pressed at the host: their texture here
     std::array<std::uint16_t,8> hostAmmo{};std::uint8_t hostOwned{};bool hostLoadoutValid{}; // P2's real ammo / owned weapons (host) -> this client's Player
@@ -324,7 +325,7 @@ struct Session {
     // the host builds this player's body afresh (generation 1), every other player's proxy is replaced by its next snapshot.
     void newBindingState() {
         ++bindings;
-        worldKeysPending=0;scriptPending.clear();breakPending.clear();soundPending.clear();gonePending.clear();pickupPending.clear();switchPending.clear();
+        worldKeysPending=0;scriptPending.clear();breakPending.clear();soundPending.clear();gonePending.clear();deathPending.clear();pickupPending.clear();switchPending.clear();
         hostHealthValid=vitalsSynced=hostLoadoutValid=false;worldPending.clear();
         bindingReset16();
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -338,6 +339,7 @@ struct Session {
         if(e.eventType==w::EvKeys) { worldKeysPending|=static_cast<std::uint16_t>(e.eventValue&0xf);return; } // applied when the world is ready
         if(e.eventType==w::EvSound && e.sourceEntityId<8 && e.sourceEntityId!=slot && e.eventValue>=0 && soundPending.size()<64) { soundPending.push_back({e.sourceEntityId,static_cast<std::uint32_t>(e.eventValue)});return; }
         if(e.eventType==w::EvEnemyGone && e.eventValue>=0 && gonePending.size()<512) { gonePending.push_back(e.eventValue);return; }
+        if(e.eventType==w::EvEnemyDeath && e.eventValue>=0 && deathPending.size()<256) { deathPending.push_back({e.eventValue,e.targetEntityId!=0});return; }
         if(e.eventType==w::EvPickup && e.eventValue>=0 && pickupPending.size()<512) { pickupPending.push_back(e.eventValue);return; }
         if(e.eventType==w::EvDifficulty && e.eventValue>=0 && e.eventValue<8) { difficultyPending=e.eventValue;return; }
         if(e.eventType==w::EvSwitch && e.eventValue>=0 && switchPending.size()<256) { switchPending.push_back({e.eventValue,static_cast<int>(e.targetEntityId)});return; }
@@ -356,7 +358,7 @@ struct Session {
                         if(ent.type!=2||pn>=24) continue;
                         auto& q=plist[pn++];q={};
                         q.id=ent.entityId;q.type=ent.subType;q.x=ent.posX;q.y=ent.posY;q.z=ent.posZ;q.vx=ent.velX;q.vy=ent.velY;q.vz=ent.velZ;q.yaw=ent.yaw;
-                        q.sector=static_cast<std::int16_t>(ent.stateFlags);q.anim=static_cast<std::uint16_t>(ent.meta);
+                        q.sector=static_cast<std::int16_t>(ent.stateFlags);q.anim=static_cast<std::uint16_t>(ent.meta);q.owner=ent.health;
                     }
                     pse::world::applyProjectiles(plist,pn);
                     pse::world::Enemy list[64];int cnt=0;
@@ -431,6 +433,8 @@ struct Session {
         for(const auto& f:soundPending) w::playPlayerSound(pse::native_proxy::actorOf(f.first),f.second); // another player's jump, shot, pain ... at its proxy
         soundPending.clear();
         for(auto snd=w::popSound();snd!=0xffffffffu;snd=w::popSound()) sendWorld(w::ReqSound,snd,0); // this player's own sounds: the host and the others hear them
+        for(const auto& [id,extreme]:deathPending) w::applyEnemyDeath(id,extreme); // before "gone": a torn enemy dies here by itself, as at the host
+        deathPending.clear();
         for(const int id:gonePending) w::applyEnemyGone(id);
         gonePending.clear();
         for(const int id:pickupPending) w::applyPickup(id);

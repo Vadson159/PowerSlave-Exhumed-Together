@@ -644,7 +644,28 @@ void beforePool(void* self) {
     emit("native_pool_return_entry","\"slot\":%u,\"valid_scope\":%s,\"all_actor_weak_pointers_null\":true,\"actor_reads_after_entry\":false",I->slot,controlled&&facts?"true":"false");
     if(!controlled || !facts) block(*I,"POOL_RETURN_OUTSIDE_CONTROLLED_SWEEP");
 }
+bool keepPoolNumber=false; // test only: PSE_DEBUG_KEEP_POOL_ID=1 leaves the stale number, to reproduce the engine's behaviour (tools/smoke_r10.py)
+// Is this pooled object a kexSlaveActor? The engine's own test (as in SpawnActor 0x1d4a37): the object's class info (vtable[0]) and its
+// parents (+0x20) are compared by class number (+8) with kexSlaveActor's (class info 0xa432d8). The sweep returns EVERY kexSlaveObject to
+// the pool, also movers that are much smaller than an Actor (a door is 0xf0 bytes, a lift 0xf8, an Actor 0x1b8): a write at +0x180 of
+// those is a write past the end of their heap block (the first version of this fix did exactly that: heap corruption, a crash in ENet).
+bool pooledActor(void* self) noexcept {
+    __try {
+        const int actorClass=read<int>(g.base,0xa432d8+8);
+        auto* info=reinterpret_cast<Byte*(__fastcall*)(void*)>(read<void**>(self)[0])(self);
+        for(unsigned depth=0;info && depth<16;++depth,info=read<Byte*>(info,0x20)) if(read<int>(info,8)==actorClass) return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return false;
+}
 std::uintptr_t __fastcall poolReturn(void* factory,void* self) {
+    // The engine keeps removed objects in a per-class queue (this function, called only by the end-of-tick sweep 0x1b6385) and hands
+    // Actors out again in SpawnActor 0x1d4780 / 0x1d4b30 / 0x1d50b0 WITHOUT running the constructor: +0x180 (the map actor number, -1
+    // for anything spawned during play) kept the number of the dead map actor. A vase scorpion that got the object of dead map enemy 62
+    // was "map enemy 62" again: the host sent it as a map enemy the client no longer had (invisible enemy), the client kept its own such
+    // scorpion as a map actor (a phantom without AI), a puff with a vase's number made the host report that vase "gone" over and over
+    // (friend's run 2026-11-12). The number is the map's, not the object's: cleared here, so everything spawned during play has -1
+    // again, as after the constructor (0x19f1ac). Actors only (see pooledActor).
+    if(self && !keepPoolNumber && pooledActor(self)) *reinterpret_cast<int*>(static_cast<Byte*>(self)+0x180)=-1;
     guard(beforePool,self);return reinterpret_cast<Binary>(g.original[profile::pool_return])(factory,self);
 }
 void beginSweep(void*) { if(thread() && g.inTick && !g.stopping) { requireShared(!g.inSweep,"NESTED_SWEEP");g.inSweep=true; } }
@@ -708,6 +729,7 @@ bool quiet(const Instance& I) { return I.life.phase==Phase::Retired || I.life.ph
 bool install(Byte* image,DWORD simulationTid,Journal journal,unsigned /*remoteSlot (legacy, ignored)*/,bool hostMode) {
     if(g.installed || !image || GetCurrentThreadId()!=simulationTid) return false;
     g.base=image;g.tid=simulationTid;g.journal=journal;g.hostMode=hostMode;
+    { char v[4]{};keepPoolNumber=GetEnvironmentVariableA("PSE_DEBUG_KEEP_POOL_ID",v,sizeof(v))>0 && v[0]=='1'; }
     for(std::size_t i=0;i<profile::Count;++i) { if(hostMode && i==profile::puppet_tick) continue; /* already detoured by the host DLL */ if(!prefix(static_cast<profile::Index>(i))) { blockAll("NATIVE_PROXY_PREFIX");return false; } }
     std::vector<std::pair<profile::Index,void*>> hooks={
         {profile::actor_tick,reinterpret_cast<void*>(actorTick)},

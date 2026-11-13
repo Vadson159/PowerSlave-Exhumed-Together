@@ -63,6 +63,11 @@ void playPlayerSound(unsigned char* actor, std::uint32_t sound); // сыграт
 constexpr std::uint16_t EvEnemyGone = 9;   // host -> client: eventValue=номер актора карты
 // Шар здоровья/патронов карты, подобранный у хоста любым игроком: у остальных он исчезает (иначе у них он оставался и брался «впустую»).
 constexpr std::uint16_t EvPickup = 10;     // host -> client: eventValue=номер актора карты
+// Враг погиб у хоста: клиент сразу проигрывает ту же родную смерть (обычную или «разрывную» — после неё актор убирает себя сам). Раньше смерть
+// приходила только снимком здоровья, а разорванный враг исчезал у хоста в тот же тик и снимка не было: у клиента он замирал и пропадал.
+constexpr std::uint16_t EvEnemyDeath = 13; // host -> client: eventValue=номер врага на проводе (как у ReqHit), target=1 — «разрывная» смерть
+bool popEnemyDeath(int& id, bool& extreme); // хост: враг, погибший здесь с прошлого вызова
+bool applyEnemyDeath(int id, bool extreme); // клиент: родная смерть своего отражения этого врага; false — его нет / уже мёртв
 int popEnemyGone();                        // хост: номер врага карты, пропавшего из мира с прошлого сбора; -1 — нет
 bool applyEnemyGone(int id);               // клиент: убрать у себя врага карты с этим номером
 int popPickup();                           // хост: номер подобранного шара карты; -1 — нет
@@ -169,7 +174,9 @@ void debugKeys(unsigned char* player);
 void debugKillEnemy(); // тест (хост): PSE_DEBUG_KILL=<spawn id> — убить врага вызовом движка
 void debugHit(unsigned char* own); // тест (клиент): PSE_DEBUG_HIT_CLIENT="id,урон" + PSE_DEBUG_HIT_FILE — попадание своего игрока во врага карты
 // Снаряды врагов (Веха 3): хост рассылает их (тип по дефиниции актора), клиент ставит у себя отражение с меткой и убирает пропавшие.
-struct Projectile { std::uint32_t id{}; std::uint16_t type{}, anim{0xffff}; float x{}, y{}, z{}, vx{}, vy{}, vz{}, yaw{}; std::int16_t sector{}; };
+// owner: враг, выпустивший снаряд (номер на проводе, как у ReqHit: номер карты или 0x60000000|номер порождённого; -1 — ловушка/никто): отражение у
+// клиента получает того же владельца и, как у хоста, не сталкивается со стрелком.
+struct Projectile { std::uint32_t id{}; std::uint16_t type{}, anim{0xffff}; float x{}, y{}, z{}, vx{}, vy{}, vz{}, yaw{}; std::int16_t sector{}; std::int32_t owner{-1}; };
 int collectProjectiles(Projectile* out, int max);        // хост: снаряды врагов в мире
 void applyProjectiles(const Projectile* in, int count);  // клиент: применить (вызывать на каждый пакет, count может быть 0)
 void cullLocalProjectiles();                             // клиент: удалить снаряды врагов, выпущенные локальным (заглушённым) ИИ
@@ -182,7 +189,8 @@ void applyDynamic(const Dynamic* in, int count); // клиент: примени
 void cullLocalDynamic();                         // клиент: убрать порождённых здесь врагов, шары и их вспышки появления
 void checkEnemies();
 void debugSpawnAi(unsigned char* anchor); // тест: PSE_DEBUG_SPAWN_AI[_CLIENT]="число" + PSE_DEBUG_SPAWN_AI_FILE — порождённые враги во время игры                             // клиент, раз в 2 с: сверка врагов со снимками хоста (world_enemy_mismatch)
-void debugFireball(unsigned char* target);               // тест (хост): PSE_DEBUG_FIREBALL="дистанция,скорость" + PSE_DEBUG_FIREBALL_FILE — огненный шар Анубиса в цель
+void debugFireball(unsigned char* target);               // тест (хост): PSE_DEBUG_FIREBALL="дистанция,скорость" + PSE_DEBUG_FIREBALL_FILE — огненный шар Анубиса в цель; PSE_DEBUG_FIREBALL_OWNER=<номер врага> — шар «выпускает» этот враг (появляется в нём, он владелец)
+void debugTrapThrash();                                  // тест (хост): PSE_DEBUG_TRAP_THRASH=<номер ловушки> + PSE_DEBUG_TRAP_FILE — каждый тик выключать и включать ловушку карты (как двое игроков в секторах включения и выключения)
 void debugCensusOnFile(); // тест: PSE_DEBUG_CENSUS_FILE=<путь> — переписать акторы мира, когда файл появится (один раз)
 void debugPullEnemy(unsigned char* anchor); // тест (хост): PSE_DEBUG_PULL_ENEMY="id,дистанция" — поставить врага перед актором anchor (по его взгляду)
 // Нативный телепорт актора (как делает прокси): позиция, LinkSector при смене сектора, кэш пола/потолка, сброс интерполянтов.
