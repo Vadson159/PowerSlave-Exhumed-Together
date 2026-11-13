@@ -642,6 +642,7 @@ void worldSyncHost() {
     while(w::popMover(m)) g.network->publishWorldEvent(w::EvMover,m.cls,static_cast<std::uint32_t>(m.sector),static_cast<std::int32_t>(w::moverToWire(m)));
     if(worldOnTicks==240) w::census("host_world_live");
     if(worldOnTicks==200) w::debugTeleport(g.p1.actor);
+    w::debugGoWeapon(g.p1.actor,worldOnTicks);
     if(worldOnTicks==300) w::debugSpawn();
     if(worldOnTicks==400) w::debugKeys(primary());
     if(worldOnTicks==500) w::debugKillEnemy();

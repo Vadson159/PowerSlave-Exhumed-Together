@@ -1,7 +1,7 @@
 POWERSLAVE EXHUMED TOGETHER — PUBLIC TEST 2026-11-12
 
 Unofficial campaign co-op for PowerSlave Exhumed (2022, Steam), Windows x64.
-Supports 2–8 players over LAN / Radmin VPN. Early test build: bugs, crashes
+Supports 2–8 players over LAN / Radmin VPN or a direct IP over the internet. Early test build: bugs, crashes
 and desynchronization remain possible. Eight-player internet play is unverified.
 
 INSTALL
@@ -19,7 +19,17 @@ INSTALL
 NETWORK
 Join the same LAN or Radmin network. Allow the copied game through the firewall
 on that network: UDP 28745 (game), UDP 28746 (discovery). Radmin may use the
-public network profile. No matchmaking or automatic NAT traversal.
+public network profile. No matchmaking.
+
+DIRECT IP (no VPN)
+The host's mod asks the router to open UDP 28745 (UPnP). The host's F7 menu
+shows "Internet: <public IP>:28745" for friends. If UPnP is off or refused,
+forward UDP (not TCP) 28745 to the host PC by hand. "provider NAT" means the
+host has no public address (carrier-grade NAT): use Radmin VPN or another host.
+Friends: join.bat <address> (or F7 > Host IP[:port], IP, IP:port or host name,
+Enter). The host's firewall must allow inbound UDP 28745 on public networks too.
+set PSE_UPNP=0 before host.bat disables the router request; the port mapping
+is removed when the game quits.
 
 CONTROLS
 F7: lobby. Backslash: player list. T: chat. E: respawn after death.

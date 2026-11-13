@@ -200,6 +200,7 @@ int findSector(float x, float y, float z); // первый сектор, сод�
 float floorAt(float x, float y, float z, int sector);
 // Тест: PSE_DEBUG_TELEPORT[_CLIENT]="x,y,yaw" — один раз поставить локального игрока в точку на полу (сектор находится сам).
 void debugTeleport(unsigned char* actor);
+void debugGoWeapon(unsigned char* actor, unsigned long long tick); // test: PSE_DEBUG_GO_WEAPON(_CLIENT)=<world tick> - own player onto an unowned map weapon
 // Враги (Веха 3): хост авторитетен. Враг опознаётся по spawn id актора (+0x180, порядок карты, одинаков на обеих сторонах).
 // Клиент вместо ИИ тикает базовый актор (анимация/физика), реакцию ИИ на урон игнорирует, а позицию, скорость, угол, здоровье,
 // состояние и анимацию берёт из снимков хоста; без свежих снимков (>1.5 с) ИИ клиента работает как обычно.

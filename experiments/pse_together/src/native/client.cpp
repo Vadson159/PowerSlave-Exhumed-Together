@@ -402,6 +402,7 @@ struct Session {
         w::setActive(on);
         if(!on) { worldOnTicks=0;return; }
         if(worldOnTicks==199) w::debugTeleport(worldPuppet());
+        w::debugGoWeapon(worldPuppet(),worldOnTicks);
         if(++worldOnTicks==300) w::debugSpawn();
         if(worldOnTicks==450) w::debugKeys(primary());
         if(worldOnTicks%10==0) { w::debugCensusOnFile();w::debugHit(worldPuppet());w::debugSelfDamage(worldPuppet());w::debugTouch(worldPuppet());w::debugSpawnAi(worldPuppet()); }

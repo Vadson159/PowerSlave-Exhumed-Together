@@ -1252,6 +1252,28 @@ void debugTeleport(Byte* actor) {
     note("world_debug_teleport", "\"ok\":%s,\"sector\":%d,\"floor\":%.1f,\"x\":%.1f,\"y\":%.1f,\"yaw\":%.3f", ok ? "true" : "false", sector, floor, tx, ty, s.debugTyaw);
 }
 
+// Test: PSE_DEBUG_GO_WEAPON=<world tick> (host) / PSE_DEBUG_GO_WEAPON_CLIENT=<tick> (client: the stock pickup, a control) - own player stands on the first map weapon pickup whose weapon it does not own yet (its
+// touch then goes through the P16 weapon hook: grant + the host's own pickup notice). Weapon number = definition +0x128, owned[] = Player +0xcc.
+void debugGoWeapon(Byte* actor, unsigned long long tick) {
+    char v[16]{}; static bool done = false; // value: 1 = at world tick 260, N > 1 = at world tick N
+    if (done || !thread() || !s.installed || !actor || !GetEnvironmentVariableA(s.client ? "PSE_DEBUG_GO_WEAPON_CLIENT" : "PSE_DEBUG_GO_WEAPON", v, sizeof(v))) return;
+    const auto at = std::strtoull(v, nullptr, 10); if (!at || tick < (at == 1 ? 259 : at)) return;
+    done = true;
+    auto* player = read<Byte*>(actor, 0x1b8);
+    bool found = false;
+    forEachActor([&](Byte* a, int) {
+        if (read<Byte*>(a) != s.base + WeaponVtable || read<Byte>(a, 0x40)) return false;
+        const auto* def = read<Byte*>(a, 0x170);
+        const int weapon = def ? read<int>(def, 0x128) : -1;
+        if (weapon < 1 || weapon >= 8 || (player && read<Byte>(player, 0xcc + weapon))) return false;
+        const int sector = read<int>(a, 0x3c);
+        const bool ok = sector >= 0 && teleport(actor, read<float>(a, 0x18), read<float>(a, 0x1c), read<float>(a, 0x20), sector);
+        note("world_debug_go_weapon", "\"id\":%d,\"weapon\":%d,\"ok\":%s,\"sector\":%d", read<int>(a, 0x180), weapon, ok ? "true" : "false", sector);
+        found = true; return true;
+    });
+    if (!found) note("world_debug_go_weapon", "\"found\":false");
+}
+
 void debugKillEnemy() {
     if (!thread() || !s.installed || s.debugKill < 0) return;
     const int id = s.debugKill; s.debugKill = -1;

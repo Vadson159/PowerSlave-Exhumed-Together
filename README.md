@@ -4,7 +4,7 @@
 
 **Explore Karnak together.** An unofficial, experimental campaign co-op mod for
 **PowerSlave Exhumed (2022, KEX)** on Windows. One player hosts; friends connect
-over LAN or Radmin VPN.
+over LAN, Radmin VPN or a direct internet address.
 
 **[Download the mod](https://github.com/Vadson159/PowerSlave-Exhumed-Together/releases)**
 · [Инструкция на русском](docs/INSTALL_RU.md)
@@ -12,7 +12,7 @@ over LAN or Radmin VPN.
 
 Also available on [ModDB](https://www.moddb.com/mods/powerslave-exhumed-together)
 and [Nexus Mods](https://www.nexusmods.com/powerslaveexhumed/mods/6).
-Their downloads are awaiting platform review; the GitHub ZIP is available now.
+The latest test ZIP is also available in GitHub Releases.
 
 ## Features and status
 
@@ -21,7 +21,7 @@ Their downloads are awaiting platform review; the GitHub ZIP is available now.
 - Shared campaign level transitions; respawning and per-player checkpoints.
 - In-game lobby browser, manual IPv4 connection and text chat.
 
-**Public test build, 2026-11-12.** Crashes, enemy mismatches and desynchronization
+**Public test build, 2026-11-13.** Crashes, enemy mismatches and desynchronization
 may still occur. Recent automated game checks used multiple instances on one PC;
 eight-player play over the internet has not been validated. This is an early
 release for testing with friends.
@@ -29,8 +29,10 @@ release for testing with friends.
 ## Requirements
 
 - Windows 10/11 x64, your own **Steam copy of PowerSlave Exhumed**, and Steam running.
-- The same mod build on every PC and LAN or a shared Radmin VPN network.
-  No matchmaking or automatic NAT traversal is included.
+- The same mod build on every PC. Connect over LAN, a shared Radmin VPN network,
+  or directly to the host's public address. The host attempts UPnP port forwarding;
+  manual UDP forwarding may be needed. A host behind carrier-grade NAT needs a VPN.
+  Internet play with the new UPnP support has not yet been verified.
 - Supported executable: `anubis_Shipping_Steam_x64.exe`, SHA-256:
   `b8f131037187ca8d0a282527fb6f55a2012241d5b9dac8bf2038baf35b71a76d`.
   The installer checks this before copying the game. Other editions are unsupported.
@@ -45,10 +47,15 @@ release for testing with friends.
 3. Host: run `host.bat`, start a new game and enter a campaign level.
 4. Friends: run `join.bat`, press **F7**, select the host's open lobby and press
    **Enter**. If discovery fails, enter the host's LAN/Radmin IPv4 and port
-   **28745**. Start a new game; the client follows the host's level.
+   **28745**. For direct internet play, use the host's public address shown under
+   `Internet:` in F7, or run `join.bat ADDRESS`. `Host IP[:port]` also accepts a
+   hostname. Start a new game; the client follows the host's level.
 5. Allow the copied game through Windows Firewall on your intended network:
    **UDP 28745** for play, **UDP 28746** for lobby discovery. Radmin's adapter
-   may be classified as a public network.
+   may be classified as a public network. Direct internet hosting also needs
+   UDP 28745 allowed on the active internet network profile. To disable UPnP,
+   run `set PSE_UPNP=0` before starting `host.bat` from that Command Prompt.
+   The mod removes its port mapping when it exits.
 
 The Steam installation and normal saves/settings remain separate. Mod profiles
 and logs are under `profile` in the extracted mod folder. Steam overlay and

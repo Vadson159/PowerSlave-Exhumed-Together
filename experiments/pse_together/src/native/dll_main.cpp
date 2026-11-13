@@ -19,6 +19,9 @@ void client_attach(HINSTANCE module);
 namespace {
 enum class Role { Unknown, Host, Client };
 Role g_role = Role::Unknown;
+// PSE_DEBUG_VANILLA=1 (test only): the loader and the file guard run as usual (isolated profile), but the mod installs nothing - the stock
+// game for side-by-side checks of what the mod changes.
+bool vanilla() { wchar_t v[4]{}; return GetEnvironmentVariableW(L"PSE_DEBUG_VANILLA", v, 4) == 1 && v[0] == L'1'; }
 
 Role detectRole() {
     wchar_t value[16]{};
@@ -33,6 +36,7 @@ Role detectRole() {
 extern "C" {
 __declspec(dllexport) DWORD WINAPI M11Prepare(const wchar_t* logPath, DWORD primaryTid) {
     g_role = detectRole();
+    if (g_role != Role::Unknown && vanilla()) { g_role = Role::Unknown; return ERROR_SUCCESS; }
     switch (g_role) {
     case Role::Host: return host_M11Prepare(logPath, primaryTid);
     case Role::Client: return client_M11Prepare(logPath, primaryTid);
@@ -43,7 +47,7 @@ __declspec(dllexport) DWORD WINAPI M11PermitTest() {
     switch (g_role) {
     case Role::Host: return host_M11PermitTest();
     case Role::Client: return client_M11PermitTest();
-    default: return ERROR_NOT_READY;
+    default: return vanilla() ? ERROR_SUCCESS : ERROR_NOT_READY;
     }
 }
 __declspec(dllexport) DWORD WINAPI PSE_P1_PermitProxySpawn() {

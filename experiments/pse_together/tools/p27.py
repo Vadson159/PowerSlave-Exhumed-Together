@@ -381,8 +381,8 @@ def install(root_arg, source_arg=None):
     (game / 'pe-together.ini').write_text(ini, encoding='utf-16')
     shutil.copyfile(BUILD / 'pe-play.exe', root / 'pe-play.exe')
     for name, role in (('host', 'host'), ('join', 'client')):
-        (root / (name + '.bat')).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\n"%~dp0pe-play.exe" --role ' + role + ' -stdout\r\nset "pse_result=%ERRORLEVEL%"\r\n'
-            'if not "%pse_result%"=="0" echo Failed with code %pse_result%\r\npause\r\nexit /b %pse_result%\r\n').encode('ascii'))
+        # pe-play.exe is a GUI program: `start` leaves no console window; errors show up as a message box, logs are in profile\<role>\logs.
+        (root / (name + '.bat')).write_bytes(('@echo off\r\ncd /d "%~dp0"\r\nstart "" "%~dp0pe-play.exe" --role ' + role + ' -stdout\r\n').encode('ascii'))
     manifest = dict(root=str(root), source=str(source), files=len(prep['independent_copy_files']),
                     hashes={n: sha(game / n) for n in ['SDL2.dll', 'SDL2_pse_original.dll', 'pe-together.dll', 'pse_together.dll', 'anubis_Shipping_Steam_x64.exe']},
                     play=sha(root / 'pe-play.exe'), note='payload = pse_together.dll (host and client in one DLL, role from PSE_ROLE)')

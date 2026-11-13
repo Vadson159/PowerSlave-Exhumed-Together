@@ -1,7 +1,4 @@
 @echo off
 cd /d "%~dp0"
-"%~dp0pe-play.exe" --role host -stdout
-set "pse_result=%ERRORLEVEL%"
-if not "%pse_result%"=="0" echo Failed with code %pse_result%
-pause
-exit /b %pse_result%
+rem pe-play.exe has no console window of its own; this window closes at once. Problems are shown in a message box, logs are in the profile folder (logs subfolder).
+start "" "%~dp0pe-play.exe" --role host -stdout
