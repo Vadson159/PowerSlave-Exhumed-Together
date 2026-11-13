@@ -12,7 +12,8 @@ over LAN, Radmin VPN or a direct internet address.
 
 Also available on [ModDB](https://www.moddb.com/mods/powerslave-exhumed-together)
 and [Nexus Mods](https://www.nexusmods.com/powerslaveexhumed/mods/6).
-The latest test ZIP is also available in GitHub Releases.
+The updated ModDB download is available. Nexus Mods has quarantined its archive
+pending support review; the same ZIP is available in GitHub Releases.
 
 ## Features and status
 
