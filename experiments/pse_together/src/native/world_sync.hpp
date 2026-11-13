@@ -65,6 +65,12 @@ constexpr std::uint16_t EvEnemyGone = 9;   // host -> client: eventValue=ном�
 constexpr std::uint16_t EvPickup = 10;     // host -> client: eventValue=номер актора карты
 // Враг погиб у хоста: клиент сразу проигрывает ту же родную смерть (обычную или «разрывную» — после неё актор убирает себя сам). Раньше смерть
 // приходила только снимком здоровья, а разорванный враг исчезал у хоста в тот же тик и снимка не было: у клиента он замирал и пропадал.
+// An enemy took damage at the host and lives on: every client shows the native white hit flash on its copy (Actor +0x16c |= 0x10, +0x134 = 1,
+// as Damage 0x1a139e does; the actor tick 0x19fdde clears it). source=slot whose hit it was (that client flashed it itself), at most every
+// 4 ticks per enemy.
+constexpr std::uint16_t EvEnemyHurt = 14;  // host -> client: eventValue=номер врага на проводе, source=слот автора удара
+bool popEnemyHurt(int& id, unsigned& origin); // хост
+bool applyEnemyHurt(int id);                  // клиент: вспышка удара на своём отражении врага
 constexpr std::uint16_t EvEnemyDeath = 13; // host -> client: eventValue=номер врага на проводе (как у ReqHit), target=1 — «разрывная» смерть
 bool popEnemyDeath(int& id, bool& extreme); // хост: враг, погибший здесь с прошлого вызова
 bool applyEnemyDeath(int id, bool extreme); // клиент: родная смерть своего отражения этого врага; false — его нет / уже мёртв
@@ -100,7 +106,13 @@ void debugSelfDamage(unsigned char* own); // тест (клиент): PSE_DEBUG_
 // Переделка, этап 2: касания своего игрока у клиента — ОДИН канал. Клиент сообщает, чего коснулся его игрок (вид + номер актора на
 // проводе: номер карты или SphereMirrorTag|номер порождённого у хоста), хост повторяет то же касание нативным OnTouch телом этого игрока.
 constexpr std::uint8_t ReqTouch = 0x1c;      // client -> host: target=номер актора, generation=вид касания
-enum TouchKind : std::uint8_t { TouchHealth = 0, TouchAmmo = 1, TouchKey = 2, TouchWeapon = 3, TouchScarab = 4, TouchKinds = 5 };
+enum TouchKind : std::uint8_t { TouchHealth = 0, TouchAmmo = 1, TouchKey = 2, TouchWeapon = 3, TouchScarab = 4, TouchMap = 5, TouchKinds = 6 };
+// The map (Item_Map, kexSlavePickupMap: a vase drops it now and then, A_RandomVaseItem) reveals the whole automap. Taken by anyone (the host,
+// or a client through ReqTouch TouchMap: its body here takes the host's one) it reveals the map of every player: EvMapAll, each client
+// calls the same native reveal (automap 0xa43308 vt+0x10(true, 0), as OnTouch 0x1d91cb).
+constexpr std::uint16_t EvMapAll = 15;   // host -> client: the whole automap is revealed
+bool popMapReveal();                     // хост: карту взяли с прошлого вызова
+bool applyMapReveal();                   // клиент: открыть всю свою автокарту
 struct Touch { int id{-1}; std::uint8_t kind{}; };
 bool popTouch(Touch& out);                   // клиент: касание своего игрока, ещё не отправленное; false — нет
 int applyTouch(const Touch& t, unsigned char* body); // хост: тело игрока касается актора нативно (не скарабей); 0 — нет, 1 — да, 2 — порождённый шар
@@ -108,7 +120,7 @@ void debugTouch(unsigned char* own);
 void debugRemove(); // тест (хост): PSE_DEBUG_REMOVE="номер[,номер]" + PSE_DEBUG_REMOVE_FILE — убрать акторы карты родным Remove (как скрипт/взрыв) // тест (клиент): PSE_DEBUG_TOUCH_CLIENT="вид,номер[;вид,номер]" + PSE_DEBUG_TOUCH_FILE — свой игрок касается актора карты родным OnTouch
 int popCheckpoint();                        // свой игрок коснулся скарабея: его номер; -1 — нет
 bool checkpointPlace(int id, float& x, float& y, float& z, float& yaw, int& sector); // где стоит скарабей карты с этим номером
-bool applyHit(int id, int amount, int kind, unsigned char* body); // хост
+bool applyHit(int id, int amount, int kind, unsigned char* body, unsigned slot); // хост
 bool applyDifficulty(int value);           // клиент
 void resetWorld();                         // новый мир (смена карты, Restart Level): забыть учёт врагов, шаров и отражений прошлого
 // Рычаг (стенной выключатель, события 200..203), нажатый у хоста (хостом или телом клиента): у остальных меняется только его текстура (родной
@@ -135,7 +147,13 @@ bool install(unsigned char* base, std::uint32_t simTid, Logger log, bool host); 
 void setActive(bool on);
 void prepareHud(); // HUD-перехваты один раз, как только игра идёт (у хоста — ещё до входа клиента, чтобы вход не стоил тика)
 int popBreak();                      // номер актора карты, разбитого здесь (не репликой); -1 — нет
-bool applyBreak(int id);             // добить у себя актор карты с этим номером; false — уже было / не найден
+bool isActive();
+bool noPauseActive();
+bool menuOpen(const void* instance); // Esc menu stack / GI+0x20c / inventory screen is open               // co-op: the Esc menu / weapon selector do not stop the world (see setNoPause)
+void setNoPause(bool on);
+void tickGame(void (*original)(void*), void* gi); // native GameInstance::Tick (+ a world pass under a level window in co-op)                   // the world sync runs (both players live in this level)
+bool applyBreak(int id);
+void retryBreaks();                 // клиент: досланные разбития, которые сразу не взялись (уровень только загружен)             // добить у себя актор карты с этим номером; false — уже было / не найден
 // Хост: проверка «это актор тела другого игрока» (не P1): рамка урона и сообщения о подборе чужих тел на HUD хоста подавляются.
 void setRemoteBodyTest(bool (*test)(const void* actor));
 // Всплывающие надписи/вспышки HUD (сообщение, рамка урона, вспышка подбора) принадлежат тому игроку, чьё действие их вызвало. Пока выполняется чужое
@@ -200,7 +218,9 @@ int findSector(float x, float y, float z); // первый сектор, сод�
 float floorAt(float x, float y, float z, int sector);
 // Тест: PSE_DEBUG_TELEPORT[_CLIENT]="x,y,yaw" — один раз поставить локального игрока в точку на полу (сектор находится сам).
 void debugTeleport(unsigned char* actor);
-void debugGoWeapon(unsigned char* actor, unsigned long long tick); // test: PSE_DEBUG_GO_WEAPON(_CLIENT)=<world tick> - own player onto an unowned map weapon
+void debugGoWeapon(unsigned char* actor, unsigned long long tick);
+void debugItem(unsigned char* own);
+void debugBreakGoto(unsigned char* own); // test (host): PSE_DEBUG_WOUND / PSE_DEBUG_GOTO // test (host): PSE_DEBUG_ITEM=<type> + _FILE / _TAKE_FILE // test: PSE_DEBUG_GO_WEAPON(_CLIENT)=<world tick> - own player onto an unowned map weapon
 // Враги (Веха 3): хост авторитетен. Враг опознаётся по spawn id актора (+0x180, порядок карты, одинаков на обеих сторонах).
 // Клиент вместо ИИ тикает базовый актор (анимация/физика), реакцию ИИ на урон игнорирует, а позицию, скорость, угол, здоровье,
 // состояние и анимацию берёт из снимков хоста; без свежих снимков (>1.5 с) ИИ клиента работает как обычно.

@@ -41,6 +41,12 @@ struct Shared {
         if (!chat(s) || stopping.load()) return false;
         std::lock_guard lock(mutex);if(chatOut.size()==16)return false;chatOut.push_back(std::move(s));return true;
     }
+    // Host Sim thread -> network thread: a notice about a player ("died"), sent to everyone as a chat line under that player's name.
+    std::deque<std::pair<std::uint8_t,std::string>> noticeOut;
+    void announce(std::uint8_t slot,const char* what) {
+        std::lock_guard lock(mutex);if(noticeOut.size()<32)noticeOut.emplace_back(slot,std::string(NoticeMark)+what);
+    }
+    std::deque<std::pair<std::uint8_t,std::string>> takeNotices() { std::lock_guard lock(mutex);std::deque<std::pair<std::uint8_t,std::string>> out;out.swap(noticeOut);return out; }
     std::deque<std::string> takeChat() { std::lock_guard lock(mutex);std::deque<std::string> out;out.swap(chatOut);return out; }
     void clear() { ready.store(false);std::lock_guard lock(mutex);view.reset();chatOut.clear(); }
 };

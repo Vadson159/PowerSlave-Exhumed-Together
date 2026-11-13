@@ -1,4 +1,4 @@
-# PowerSlave Exhumed Together
+# PowerSlave Exhumed Together 1.0
 
 ![PowerSlave Exhumed Together — co-op mod](docs/images/cover.png)
 
@@ -20,12 +20,15 @@ pending support review; the same ZIP is available in GitHub Releases.
 - Support for 2–8 players, visible teammates and their weapon fire.
 - Synchronized enemies, doors, switches and triggers.
 - Shared campaign level transitions; respawning and per-player checkpoints.
-- In-game lobby browser, manual IPv4 connection and text chat.
+- In-game lobby browser, direct IP/hostname connection and text chat.
+- F6 copies the host address or pastes it on the client; the last host is remembered.
+- Shared map pickups and enemy hit flashes; death notifications in chat.
+- Menus, inventory and weapon wheel keep the co-op world running.
 
-**Public test build, 2026-11-13.** Crashes, enemy mismatches and desynchronization
+**Version 1.0 (2026-11-13).** Crashes, enemy mismatches and desynchronization
 may still occur. Recent automated game checks used multiple instances on one PC;
 eight-player play over the internet has not been validated. This is an early
-release for testing with friends.
+co-op mod; bugs may remain in version 1.0.
 
 ## Requirements
 
@@ -67,6 +70,7 @@ Command Prompt before launching the batch file from that same window.
 | Key | Action |
 | --- | --- |
 | F7 | Lobby / connection menu |
+| F6 | Host: copy address; client: paste address |
 | Backslash (`\`) | Player list |
 | T | Chat |
 | E | Respawn after death |

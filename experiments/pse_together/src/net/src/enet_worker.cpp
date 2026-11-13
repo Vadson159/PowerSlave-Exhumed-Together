@@ -335,6 +335,7 @@ void ENetWorker::threadLoop() {
             if(m_uiHost)m_uiHost->say(std::move(text));
             else if(m_uiClient)m_uiClient->say(std::move(text));
         }
+        for(auto& n:ui::shared().takeNotices()) if(m_uiHost)m_uiHost->announce(n.first,std::move(n.second));
         // 3. Poll ENet Sockets
         if (m_mode == ENetWorkerMode::HOST && m_hostServer) {
             m_hostServer->poll(1);

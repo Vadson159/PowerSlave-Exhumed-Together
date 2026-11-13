@@ -392,8 +392,7 @@ void captureNativeSnapshots() {
         if(g.p7Dead[slot]&&!dead){block("p7_unadmitted_native_revival");return;}
         if(dead&&!g.p7Dead[slot]){
             if(g.p7DeathSequence[slot]==UINT32_MAX){block("p7_death_sequence_exhausted");return;}
-            ++g.p7DeathSequence[slot];g.p7Dead[slot]=true;
-        }
+            ++g.p7DeathSequence[slot];g.p7Dead[slot]=true;        }
         s.lifeState=dead?pse::LIFE_DEAD:pse::LIFE_ALIVE;s.deathSequence=g.p7DeathSequence[slot];
         s.stateTimeNs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
         s.resetToken=s.discontinuitySequence=s.entityGeneration;
@@ -464,38 +463,27 @@ void followClientExit(std::uint32_t lo,std::uint32_t hi) {
 std::uint16_t sharedKeysSent{};std::uint32_t sharedKeysGen{};std::uint64_t worldOnTicks{};
 std::vector<int> enemiesGone,pickupsTaken;std::uint32_t goneSentSerial{}; // this world: map enemies gone and map spheres taken (also before any client was here)
 std::vector<std::pair<int,int>> switchesPressed; // this world: (face, event) of every switch pressed here, for clients that join later
+// this world: map actors broken here (vases, urns, exploding pots, the walls they blow up ...), also while no client was here: a client that
+// (re)joins loads the level whole and breaks them too (friend run 2026-11-13: walls blown up before a rejoin stood again for the friend)
+std::vector<int> breaksDone;
 #ifdef PSE_FEATURE_P14
 bool p14Eligible();
 #endif
 void markCheckpoint16(unsigned slot,int id);
-void worldSyncHost() {
+// Requests of the clients (breaks, touches, hits, movers, scripts ...) are applied INSIDE the host's world tick, from its own player's Update:
+// a vase broken here spawns its random item (A_RandomVaseItem), a hit can spawn gibs/projectiles, a mover a thinker. Spawned objects wait in
+// the engine's pending queue until the end-of-tick drain; applied after the tick (as before), a request that came while the host's world was
+// about to leave the level (exit box, the very next tick a StateExit) left a pending node behind the purge, and the next level's first sweep
+// hit a destroyed object: friend run 2026-11-13, KARNAK -> SANCTUAR, assertion SlaveObjectNode.cpp:143 + access violation 0x1b63ff.
+void applyWorldRequests() {
     namespace w=pse::world;
-    // Health never above the native cap of the host's difficulty: bodies made by the mod (P16 respawn, a client's body, travel) came with 200.
-    if(gameplay() && !g.failed && !g.worldExit) {
-        if(live(g.p1,primary()) && !p16Pending(0)) w::clampHealth(g.p1.actor,primary());
-        for(unsigned s=1;s<=MaxRemote;++s) if(R(s).exists && live(R(s).p2,R(s).storage.bytes) && !p16Pending(s)) w::clampHealth(R(s).p2.actor,R(s).storage.bytes);
-    }
-    const bool on=gameplay() && !g.failed && !g.shutdown && !g.worldExit && g.network && g.network->running() && g.network->anySnapshotEligible() &&
-        g.phase==Phase::Live && live(g.p1,primary()) && remotesLive();
-    w::setActive(on);
-    if(!on) {
-        worldRequests.clear();sharedKeysGen=0;sharedKeysSent=0;worldOnTicks=0;goneSentSerial=0;
-        // Alone in the level (no client ready yet): still note the map enemies that vanish and the spheres taken, for whoever joins later.
-        if(gameplay() && !g.failed && !g.shutdown && !g.worldExit && live(g.p1,primary())) {
-            w::prepareHud();
-            if(g.ticks%3==0) { static w::Enemy scratch[512];w::collectEnemies(scratch,512); }
-            for(int id;(id=w::popEnemyGone())>=0;) enemiesGone.push_back(id);
-            for(int id;(id=w::popPickup())>=0;) pickupsTaken.push_back(id);
-            for(int f,e;w::popSwitch(f,e);) switchesPressed.push_back({f,e});
-        }
-        return;
-    }
-    ++worldOnTicks;
+    if(!g.network || !w::isActive()) return;
+    w::debugItem(g.p1.actor);w::debugBreakGoto(g.p1.actor);
     while(!worldRequests.empty()) {
         const auto r=worldRequests.front();worldRequests.pop_front();
         if(r.interactionType==w::ReqMover) w::applyMover(w::moverFromWire(r.targetGeneration,r.targetEntityId));
         else if(r.interactionType==w::ReqAchievement) w::applyAchievement(r.targetEntityId); // the client earned it: the host's Steam account gets it too
-        else if(r.interactionType==w::ReqBreak) { if(w::applyBreak(static_cast<int>(r.targetEntityId))) g.network->publishWorldEvent(w::EvBreak,0,0,static_cast<std::int32_t>(r.targetEntityId)); }
+        else if(r.interactionType==w::ReqBreak) { if(w::applyBreak(static_cast<int>(r.targetEntityId))) { breaksDone.push_back(static_cast<int>(r.targetEntityId));g.network->publishWorldEvent(w::EvBreak,0,0,static_cast<std::int32_t>(r.targetEntityId)); } }
         else if(r.interactionType==w::ReqMap) followClientExit(r.targetEntityId,r.targetGeneration);
         else if(r.interactionType==w::ReqSound && r.slotId>=1 && r.slotId<=MaxRemote) {   // a sound of that client's own player: the host hears it at its proxy, every other client too
             w::playPlayerSound(pse::native_proxy::actorOf(r.slotId),r.targetEntityId);
@@ -516,13 +504,41 @@ void worldSyncHost() {
                 if(taken==2) g.network->publishWorldEvent(w::EvPickup,0,0,t.id);
             }
 #endif
-            else if(t.kind==w::TouchKey || t.kind==w::TouchWeapon) w::applyTouch(t,R(r.slotId).p2.actor);
+            else if(t.kind==w::TouchKey || t.kind==w::TouchWeapon || t.kind==w::TouchMap) w::applyTouch(t,R(r.slotId).p2.actor);
         }
         else if(r.interactionType==w::ReqHit && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists) // that client's player hit an enemy in its game
-            w::applyHit(static_cast<int>(r.targetEntityId),static_cast<int>(r.targetGeneration&0xffffu),static_cast<int>((r.targetGeneration>>16)&0xffu),R(r.slotId).p2.actor);
+            w::applyHit(static_cast<int>(r.targetEntityId),static_cast<int>(r.targetGeneration&0xffffu),static_cast<int>((r.targetGeneration>>16)&0xffu),R(r.slotId).p2.actor,r.slotId);
         else if(r.interactionType==w::ReqScript) { const auto c=w::unpackScript(static_cast<int>(r.targetEntityId&0xffff),r.targetGeneration,static_cast<std::uint16_t>(r.targetEntityId>>16));w::applyScript(c.num,g.p1.actor,&c); } // the client crossed a story trigger: the host's player plays the scene too
     }
-    for(int id;(id=w::popBreak())>=0;) g.network->publishWorldEvent(w::EvBreak,0,0,id); // a vase/urn broke here (host or its P2 body): everyone breaks it
+}
+void worldSyncHost() {
+    namespace w=pse::world;
+    // Health never above the native cap of the host's difficulty: bodies made by the mod (P16 respawn, a client's body, travel) came with 200.
+    if(gameplay() && !g.failed && !g.worldExit) {
+        if(live(g.p1,primary()) && !p16Pending(0)) w::clampHealth(g.p1.actor,primary());
+        for(unsigned s=1;s<=MaxRemote;++s) if(R(s).exists && live(R(s).p2,R(s).storage.bytes) && !p16Pending(s)) w::clampHealth(R(s).p2.actor,R(s).storage.bytes);
+    }
+    const bool on=gameplay() && !g.failed && !g.shutdown && !g.worldExit && g.network && g.network->running() && g.network->anySnapshotEligible() &&
+        g.phase==Phase::Live && live(g.p1,primary()) && remotesLive();
+    w::setActive(on);
+    if(!on) {
+        worldRequests.clear();sharedKeysGen=0;sharedKeysSent=0;worldOnTicks=0;goneSentSerial=0;
+        if(gameplay() && !g.failed && g.ticks%10==0) { Byte* n=read<Byte*>(primary(),0xd8);w::debugBreakGoto(n?read<Byte*>(n,0x28):nullptr); } // test: PSE_DEBUG_GOTO with the host alone
+        // Alone in the level (no client ready yet): still note the map enemies that vanish and the spheres taken, for whoever joins later.
+        if(gameplay() && !g.failed && !g.shutdown && !g.worldExit && live(g.p1,primary())) {
+            w::prepareHud();
+            if(g.ticks%3==0) { static w::Enemy scratch[512];w::collectEnemies(scratch,512); }
+            for(int id;(id=w::popEnemyGone())>=0;) enemiesGone.push_back(id);
+            for(int id;(id=w::popPickup())>=0;) pickupsTaken.push_back(id);
+            for(int f,e;w::popSwitch(f,e);) switchesPressed.push_back({f,e});
+            for(int id;(id=w::popBreak())>=0;) breaksDone.push_back(id);
+        }
+        return;
+    }
+    ++worldOnTicks;
+    for(int id;(id=w::popBreak())>=0;) { breaksDone.push_back(id);g.network->publishWorldEvent(w::EvBreak,0,0,id); } // a vase/urn broke here (host or its P2 body): everyone breaks it
+    if(w::popMapReveal()) g.network->publishWorldEvent(w::EvMapAll,0,0,1); // someone took a map: every player's automap is revealed
+    { int id=-1;unsigned origin=0;while(w::popEnemyHurt(id,origin)) g.network->publishWorldEvent(w::EvEnemyHurt,origin,0,id); } // the white hit flash at every client
     { int id=-1;bool extreme=false;while(w::popEnemyDeath(id,extreme)) g.network->publishWorldEvent(w::EvEnemyDeath,0,extreme?1u:0u,id); } // an enemy died here: the same native death at every client, at once
     for(int id;(id=w::popCheckpoint())>=0;) markCheckpoint16(0,id); // the host's own scarab
     for(auto snd=w::popSound();snd!=0xffffffffu;snd=w::popSound()) g.network->publishWorldEvent(w::EvSound,0,0,static_cast<std::int32_t>(snd)); // the host's own player
@@ -533,12 +549,15 @@ void worldSyncHost() {
     for(int f,e;w::popSwitch(f,e);) { switchesPressed.push_back({f,e});g.network->publishWorldEvent(w::EvSwitch,0,static_cast<std::uint32_t>(e),f); } // a switch pressed here: its texture for everyone
     if(g.network->joinSerial()!=goneSentSerial) {
         goneSentSerial=g.network->joinSerial();
-        for(const int id:enemiesGone) g.network->publishWorldEvent(w::EvEnemyGone,0,0,id);
+        // Broken things first and as a break (their death does the work: a blown-up wall opens the passage); a broken actor is gone at the
+        // host too, but "gone" only removes it at the client (friend run 2026-11-13: the walls stood again after the friend rejoined).
+        for(const int id:breaksDone) g.network->publishWorldEvent(w::EvBreak,0,0,id);
+        for(const int id:enemiesGone) if(std::find(breaksDone.begin(),breaksDone.end(),id)==breaksDone.end()) g.network->publishWorldEvent(w::EvEnemyGone,0,0,id);
         for(const int id:pickupsTaken) g.network->publishWorldEvent(w::EvPickup,0,0,id);
         for(const auto& [f,e]:switchesPressed) g.network->publishWorldEvent(w::EvSwitch,0,static_cast<std::uint32_t>(e),f);
         if(const int d=w::difficulty();d>=0) { g.network->publishWorldEvent(w::EvDifficulty,0,0,d);log("world_difficulty_sent","\"difficulty\":%d,\"join_serial\":%u",d,goneSentSerial); } // the host's rules (health bar, sphere amounts) for every player
-        if(!enemiesGone.empty() || !pickupsTaken.empty() || !switchesPressed.empty())
-            log("world_removals_resent","\"enemies\":%zu,\"pickups\":%zu,\"switches\":%zu,\"join_serial\":%u",enemiesGone.size(),pickupsTaken.size(),switchesPressed.size(),goneSentSerial);
+        if(!enemiesGone.empty() || !pickupsTaken.empty() || !switchesPressed.empty() || !breaksDone.empty())
+            log("world_removals_resent","\"enemies\":%zu,\"pickups\":%zu,\"switches\":%zu,\"breaks\":%zu,\"join_serial\":%u",enemiesGone.size(),pickupsTaken.size(),switchesPressed.size(),breaksDone.size(),goneSentSerial);
     }
     for(auto c=w::popScript();c.num>=0;c=w::popScript()) g.network->publishWorldEvent(w::EvScript,c.pos?w::packXY(c.x,c.y):0,c.pos?w::packZ(c.z):0,c.num); // the host (or P2) crossed one: the client's player plays it too
     if(worldOnTicks==320) w::debugScript(g.p1.actor);
@@ -931,6 +950,9 @@ void __fastcall hookUpdate(void* p) {
     if (!thread() || !g.inTick) { ++g.foreignCalls; block("local_update_outside_attested_tick"); return; }
     ++g.localUpdates;
     if (g.localThisTick != 1) { block("duplicate_local_update"); return; }
+#ifdef PSE_FEATURE_SNAPSHOT
+    if (gameplay() && !g.failed && !g.worldExit) applyWorldRequests(); // inside the world tick, before the end-of-tick drain
+#endif
 #ifdef PSE_ROLE_HOST
     if (g.neutralPrimary) {
         for (std::size_t offset=0; offset<=0x7c; offset+=4)
@@ -1246,7 +1268,7 @@ void rearmWorld() {
     g.p7KeysPermitted=false;g.p7KeyProbeSerial=g.p7KeyReviewSerial=0;
     g.snapshotEligibleLogged=false;g.lastMapFault=map56::Fault::None;
     mapAnnounced=false;worldBound=false;
-    enemiesGone.clear();pickupsTaken.clear();switchesPressed.clear();goneSentSerial=0;pse::world::resetWorld();
+    enemiesGone.clear();pickupsTaken.clear();switchesPressed.clear();breaksDone.clear();goneSentSerial=0;pse::world::resetWorld();
     for(unsigned i=0;i<8;++i){proxyEntity[i]=0;proxyRebuild[i]=false;}
     // respawn / death bookkeeping of the old world
     team16=rp16::Team{};hostInput16=rp16::DeadInput{};bound16=false;checkpoints16={};
@@ -1444,20 +1466,22 @@ void __fastcall hookTick(void* self) {
             log("background_session_begin", "\"tick\":%llu,\"generation\":%u,\"p2_exists\":%s,\"foreground_pid\":%lu,\"native_focus_before\":1",g.ticks,g.network->connected(),g.schedule ? "true" : "false",g.foregroundPid);
         }
     }
-    const bool uiCapture=pse::ui::nativeCapture(g.permit.load(std::memory_order_acquire)!=0,gameplay(),pse::ui::shared().capture.load());
+    // the Esc menu no longer stops the world in co-op (world_sync setNoPause): the player stands still behind it instead of walking on held keys
+    const bool uiCapture=pse::ui::nativeCapture(g.permit.load(std::memory_order_acquire)!=0,gameplay(),pse::ui::shared().capture.load()) ||
+        (pse::world::noPauseActive() && gameplay() && pse::world::menuOpen(instance()));
     if(uiCapture!=g.uiCaptureWas) {g.bindingsResetPending=true;log("p23_ui_input_gate","\"capture\":%s,\"scoped_native_neutral\":true",uiCapture?"true":"false");}
     g.neutralPrimary=applied || g.resumeNeutral || uiCapture || g.uiCaptureWas;g.uiCaptureWas=uiCapture;
 #endif
 #ifdef PSE_FEATURE_P14
     pse::p14::sync();
 #endif
-    reinterpret_cast<Unary>(g.original[profile::Tick])(self);
+    pse::world::tickGame(reinterpret_cast<void(*)(void*)>(g.original[profile::Tick]),self); // + the world under a level window (co-op)
 #ifdef PSE_ROLE_HOST
     endFocusLease();
     if (applied && (g.backgroundTicks<=3 || g.backgroundTicks%120==0))
         log("background_tick", "\"tick\":%llu,\"background_ticks\":%llu,\"local_this_tick\":%u,\"focus_restored\":%u,\"foreground_pid\":%lu,\"neutral_updates\":%llu,\"menu\":%u,\"inventory\":%u",g.ticks,g.backgroundTicks,g.localThisTick,focusByte,g.foregroundPid,g.neutralUpdates,read<Byte>(instance(),background::MenuByte),read<Byte>(g.base+0xa43f30,0x1b0));
     if (!g.backgroundStopping && g.ticks%120==0)
-        log("background_policy_status", "\"tick\":%llu,\"state\":%d,\"next\":%d,\"pending\":%d,\"focus_byte_after\":%u,\"focus_known\":%s,\"focus_lost\":%s,\"menu\":%u,\"inventory\":%u,\"network_running\":%s,\"session_ready\":%s,\"override_this_tick\":%s,\"local_this_tick\":%u,\"local_updates\":%llu,\"foreground_pid\":%lu,\"buttons\":%u,\"held_forward\":%u,\"held_back\":%u",g.ticks,read<int>(instance(),0x24),read<int>(instance(),0x20),read<int>(instance(),0x28),focusByte,g.focusKnown ? "true" : "false",g.focusLost ? "true" : "false",read<Byte>(instance(),background::MenuByte),read<Byte>(g.base+0xa43f30,0x1b0),g.network && g.network->running() ? "true" : "false",g.network && g.network->anyWantsPlayer() ? "true" : "false",applied ? "true" : "false",g.localThisTick,g.localUpdates,g.foregroundPid,read<unsigned>(primary()),read<unsigned>(primary(),12),read<unsigned>(primary(),16));
+        log("background_policy_status", "\"tick\":%llu,\"menu_stack\":%d,\"menu_current\":%d,\"state\":%d,\"next\":%d,\"pending\":%d,\"focus_byte_after\":%u,\"focus_known\":%s,\"focus_lost\":%s,\"menu\":%u,\"inventory\":%u,\"network_running\":%s,\"session_ready\":%s,\"override_this_tick\":%s,\"local_this_tick\":%u,\"local_updates\":%llu,\"foreground_pid\":%lu,\"buttons\":%u,\"held_forward\":%u,\"held_back\":%u",g.ticks,read<int>(g.base+0xa3d58c),read<void*>(g.base+0xae9970)?1:0,read<int>(instance(),0x24),read<int>(instance(),0x20),read<int>(instance(),0x28),focusByte,g.focusKnown ? "true" : "false",g.focusLost ? "true" : "false",read<Byte>(instance(),background::MenuByte),read<Byte>(g.base+0xa43f30,0x1b0),g.network && g.network->running() ? "true" : "false",g.network && g.network->anyWantsPlayer() ? "true" : "false",applied ? "true" : "false",g.localThisTick,g.localUpdates,g.foregroundPid,read<unsigned>(primary()),read<unsigned>(primary(),12),read<unsigned>(primary(),16));
     g.neutralPrimary=false;
 #endif
     if (!g.failed && !g.shutdown && !g.worldExit && gameplay()) {
@@ -1545,7 +1569,7 @@ void __fastcall hookTick(void* self) {
     }
     {   // Esc menu: gameplay state, but the local Player Update is skipped. Debounced over a few ticks.
         static unsigned idleTicks=0;idleTicks=(gameplay() && g.localThisTick==0) ? idleTicks+1 : 0;
-        pse::ui::shared().paused.store(idleTicks>=3,std::memory_order_release);
+        pse::ui::shared().paused.store(idleTicks>=3 || (gameplay() && pse::world::menuOpen(instance())),std::memory_order_release); // co-op: the Esc menu no longer stops the world
     }
     pse::native_ui::tick(!g.failed && gameplay() && g.network && g.network->anySnapshotEligible(),g.network?g.network->mapEpoch():0,0,1);
     {   // lobby beacon: the map this host plays, who is in, and whether a client can connect right now (a Session is listening)

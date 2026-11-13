@@ -23,7 +23,7 @@ $hash = (Get-FileHash "$out\overlay\game\pse_together.dll" -Algorithm SHA256).Ha
 [IO.File]::WriteAllText("$out\overlay\game\pe-together.ini", "[payload]`r`nsha256=$hash`r`n", [Text.Encoding]::Unicode)
 
 # Build stamp: both players can compare it (the mod must be the same build on both PCs).
-$stamp = "Exhumed Together build {0:yyyy-MM-dd HH:mm}`r`npse_together.dll sha256 {1}`r`n" -f (Get-Item "$Build\dll\pse_together.dll").LastWriteTime, $hash.Substring(0, 16)
+$stamp = "Exhumed Together version 1.0`r`nBuild {0:yyyy-MM-dd HH:mm}`r`npse_together.dll sha256 {1}`r`n" -f (Get-Item "$Build\dll\pse_together.dll").LastWriteTime, $hash.Substring(0, 16)
 [IO.File]::WriteAllText("$out\VERSION.txt", $stamp, (New-Object Text.UTF8Encoding($false)))
 
 if (Test-Path $zip) { Remove-Item $zip -Force }

@@ -65,6 +65,7 @@ struct Context {
     discovery::Browser browser;discovery::Advertiser advertiser;
     std::vector<discovery::Lobby> lobbies;std::vector<std::string> addresses;int pick{};bool autoLobby{};
     upnp::PortMapper mapper;int mapperLogged=-1; // host: router port for direct internet joins (src/ui/upnp.hpp)
+    std::string toast;std::uint64_t toastUntil{},connectSince{}; // short in-game line (F6 copy/paste); client: waiting for the host since
     std::string draft,status="F7: Exhumed Together menu";
     std::size_t activityKey{};std::uint64_t showUntil{};bool activityInit{}; // chat / notices stay on screen a few seconds after they change
     Void textStart{},textStop{};Flag textActive{},relative{};SetFlag relativeSet{};
@@ -135,6 +136,58 @@ std::vector<std::string> addressesNow() {
     std::vector<std::string> out;for(const auto& i:discovery::interfaces())out.push_back(i.address);return out;
 }
 // Direct join (as in the 2015 co-op mod): the address field takes "1.2.3.4", "1.2.3.4:28745" or a DNS name (resolved here, IPv4).
+// The host address a client typed is kept between game starts (profile\pse_last_host.txt; PSE_GUARD_PROFILE is set by pe-play).
+std::string lastHostFile() {
+    char dir[MAX_PATH]{};const DWORD n=GetEnvironmentVariableA("PSE_GUARD_PROFILE",dir,sizeof(dir));
+    return n && n<sizeof(dir)?std::string(dir)+"\\pse_last_host.txt":std::string();
+}
+std::string loadLastHost() {
+    const auto f=lastHostFile();if(f.empty())return {};
+    char buf[96]{};DWORD got=0;
+    const HANDLE h=CreateFileA(f.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
+    if(h==INVALID_HANDLE_VALUE)return {};
+    ReadFile(h,buf,sizeof(buf)-1,&got,nullptr);CloseHandle(h);
+    std::string out(buf,got);while(!out.empty() && (out.back()=='\r' || out.back()=='\n' || out.back()==' '))out.pop_back();
+    return out.size()<=64?out:std::string();
+}
+void saveLastHost(const std::string& address) {
+    const auto f=lastHostFile();if(f.empty() || address.empty() || address.size()>64)return;
+    const HANDLE h=CreateFileA(f.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(h==INVALID_HANDLE_VALUE)return;
+    DWORD put=0;WriteFile(h,address.data(),static_cast<DWORD>(address.size()),&put,nullptr);CloseHandle(h);
+}
+// Windows clipboard (text): the host copies its address for a friend (F6), a client pastes it (F6, or Ctrl+V in a field of the F7 menu).
+std::string clipboardText() {
+    std::string out;
+    if(!OpenClipboard(c->hwnd.load()))return out;
+    if(const HANDLE h=GetClipboardData(CF_UNICODETEXT)) if(const auto* w=static_cast<const wchar_t*>(GlobalLock(h))) {
+        std::wstring line(w);GlobalUnlock(h);
+        if(const auto cut=line.find_first_of(L"\r\n");cut!=std::wstring::npos)line.resize(cut);
+        const int n=WideCharToMultiByte(CP_UTF8,0,line.c_str(),static_cast<int>(line.size()),nullptr,0,nullptr,nullptr);
+        if(n>0 && n<=256) {out.resize(static_cast<std::size_t>(n));WideCharToMultiByte(CP_UTF8,0,line.c_str(),static_cast<int>(line.size()),out.data(),n,nullptr,nullptr);}
+    }
+    CloseClipboard();
+    while(!out.empty() && (out.back()==' ' || out.back()=='\t'))out.pop_back();
+    while(!out.empty() && (out.front()==' ' || out.front()=='\t'))out.erase(0,1);
+    return out.size()<=64?out:std::string();
+}
+bool setClipboard(const std::string& text) {
+    const std::wstring w=wide(text);if(w.empty() || !OpenClipboard(c->hwnd.load()))return false;
+    bool ok=false;
+    if(EmptyClipboard()) if(const HGLOBAL mem=GlobalAlloc(GMEM_MOVEABLE,(w.size()+1)*sizeof(wchar_t))) {
+        std::memcpy(GlobalLock(mem),w.c_str(),(w.size()+1)*sizeof(wchar_t));GlobalUnlock(mem);
+        ok=SetClipboardData(CF_UNICODETEXT,mem)!=nullptr;if(!ok)GlobalFree(mem);
+    }
+    CloseClipboard();return ok;
+}
+// What a friend should type to reach this host: the router's public address when UPnP opened the port, else the Radmin VPN one (26.x),
+// else the first local address.
+std::string inviteAddress() {
+    std::string ip=c->mapper.external();
+    if(ip.empty()) {const auto all=addressesNow();for(const auto& a:all) if(a.rfind("26.",0)==0) {ip=a;break;} if(ip.empty() && !all.empty())ip=all.front();}
+    return ip.empty()?ip:ip+":"+c->form.portText;
+}
+void showToast(const std::string& line) {c->toast=line;c->toastUntil=ui::nowMs()+5000;}
 bool directAddress(ui::Menu& form) {
     std::string a=form.address;
     while(!a.empty() && (a.back()==' ' || a.back()=='/'))a.pop_back();
@@ -170,9 +223,13 @@ void submit() {
         const auto& l=c->lobbies[static_cast<std::size_t>((std::min)(c->pick,static_cast<int>(c->lobbies.size())-1))];
         if(!l.open) {c->status="Host is not in a level yet";return;}
         c->form.address=l.address;c->form.portText=std::to_string(l.port);
-    } else if(!directAddress(c->form)) {c->status="Address: IPv4, IPv4:port or a host name";return;}
+    }
+    const std::string typed=onList()?std::string():c->form.address;
+    if(!onList() && !directAddress(c->form)) {c->status="Address: IPv4, IPv4:port or a host name";return;}
     if(ui::shared().submit(c->form)) {
-        ++c->submitted;c->menu=false;inputLease(false);c->status="Load the same level as the host";
+        if(!typed.empty())saveLastHost(typed);
+        ++c->submitted;c->menu=false;inputLease(false);c->status="Now start (or load) a game: you join the host in the level";
+        if(*reinterpret_cast<const int*>(c->base+0xaf33a0+0x24)==1)showToast("Saved "+c->form.address+":"+c->form.portText+". Start or load a game to join");
         c->log("p23_menu_submit","\"host\":%s,\"name_bytes\":%zu,\"port\":%u",c->form.host?"true":"false",c->form.displayName.size(),*ui::port(c->form.portText));
     } else c->status=ui::shared().stopping.load()?"Session ended. Restart game for a new session":ui::shared().requested.load()?"Session already started":"Check player name, IPv4 and port";
 }
@@ -201,6 +258,20 @@ bool input(Event& e) {
                 c->field=(!c->form.host && !c->lobbies.empty())?4:0;if(c->form.host)c->addresses=addressesNow();
                 if(!c->form.host && c->form.address!="127.0.0.1")c->field=1; // join.bat <address> / an address typed before
             }
+            return true;
+        }
+        if(!e.key.repeat && key==((1<<30)|63)) { // SDL_SCANCODE_F6=63: host copies its address, a client pastes the host's
+            if(c->form.host) {const auto a=inviteAddress();showToast(!a.empty() && setClipboard(a)?"Copied for your friend: "+a:"No address to copy");}
+            else if(!ui::shared().requested.load()) {
+                const auto clip=clipboardText();
+                if(clip.empty())showToast("Clipboard is empty: copy the host's address first");
+                else {c->form.address=clip;c->menu=true;c->composer=false;c->field=1;++c->menus;inputLease(true);c->status="Pasted "+clip+": Enter to connect";}
+            }
+            return true;
+        }
+        if((c->menu || c->composer) && key=='v' && (e.key.keysym.mod&0x00C0) && !onList()) { // Ctrl+V into the current field
+            auto& f=currentField();const auto clip=clipboardText();const std::size_t cap=c->composer?ui::ChatBytes:c->field==0?31u:64u;
+            if(!clip.empty() && f.size()+clip.size()<=cap)f+=clip;
             return true;
         }
         if(!c->menu && !c->composer && key=='\\') {c->board=true;return true;}
@@ -297,6 +368,11 @@ void draw(IDXGISwapChain* chain) {
         stripW=(std::min)(Width,(std::max)(static_cast<int>(sa.cx),static_cast<int>(sb.cx))+20);
         text(10,4,a,RGB(255,210,100));
         text(10,30,b);
+        if(ui::nowMs()<c->toastUntil || (!c->form.host && ui::shared().requested.load() && !ui::shared().ready.load())) {   // saved join / F6
+            const std::wstring t=ui::nowMs()<c->toastUntil?wide(c->toast):wide("Join "+c->form.address+": start or load a game");
+            SIZE st{};GetTextExtentPoint32W(c->dc,t.c_str(),static_cast<int>(t.size()),&st);
+            stripW=(std::min)(Width,(std::max)(stripW,static_cast<int>(st.cx)+20));panelHeight=88;text(10,56,t,RGB(130,240,180));
+        }
     } else if(c->menu && c->form.host) {
         // The host's lobby is created by itself when the game starts and announced to the local network (LAN, Radmin VPN, ...).
         panelHeight=470;text(16,12,L"POWERSLAVE EXHUMED TOGETHER",RGB(255,210,100));
@@ -312,7 +388,7 @@ void draw(IDXGISwapChain* chain) {
         if(!ext.empty())text(16,240,L"Internet: "+wide(ext)+L":"+wide(port)+L"  (router port open)",RGB(130,240,180));
         else text(16,240,L"Internet: "+wide(c->mapper.message().empty()?std::string("UPnP not started"):c->mapper.message())+
                          (c->mapper.state()==upnp::State::Failed?L". Or forward UDP "+wide(port)+L" by hand":L""),RGB(200,200,190));
-        text(16,320,L"Friends: F7, pick this lobby or type your address, Enter",RGB(255,210,100));
+        text(16,320,L"F6: copy your address; a friend pastes it with F6",RGB(255,210,100));
         text(16,378,L"Enter / Esc / F7: close");
     } else if(c->menu) {
         panelHeight=470;text(16,12,L"POWERSLAVE EXHUMED TOGETHER",RGB(255,210,100));
@@ -341,14 +417,22 @@ void draw(IDXGISwapChain* chain) {
         const auto& notices=view.notices();const auto& lines=view.messages();const auto now=ui::nowMs();
         const std::size_t key=notices.size()*1315423911u+(notices.empty()?0:std::hash<std::string>{}(notices.back()))+(lines.empty()?0:static_cast<std::size_t>(lines.back().sequence)*2654435761u);
         if(key!=c->activityKey) {c->activityKey=key;if(c->activityInit)c->showUntil=now+8000;c->activityInit=true;}
-        const bool recent=now<c->showUntil;
-        if(!pause && !recent && !c->composer)return; // nothing to show: no panel at all
+        const bool recent=now<c->showUntil,toast=now<c->toastUntil;
+        // A client that asked to join and is not in the session yet: say so (and what may be wrong after a while).
+        const bool connecting=!c->form.host && ui::shared().requested.load() && !ui::shared().ready.load() && !ui::shared().stopping.load();
+        if(!pause && !recent && !c->composer && !toast && !connecting)return; // nothing to show: no panel at all
         int y=10;pauseHint=pause;
+        if(toast){text(16,y,wide(c->toast),RGB(130,240,180));y+=30;}
+        if(connecting) {
+            const auto secs=c->connectSince?(now-c->connectSince)/1000:0;
+            text(16,y,wide("Connecting to "+c->form.address+":"+c->form.portText+"... "+std::to_string(secs)+" s"),RGB(255,210,100));y+=30;
+            if(secs>=15){text(16,y,L"No answer: is the host in a level? UPnP / UDP port forward, firewall, or Radmin VPN",RGB(255,190,130));y+=52;}
+        }
         if(pause) {text(16,y,(!c->form.host && !ui::shared().requested.load() && !c->lobbies.empty())?(L"F7: JOIN a lobby ("+std::to_wstring(c->lobbies.size())+L" found)   \\ Players   T Chat"):std::wstring(L"F7 Exhumed Together menu   \\ Players   T Chat"),RGB(255,210,100));y=40;}
         if(!notices.empty()){text(16,y,wide(notices.back()),RGB(130,240,180));y+=28;}
         const std::size_t count=ui::nowMs()-c->mapAt.load()<100?2:4;
         const auto start=lines.size()>count?lines.size()-count:0;
-        for(std::size_t i=start;i<lines.size();++i) {text(16,y,wide(lines[i].displayName+": "+lines[i].message));y+=46;}
+        for(std::size_t i=start;i<lines.size();++i) {const bool note=ui::isNotice(lines[i].message);text(16,y,wide(note?lines[i].displayName+" "+lines[i].message.substr(2):lines[i].displayName+": "+lines[i].message),note?RGB(255,150,130):RGB(238,238,225));y+=46;}
         if(c->composer) {text(16,y,wide("> "+c->draft+"_"),RGB(120,240,255));y+=52;}
         panelHeight=(std::max)(pause?100:60,y+8);
         if(pause && view.players()[view.local()<8?view.local():0]==std::nullopt)text(16,panelHeight-30,wide(c->status),RGB(255,190,130));
@@ -451,6 +535,7 @@ bool install(unsigned char* base,DWORD tid,bool host,Logger logger) {
         c->browser.start();
         char join[80]{};   // join.bat 1.2.3.4[:port]: the address is already in the F7 form (F7, Enter)
         if(GetEnvironmentVariableA("PSE_JOIN_ADDRESS",join,sizeof(join)) && join[0]) {c->form.address=join;c->status="F7, Enter: connect to "+c->form.address;}
+        else if(const auto last=loadLastHost();!last.empty()) {c->form.address=last;c->status="F7, Enter: connect to "+last+" (last host)";}
     }
     ui::shared().host=host;ui::shared().menu=c->form;
     ui::shared().eventLogger.store(logger,std::memory_order_release);
@@ -494,7 +579,10 @@ void tick(bool ready,std::uint32_t epoch,std::uint8_t local,std::uint32_t genera
             c->mapperLogged=st;const auto m=c->mapper.message();const auto ext=c->mapper.external();
             c->log("upnp_state","\"state\":%d,\"external\":\"%s\",\"message\":\"%s\"",st,ext.c_str(),m.c_str());
         }
-    } else if(lobbyTicks%20==0) {
+    } else {
+        const bool waiting=ui::shared().requested.load() && !ui::shared().ready.load() && *reinterpret_cast<const int*>(c->base+0xaf33a0+0x24)!=1;
+        if(!waiting)c->connectSince=0; else if(!c->connectSince) {c->connectSince=ui::nowMs();c->log("client_connect_target","\"address\":\"%s\",\"port\":\"%s\"",c->form.address.c_str(),c->form.portText.c_str());}
+        if(lobbyTicks%20!=0)return;
         auto fresh=c->browser.list();
         std::lock_guard lock(c->uiMutex);
         if(fresh.size()!=c->lobbies.size() || (!fresh.empty() && c->lobbies.empty()))

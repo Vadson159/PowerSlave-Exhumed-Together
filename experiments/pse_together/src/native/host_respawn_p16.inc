@@ -171,6 +171,7 @@ void tick16(){
         if(read<std::int16_t>(id.actor,0x17a)<=0||(read<unsigned>(id.actor,0x1c0)&0x200u))
             if(team16.observeDeath(who16(slot),g.entityGeneration[slot])==rp16::Result::Accepted){
                 g.p7DeathSequence[slot]=team16.slot(slot)->death;g.p7Dead[slot]=true;
+                pse::ui::shared().announce(static_cast<std::uint8_t>(slot),"died"); // chat for everyone: "<name> died" (host and clients alike, once per death)
                 log("p16_death_observed","\"slot\":%u,\"generation\":%u,\"death\":%u",slot,g.entityGeneration[slot],team16.slot(slot)->death);
             }
     }

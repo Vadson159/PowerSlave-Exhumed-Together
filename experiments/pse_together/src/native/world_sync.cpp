@@ -94,7 +94,7 @@ struct State {
     void* checkpointTouch{}; int lastCheckpoint{-1}; std::array<int, 8> cpQueue{}; std::size_t cpHead{}, cpCount{};
     // Этап 2: касания своего игрока у клиента (ReqTouch) — одна очередь для всех видов; повтор того же актора не чаще раза в 30 тиков.
     std::array<Touch, 32> touchQueue{}; std::size_t touchHead{}, touchCount{}; std::unordered_map<std::uint64_t, std::uint64_t> touchAsked;
-    unsigned touchLogged{}, touchAppliedLogged{}; void* weaponTouch{};
+    unsigned touchLogged{}, touchAppliedLogged{}; void* weaponTouch{}; void* mapTouch{}; bool mapRevealPending{};
     std::array<ScriptCall, 16> scriptQueue{}; std::size_t scriptHead{}, scriptCount{};
     std::array<int, 32> breakQueue{}; std::size_t breakHead{}, breakCount{}; std::unordered_map<int, std::uint64_t> brokenSeen; unsigned breakLogged{};
     std::array<bool, 256> sceneDone{}, sceneSubstituted{}; int debugBreak{-1}; // сюжетные сцены, уже сыгранные в этом мире (отсюда или реплицированные)
@@ -113,6 +113,11 @@ struct State {
     // Смерть врага у хоста (EvEnemyDeath): очередь хоста; клиент — когда пришла смерть врага с этим номером (устаревший снимок, отправленный до
     // смерти, не должен его «оживить») и сколько чужого урона по отражениям не ушло хосту.
     struct Death { int id{}; bool extreme{}; };
+    struct Hurt { int id{}; unsigned origin{}; };
+    std::array<Hurt, 64> hurtQueue{}; std::size_t hurtHead{}, hurtCount{}; unsigned hitOrigin{}, hurtLogged{}, hurtAppliedLogged{};
+    std::unordered_map<int, std::uint64_t> hurtAt;
+    std::unordered_map<int, int> breakRetry;
+    void* levelWindow{}; unsigned long long windowSkips{}, windowPasses{}; unsigned windowLogged{}; bool windowWorldPass{}; // client: resent breaks that did not take yet -> attempts
     std::array<Death, 64> deathQueue{}; std::size_t deathHead{}, deathCount{}; unsigned deathLogged{}, deathAppliedLogged{};
     std::unordered_map<std::uint32_t, std::uint64_t> enemyDeadAt; std::uint64_t foreignHitsDropped{};
     // Ловушки карты (kexFireballSpawner): перехват выстрела и тик последнего выстрела каждой (по номеру актора карты) — см. hookSpawnerFire.
@@ -379,6 +384,14 @@ void __fastcall hookAiDamage(void* actor, void* instigator) {
 bool isPuppet(const void* actor) {
     __try { return actor && read<const Byte*>(actor) == s.base + PuppetVtable; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// Host: an enemy or a breakable (vase, urn, exploding pot ...) of the map took damage and lives on: EvEnemyHurt, at most every 4 ticks each.
+void queueHurt(int id, int hp) {
+    auto& last = s.hurtAt[id];
+    if ((last && s.ticks - last < 4) || s.hurtCount >= s.hurtQueue.size()) return;
+    last = s.ticks;
+    s.hurtQueue[(s.hurtHead + s.hurtCount++) % s.hurtQueue.size()] = {id, s.hitOrigin};
+    if (++s.hurtLogged <= 30) note("world_enemy_hurt", "\"id\":%d,\"origin\":%u,\"hp\":%d", id, s.hitOrigin, hp);
+}
 void __fastcall hookDamage(void* actor, void* instigator, int kind, short amount) {
     // Враги у клиента — отражения хоста. Своё попадание игрок клиента по ним у себя не наносит: локальный урон убивал врага у клиента
     // (Damage 0x1a1370 при здоровье <= 0 сам ставит анимацию смерти, снимает «простреливаемый» 0x20 и зовёт OnDeath), а у хоста тело этого
@@ -434,11 +447,14 @@ void __fastcall hookDamage(void* actor, void* instigator, int kind, short amount
         s.hudKind = before;
         return;
     }
-    if (thread() && s.installed && s.active && !s.replaying && actor && !isPuppet(actor) && read<Byte*>(actor) != s.base + AiVtable) {
-        // Разрушаемый предмет (не игрок и не враг): если этим ударом он погиб, номер актора карты уходит остальным.
+    if (thread() && s.installed && (s.active || !s.client) && !s.replaying && actor && !isPuppet(actor) && read<Byte*>(actor) != s.base + AiVtable) {
+        // Разрушаемый предмет (не игрок и не враг): если этим ударом он погиб, номер актора карты уходит остальным (хост помнит его и без
+        // клиентов: зашедший позже клиент разбивает его у себя тоже).
         const auto before = read<std::int16_t>(actor, 0x17a);
         reinterpret_cast<DamageFn>(s.damage)(actor, instigator, kind, amount);
         const int id = read<int>(actor, 0x180);
+        const auto after = read<std::int16_t>(actor, 0x17a);
+        if (!s.client && s.active && before > 0 && after > 0 && after < before && id >= 0 && id < 100000) queueHurt(id, after); // the hit flash for everyone
         if (before > 0 && read<std::int16_t>(actor, 0x17a) <= 0 && id >= 0 && id < 100000 && !s.brokenSeen.count(id) && s.breakCount < s.breakQueue.size()) {
             s.brokenSeen[id] = s.ticks;
             s.breakQueue[(s.breakHead + s.breakCount++) % s.breakQueue.size()] = id;
@@ -452,6 +468,12 @@ void __fastcall hookDamage(void* actor, void* instigator, int kind, short amount
         // «актор исчез» через полсекунды: у клиента живой враг замирал и пропадал (friend's run 2026-11-12: «мобы диспавнятся»).
         const auto before = read<std::int16_t>(actor, 0x17a);
         reinterpret_cast<DamageFn>(s.damage)(actor, instigator, kind, amount);
+        const auto after = read<std::int16_t>(actor, 0x17a);
+        if (before > 0 && after > 0 && after < before) {   // wounded, alive: the others see the hit flash too (EvEnemyHurt)
+            int id = read<int>(actor, 0x180);
+            if (id < 0 || id >= 100000) { const auto dyn = hostDynamicId(static_cast<Byte*>(actor)); id = dyn != 0xffffffffu ? static_cast<int>(SphereMirrorTag | dyn) : -1; }
+            if (id >= 0) queueHurt(id, after);
+        }
         if (before > 0 && read<std::int16_t>(actor, 0x17a) <= 0) {
             int id = read<int>(actor, 0x180);
             if (id < 0 || id >= 100000) { const auto dyn = hostDynamicId(static_cast<Byte*>(actor)); id = dyn != 0xffffffffu ? static_cast<int>(SphereMirrorTag | dyn) : -1; }
@@ -787,6 +809,22 @@ void __fastcall hookCheckpointTouch(void* cp, void* toucher) {
 // у клиента — этот: своё касание проходит родным путём (оружие сразу в руках) и уходит хосту (ReqTouch), тело этого игрока получает его там.
 constexpr std::uint32_t WeaponTouchRva = 0x1d8470, WeaponVtable = 0x52cb60;
 constexpr std::array<Byte, 16> WeaponTouchPrefix{0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00};
+// Map pickup (kexSlavePickupMap, vtable 0x52c738): OnTouch 0x1d9140 (same prologue as the weapon one). Client: its own player's touch goes to
+// the host too (it reveals its own map natively here). Host: whoever took it (its player, a client's body), every client reveals its map.
+constexpr std::uint32_t MapTouchRva = 0x1d9140, MapVtable = 0x52c738, AutomapRva = 0xa43308;
+extern const std::uint32_t LevelWindowRva;
+extern const std::array<Byte, 16> LevelWindowPrefix;
+void __fastcall hookLevelWindow(void* gi);
+void __fastcall hookMapTouch(void* map, void* toucher) {
+    auto* original = reinterpret_cast<TouchFn>(s.mapTouch);
+    if (!original) return;
+    const bool before = map && read<Byte>(map, 0x40);
+    if (thread() && s.installed && s.client && s.active && map && toucher && toucher == s.ownActor) pushTouch(TouchMap, read<int>(map, 0x180));
+    original(map, toucher);
+    if (thread() && s.installed && !s.client && s.active && map && !before && read<Byte>(map, 0x40)) {
+        s.mapRevealPending = true; note("world_map_taken", "\"by_remote\":%s", s.remoteTest && s.remoteTest(toucher) ? "true" : "false");
+    }
+}
 void __fastcall hookWeaponTouch(void* weapon, void* toucher) {
     auto* original = reinterpret_cast<TouchFn>(s.weaponTouch);
     if (!original) return;
@@ -914,6 +952,14 @@ bool install(Byte* base, std::uint32_t simTid, Logger log, bool host) {
             note("world_hook_failed", "\"site\":\"WeaponTouch\""); s.weaponTouch = nullptr;
         } else note("touch_hook_ready", "\"weapon_rva\":%u", WeaponTouchRva);
     }
+    if (!std::equal(LevelWindowPrefix.begin(), LevelWindowPrefix.end(), base + LevelWindowRva)) note("world_profile_mismatch", "\"site\":\"level_window\"");
+    else if (MH_CreateHook(base + LevelWindowRva, reinterpret_cast<void*>(&hookLevelWindow), &s.levelWindow) != MH_OK || MH_EnableHook(base + LevelWindowRva) != MH_OK) {
+        note("world_hook_failed", "\"site\":\"LevelWindow\""); s.levelWindow = nullptr;
+    } else note("level_window_hook_ready", "\"rva\":%u", LevelWindowRva);
+    if (!std::equal(WeaponTouchPrefix.begin(), WeaponTouchPrefix.end(), base + MapTouchRva)) note("world_profile_mismatch", "\"site\":\"map_touch\"");
+    else if (MH_CreateHook(base + MapTouchRva, reinterpret_cast<void*>(&hookMapTouch), &s.mapTouch) != MH_OK || MH_EnableHook(base + MapTouchRva) != MH_OK) {
+        note("world_hook_failed", "\"site\":\"MapTouch\""); s.mapTouch = nullptr;
+    } else note("map_touch_hook_ready", "\"rva\":%u", MapTouchRva);
     if (!host) { // враги хоста: ИИ клиента заменён репликой, пока приходят снимки
         if (!std::equal(AiTickPrefix.begin(), AiTickPrefix.end(), base + AiTickRva) || !std::equal(AiDamagePrefix.begin(), AiDamagePrefix.end(), base + AiDamageRva) ||
             !std::equal(ChangeAnimPrefix.begin(), ChangeAnimPrefix.end(), base + ChangeAnimRva)) {
@@ -970,6 +1016,7 @@ void playPlayerSound(Byte* actor, std::uint32_t sound) {
 void setRemoteBodyTest(bool (*test)(const void*)) { s.remoteTest = test; }
 void setLocalActorGetter(unsigned char* (*get)()) { s.localActor = get; }
 int setHudKind(int kind) { const int before = s.hudKind; s.hudKind = kind; return before; }
+void setNoPause(bool on);
 void setActive(bool on) {
     if (!thread()) return;
     if (on && on == s.active && s.installed) trackMovers(); // (not on the first active tick: the queues are reset just below)
@@ -999,11 +1046,95 @@ void setActive(bool on) {
     if (!on) s.ownActor = nullptr;
     if (on == s.active) return;
     s.active = on;
-    s.head = s.count = 0; s.sceneDone.fill(false); s.sceneSubstituted.fill(false); s.breakHead = s.breakCount = 0; s.brokenSeen.clear();
+    setNoPause(on);
+    s.head = s.count = 0; s.sceneDone.fill(false); s.sceneSubstituted.fill(false); s.breakHead = s.breakCount = 0; s.brokenSeen.clear(); s.hurtAt.clear(); s.hurtHead = s.hurtCount = 0;
     s.soundHead = s.soundCount = 0; s.soundLastTick.fill(0);
     for (auto& l : s.lifts) l.sector = -1;
     s.doors.clear(); s.reopen.clear();
     note("world_sync_active", "\"active\":%s", on ? "true" : "false");
+}
+bool isActive() { return s.installed && s.active; }
+// ---- No pause in co-op (Esc menu, inventory screen) and no slowed game under the weapon wheel (Q). The gameplay case of GameInstance::Tick
+// skips the whole world tick while a menu is open: the Esc menu stack (depth 0xa3d58c > 0: ja at 0x1b6ffb; current menu 0xae9970 != 0: jne at
+// 0x1b7009 - this is what the Esc menu sets), and while the inventory screen
+// (kexSlaveInventoryScreenLocal 0xa43f30, Shift; vt+0x10 = byte +0x1b0) is open: it ticks only the screen (vt+0x30), then jmp 0x1b765a at
+// 0x1b6fef. The weapon wheel (cvar ww_slow 0xaf67d0, "Slows time while weapon wheel is open", default 1) lowers the engine rate through
+// 0x9f590 (0x2117f6; je at 0x2117f4 skips it when ww_slow is 0). With two machines that meant one world standing still or slow while the
+// other ran on (desync). While the world sync is active the branches are bypassed: menu / screen / wheel still work, the world runs on;
+// the local player's input is neutral while the menu or the inventory screen is open (host/client uiCapture).
+// GI+0x20c (jne 0x1b7213 at 0x1b6fb8) = a modal window of the level itself (the exit box "Will you travel to ...?", story plaques), opened
+// by GI vtable +0xc8 = 0x1b19d0, closed by +0xd0 = 0x1b1a40. That jne is NOT patched: the branch it leads to is what drives the window every
+// tick (0x1b7233..0x1b739f: its text "travel to <map>" into window+0xa0, then 0x2097d0 = the window's own tick: buttons, input) - skipped,
+// the plaque stood empty without buttons (friend run 2026-11-13 evening). Instead tickGame() runs the native GameInstance::Tick a second
+// time in such a frame with GI+0x20c cleared: that pass ticks the world. The trigger that opened the window (the player still stands in the
+// exit sector) asks again in it: hookLevelWindow ignores that. The second pass also advances the tick counter GI+0x210 (taken back) and
+// the random generator 0x1e91b0 (harmless: the host decides everything that matters).
+struct BytePatch { std::uint32_t rva; std::array<Byte, 6> stock; std::size_t size; std::array<Byte, 6> nop; };
+constexpr BytePatch NoPausePatches[] = {
+    {0x1b6fef, {0xe9, 0x66, 0x06, 0x00, 0x00, 0x00}, 5, {0x0f, 0x1f, 0x44, 0x00, 0x00, 0x00}},  // jmp past the world -> 5-byte nop
+    {0x2117f4, {0x74, 0x26, 0x00, 0x00, 0x00, 0x00}, 2, {0xeb, 0x26, 0x00, 0x00, 0x00, 0x00}},  // je (ww_slow off) -> jmp: never slowed
+    {0x1b6ffb, {0x0f, 0x87, 0x59, 0x06, 0x00, 0x00}, 6, {0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00}},  // ja (menu stack depth > 0) -> nop
+    {0x1b7009, {0x0f, 0x85, 0x4b, 0x06, 0x00, 0x00}, 6, {0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00}},  // jne (a menu is current) -> nop
+};
+bool noPauseOn = false;
+void setNoPause(bool on) {
+    if (!s.base || on == noPauseOn) return;
+    for (const auto& p : NoPausePatches) {   // all or nothing: every site must hold exactly the expected bytes first
+        const auto& expect = on ? p.stock : p.nop;
+        if (!std::equal(expect.begin(), expect.begin() + p.size, s.base + p.rva)) { note("world_nopause_skipped", "\"rva\":%u,\"on\":%s", p.rva, on ? "true" : "false"); return; }
+    }
+    for (const auto& p : NoPausePatches) {
+        DWORD old = 0;
+        if (!VirtualProtect(s.base + p.rva, p.size, PAGE_EXECUTE_READWRITE, &old)) { note("world_nopause_skipped", "\"rva\":%u,\"reason\":\"protect\"", p.rva); return; }
+        std::memcpy(s.base + p.rva, (on ? p.nop : p.stock).data(), p.size);
+        VirtualProtect(s.base + p.rva, p.size, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), s.base + p.rva, p.size);
+    }
+    noPauseOn = on;
+    note("world_nopause", "\"on\":%s", on ? "true" : "false");
+}
+bool noPauseActive() { return noPauseOn; }
+// GI vtable +0xc8 (0x1b19d0): opens a modal window of the level. In the world pass under an open window (co-op) its trigger asks again:
+// ignored there, the open window keeps its buttons. Outside that pass it is left alone (the window's "Yes" goes through it).
+const std::uint32_t LevelWindowRva = 0x1b19d0;
+const std::array<Byte, 16> LevelWindowPrefix{0x48, 0x83, 0xec, 0x28, 0x33, 0xc0, 0x4c, 0x8b, 0xd9, 0x89, 0x41, 0x40, 0x48, 0x89, 0x41, 0x78};
+void __fastcall hookLevelWindow(void* gi) {
+    auto* original = reinterpret_cast<void(__fastcall*)(void*)>(s.levelWindow);
+    if (!original) return;
+    // Only in the world pass: the window's own "Yes" calls this too while it is open (then it must work: friend run smoke, Enter refused).
+    if (thread() && s.windowWorldPass) {
+        if (++s.windowSkips % 300 == 1) note("world_level_window_reopen_skipped", "\"total\":%llu", s.windowSkips);
+        return;
+    }
+    if (thread() && ++s.windowLogged <= 30) note("world_level_window_open", "\"no_pause\":%s", noPauseOn ? "true" : "false");
+    original(gi);
+}
+// The native GameInstance::Tick, once more with the world when a level window holds it (see above): co-op, gameplay state 3, no pending
+// state change. Host and client call this instead of the original Tick.
+void tickGame(void (*original)(void*), void* gi) {
+    // Only when the window was open BEFORE this tick: in the tick that opens it the world already ran (one local player update per tick).
+    static const bool off = [] { char v[4]{}; return GetEnvironmentVariableA("PSE_DEBUG_NO_WINDOW_PASS", v, sizeof(v)) > 0 && v[0] == '1'; }(); // test: stock behaviour
+    const bool held = !off && gi && read<Byte>(gi, 0x20c);
+    original(gi);
+    if (!held || !noPauseOn || !thread() || read<int>(gi, 0x24) != 3 || read<int>(gi, 0x28) != 0 || !read<Byte>(gi, 0x20c)) return;
+    auto* window = static_cast<Byte*>(gi) + 0x20c;
+    // The world code sets the "menus follow the mouse" byte 0xaec394 (0x1fd9e9, 0x21d063, 0x22f136 ...); the window then took its selection
+    // from the cursor every tick and lost the one made with the keys (LEFT, then Enter did nothing): kept as the window left it.
+    auto* mouseMode = s.base + 0xaec394; const Byte mouseBefore = *mouseMode;
+    s.windowWorldPass = true; *window = 0;
+    original(gi);
+    *mouseMode = mouseBefore;
+    if (read<int>(gi, 0x24) == 3 && read<int>(gi, 0x28) == 0) *window = 1; // unless that pass started a state change
+    --*reinterpret_cast<int*>(static_cast<Byte*>(gi) + 0x210);
+    s.windowWorldPass = false;
+    if (++s.windowPasses % 600 == 1) note("world_level_window_world_pass", "\"passes\":%llu", s.windowPasses);
+}
+// A menu or screen over the game that used to stop the world (see above): the local player stands still behind it.
+bool menuOpen(const void* instance) {
+    if (!s.base) return false;
+    // Not GI+0x20c: a window of the level (the exit box) takes its choice from the local player's commands, neutral input left it deaf.
+    (void)instance;
+    return read<int>(s.base + 0xa3d58c) > 0 || read<void*>(s.base + 0xae9970) || read<Byte>(s.base + 0xa43f30, 0x1b0);
 }
 bool popMover(Mover& out) {
     if (!s.installed || !s.count) return false;
@@ -1025,11 +1156,23 @@ bool applyBreak(int id) {
         target = a; return true;
     });
     if (!target) { note("world_break_missing", "\"id\":%d", id); return false; }
+    // The host broke it, so it is a breakable; Damage refuses an actor without "shootable" (+0x16c & 0x20), which a vase of a level loaded
+    // a moment ago by a rejoining client did not have yet (smoke_r13) - set it for this one native hit.
+    if (!(read<unsigned>(target, 0x16c) & 0x20u)) *reinterpret_cast<unsigned*>(target + 0x16c) |= 0x20u;
     s.replaying = true;
     reinterpret_cast<DamageFn>(s.damage)(target, nullptr, 0, 30000);
     s.replaying = false;
-    note("world_break_applied", "\"id\":%d,\"alive_after\":%s", id, read<std::int16_t>(target, 0x17a) > 0 ? "true" : "false");
+    const bool alive = read<std::int16_t>(target, 0x17a) > 0;
+    note("world_break_applied", "\"id\":%d,\"alive_after\":%s,\"flags\":%u", id, alive ? "true" : "false", read<unsigned>(target, 0x16c));
+    // Right after a (re)join loads the level the object may not take damage yet (seen: a resent vase stayed whole): try again later.
+    if (alive && s.client) { s.brokenSeen.erase(id); auto& r = s.breakRetry[id]; if (r < 10) ++r; else s.breakRetry.erase(id); }
+    else s.breakRetry.erase(id);
     return true;
+}
+void retryBreaks() {
+    if (!thread() || !s.installed || !s.client || !s.active || s.breakRetry.empty() || s.ticks % 30) return;
+    std::vector<int> ids; for (const auto& [id, n] : s.breakRetry) ids.push_back(id);
+    for (const int id : ids) if (!applyBreak(id)) s.breakRetry.erase(id); // missing now: nothing left to break
 }
 ScriptCall popScript() {
     if (!s.installed || !s.scriptCount) return {};
@@ -1280,7 +1423,8 @@ void debugKillEnemy() {
     forEachActor([&](Byte* a, int) {
         if (read<Byte*>(a) != s.base + AiVtable || read<int>(a, 0x180) != id) return false;
         // Тот же вызов, что и в P7: generic Damage(actor, source, type, amount); виртуальная реакция ИИ (смерть) идёт из него.
-        reinterpret_cast<void(__fastcall*)(void*, void*, int, short)>(s.base + 0x1a1370)(a, nullptr, 0, 100);
+        static const short amount = [] { char v[8]{}; return static_cast<short>(GetEnvironmentVariableA("PSE_DEBUG_KILL_AMOUNT", v, sizeof(v)) ? std::clamp(std::atoi(v), 1, 30000) : 100); }();
+        reinterpret_cast<void(__fastcall*)(void*, void*, int, short)>(s.base + 0x1a1370)(a, nullptr, 0, amount); // PSE_DEBUG_KILL_AMOUNT: less = only wounded
         note("world_debug_kill", "\"id\":%d,\"hp\":%d,\"ai\":%d", id, read<std::int16_t>(a, 0x17a), read<int>(a, 0x1b8));
         return true;
     });
@@ -1469,6 +1613,30 @@ bool deadByEvent(std::uint32_t wireId) {
     const auto it = s.enemyDeadAt.find(wireId);
     return it != s.enemyDeadAt.end() && s.ticks - it->second < 120;
 }
+}
+bool popMapReveal() { const bool v = s.mapRevealPending; s.mapRevealPending = false; return v; }
+bool applyMapReveal() {
+    if (!thread() || !s.installed || !s.client || !s.active) return false;
+    auto* automap = s.base + AutomapRva; auto** vt = read<void**>(automap);
+    if (!vt || reinterpret_cast<Byte*>(vt) < s.base + 0x482000 || reinterpret_cast<Byte*>(vt) >= s.base + 0x59f000) { note("world_map_reveal", "\"ok\":false"); return false; }
+    reinterpret_cast<void(__fastcall*)(void*, std::uint8_t, int)>(vt[2])(automap, 1, 0);
+    note("world_map_reveal", "\"ok\":true");
+    return true;
+}
+bool popEnemyHurt(int& id, unsigned& origin) {
+    if (!s.hurtCount) return false;
+    const auto h = s.hurtQueue[s.hurtHead]; s.hurtHead = (s.hurtHead + 1) % s.hurtQueue.size(); --s.hurtCount;
+    id = h.id; origin = h.origin;
+    return true;
+}
+bool applyEnemyHurt(int id) {
+    if (!thread() || !s.installed || !s.client || !s.active || id < 0) return false;
+    Byte* target = nullptr;
+    forEachActor([&](Byte* a, int) { if (isPuppet(a) || read<int>(a, 0x180) != id || read<Byte>(a, 0x40)) return false; target = a; return true; }); // enemy or breakable
+    const bool flash = target && read<std::int16_t>(target, 0x17a) > 0 && (read<unsigned>(target, 0x16c) & 0x20u);
+    if (flash) { *reinterpret_cast<unsigned*>(target + 0x16c) |= 0x10u; *reinterpret_cast<int*>(target + 0x134) = 1; }
+    if (++s.hurtAppliedLogged <= 30) note("world_enemy_hurt_applied", "\"id\":%d,\"found\":%s,\"flash\":%s", id, target ? "true" : "false", flash ? "true" : "false");
+    return flash;
 }
 bool popEnemyDeath(int& id, bool& extreme) {
     if (!s.deathCount) return false;
@@ -1875,8 +2043,8 @@ void debugTouch(Byte* own) {
     for (char* p = spec; p && *p;) {
         int kind = -1, id = -1;
         if (sscanf_s(p, "%d,%d", &kind, &id) == 2 && kind >= 0 && kind < TouchKinds) {
-            static constexpr std::uint32_t vt[TouchKinds]{HealthPickupVtable, AmmoPickupVtable, KeyVtable, WeaponVtable, CheckpointVtable};
-            static constexpr std::uint32_t rva[TouchKinds]{HealthTouchRva, AmmoTouchRva, KeyTouchRva, WeaponTouchRva, CheckpointTouchRva};
+            static constexpr std::uint32_t vt[TouchKinds]{HealthPickupVtable, AmmoPickupVtable, KeyVtable, WeaponVtable, CheckpointVtable, MapVtable};
+            static constexpr std::uint32_t rva[TouchKinds]{HealthTouchRva, AmmoTouchRva, KeyTouchRva, WeaponTouchRva, CheckpointTouchRva, MapTouchRva};
             Byte* target = nullptr;
             forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + vt[kind] || read<int>(a, 0x180) != id) return false; target = a; return true; });
             note("world_debug_touch", "\"kind\":%d,\"id\":%d,\"found\":%s", kind, id, target ? "true" : "false");
@@ -1912,6 +2080,20 @@ bool popTouch(Touch& out) {
 int applyTouch(const Touch& t, Byte* body) {
     if (!thread() || !s.installed || s.client || !s.active || !body || t.id < 0 || read<std::int16_t>(body, 0x17a) <= 0) return 0;
     if (t.kind == TouchHealth || t.kind == TouchAmmo) return takePickup(t.id, body);
+    if (t.kind == TouchMap) {   // a map of the level or one a vase dropped here (mirrored at the client under its dynamic number)
+        const bool dynamic = (static_cast<std::uint32_t>(t.id) & 0xff000000u) == SphereMirrorTag;
+        Byte* wanted = dynamic ? hostDynamicActor(static_cast<std::uint32_t>(t.id) & 0x00ffffffu) : nullptr;
+        Byte* target = nullptr;
+        if (!dynamic || wanted) forEachActor([&](Byte* a, int) {
+            if (dynamic ? a != wanted : read<int>(a, 0x180) != t.id) return false;
+            if (read<Byte*>(a) != s.base + MapVtable || read<Byte>(a, 0x40)) return false;
+            target = a; return true;
+        });
+        if (target) { const int before = s.hudKind; s.hudKind = 2; reinterpret_cast<TouchFn>(s.base + MapTouchRva)(target, body); s.hudKind = before; }
+        if (++s.touchAppliedLogged <= 60) note("world_touch_applied", "\"kind\":%u,\"id\":%d,\"result\":\"%s\"", static_cast<unsigned>(t.kind), t.id, target ? "touched" : "gone");
+        if (!target) s.mapRevealPending = true; // gone here already (taken by someone else): the asker has it anyway, everyone gets the map
+        return target ? 1 : 0;
+    }
     if (t.kind != TouchKey && t.kind != TouchWeapon) return 0;
     const bool key = t.kind == TouchKey;
     Byte* target = nullptr;
@@ -1978,7 +2160,7 @@ bool popHit(int& id, int& amount, int& kind) {
     id = h.id; amount = h.amount; kind = h.kind; ++s.hitsSent;
     return true;
 }
-bool applyHit(int id, int amount, int kind, Byte* body) {
+bool applyHit(int id, int amount, int kind, Byte* body, unsigned slot) {
     if (!thread() || !s.installed || s.client || !s.active || id < 0 || amount <= 0) return false;
     const bool dynamic = (static_cast<std::uint32_t>(id) & 0xff000000u) == SphereMirrorTag;
     Byte* wanted = nullptr;
@@ -1993,13 +2175,62 @@ bool applyHit(int id, int amount, int kind, Byte* body) {
     bool done = false;
     if (target && hp > 0 && (read<unsigned>(target, 0x16c) & 0x20u)) {
         // The same native Damage the client's own shot would have made, from that player's body (the enemy turns to it, a kill is its kill).
-        s.clientHit = true;
+        s.clientHit = true; s.hitOrigin = slot;
         reinterpret_cast<DamageFn>(s.base + DamageRva)(target, body && read<std::int16_t>(body, 0x17a) > 0 ? body : nullptr, kind & 0xff, static_cast<short>(std::min(amount, 4000)));
-        s.clientHit = false; done = true;
+        s.clientHit = false; s.hitOrigin = 0; done = true;
     }
     if (++s.hitAppliedLogged <= 40) note("world_hit_applied", "\"id\":%d,\"amount\":%d,\"kind\":%d,\"found\":%s,\"hp_before\":%d,\"hp_after\":%d", id, amount, kind,
         target ? "true" : "false", hp, target ? static_cast<int>(read<std::int16_t>(target, 0x17a)) : 0);
     return done;
+}
+// Test (host, inside the world tick): PSE_DEBUG_ITEM=<defines.txt type> + PSE_DEBUG_ITEM_FILE: when the file appears, that item is spawned
+// 200 units in front of the host's player (as a vase drops it: a dynamic actor, mirrored to the clients); PSE_DEBUG_ITEM_TAKE_FILE: when that
+// file appears, the host's player stands on it (and takes it).
+void debugItem(Byte* own) {
+    static Byte* spawned = nullptr; static bool fired = false, taken = false;
+    char v[16]{}, file[MAX_PATH]{};
+    if (!thread() || !s.installed || s.client || !s.active || !own || !GetEnvironmentVariableA("PSE_DEBUG_ITEM", v, sizeof(v))) return;
+    if (!fired && GetEnvironmentVariableA("PSE_DEBUG_ITEM_FILE", file, sizeof(file)) && GetFileAttributesA(file) != INVALID_FILE_ATTRIBUTES && projProfile()) {
+        fired = true;
+        const float yaw = read<float>(own, 0x38), x = read<float>(own, 0x18) + 200.0f * std::sin(yaw), y = read<float>(own, 0x1c) + 200.0f * std::cos(yaw);
+        const int sector = read<int>(own, 0x3c);
+        const float floor = floorAt(x, y, read<float>(own, 0x20), sector);
+        const float pos[3]{x, y, std::isfinite(floor) ? floor : read<float>(own, 0x20)};
+        spawned = static_cast<Byte*>(reinterpret_cast<void*(__fastcall*)(void*, int, const float*, float, int)>(s.base + SpawnActorRva)(s.base + FactoryRva, std::atoi(v), pos, 0.0f, sector));
+        note("world_debug_item", "\"type\":%d,\"spawned\":%s,\"pos\":[%.0f,%.0f,%.0f],\"sector\":%d", std::atoi(v), spawned ? "true" : "false", pos[0], pos[1], pos[2], sector);
+    }
+    if (fired && !taken && spawned && GetEnvironmentVariableA("PSE_DEBUG_ITEM_TAKE_FILE", file, sizeof(file)) && GetFileAttributesA(file) != INVALID_FILE_ATTRIBUTES) {
+        taken = true; bool alive = false;
+        forEachActor([&](Byte* a, int) { if (a != spawned) return false; alive = !read<Byte>(a, 0x40); return true; });
+        const bool ok = alive && teleport(own, read<float>(spawned, 0x18), read<float>(spawned, 0x1c), read<float>(spawned, 0x20) + 48.0f, read<int>(spawned, 0x3c)); // falls onto it: touches are tested while moving
+        note("world_debug_item_take", "\"alive\":%s,\"ok\":%s", alive ? "true" : "false", ok ? "true" : "false");
+    }
+}
+
+// Test (host, inside the world tick): PSE_DEBUG_WOUND=<map actor number> - PSE_DEBUG_WOUND_FILE: the host's player hits it for 1 (a wound:
+// the hit flash for everyone), PSE_DEBUG_WOUND_FILE2: for 30000 (broken, remembered for clients that join later).
+// PSE_DEBUG_GOTO="x,y,z" + PSE_DEBUG_GOTO_FILE: the host's player is put there (e.g. into the level exit).
+void debugBreakGoto(Byte* own) {
+    static int step = 0; static bool went = false;
+    char v[48]{}, file[MAX_PATH]{};
+    if (!thread() || !s.installed || s.client || !own) return;   // the goto also with the host alone (a stock exit box for comparison)
+    if (step < 2 && s.active && GetEnvironmentVariableA("PSE_DEBUG_WOUND", v, sizeof(v)) &&
+        GetEnvironmentVariableA(step == 0 ? "PSE_DEBUG_WOUND_FILE" : "PSE_DEBUG_WOUND_FILE2", file, sizeof(file)) && GetFileAttributesA(file) != INVALID_FILE_ATTRIBUTES) {
+        const int id = std::atoi(v); const short amount = step == 0 ? 1 : 30000; ++step;
+        Byte* target = nullptr;
+        forEachActor([&](Byte* a, int) { if (read<int>(a, 0x180) != id || read<Byte>(a, 0x40) || isPuppet(a)) return false; target = a; return true; });
+        const int before = target ? read<std::int16_t>(target, 0x17a) : 0;
+        if (target) reinterpret_cast<DamageFn>(s.base + DamageRva)(target, own, 0, amount);
+        note("world_debug_wound", "\"id\":%d,\"amount\":%d,\"found\":%s,\"hp_before\":%d,\"hp_after\":%d", id, amount, target ? "true" : "false", before, target ? static_cast<int>(read<std::int16_t>(target, 0x17a)) : 0);
+    }
+    float x = 0, y = 0, z = 0;
+    if (!went && GetEnvironmentVariableA("PSE_DEBUG_GOTO", v, sizeof(v)) && sscanf_s(v, "%f,%f,%f", &x, &y, &z) == 3 &&
+        GetEnvironmentVariableA("PSE_DEBUG_GOTO_FILE", file, sizeof(file)) && GetFileAttributesA(file) != INVALID_FILE_ATTRIBUTES) {
+        went = true;
+        const int sector = findSector(x, y, z);
+        const bool ok = sector >= 0 && teleport(own, x, y, z + 16.0f, sector);
+        note("world_debug_goto", "\"ok\":%s,\"sector\":%d", ok ? "true" : "false", sector);
+    }
 }
 void applyDynamic(const Dynamic* in, int count) {
     if (!thread() || !s.installed || !s.client || !s.active) return;

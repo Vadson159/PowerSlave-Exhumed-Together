@@ -162,6 +162,8 @@ struct Session {
     bool started{},stopped{},active{},readySent{},baseline{},reconnectPending{};
     std::uint16_t worldKeysPending{};std::uint32_t worldOnTicks{},lastEnemySequence{},achPending{};unsigned useHold{};std::vector<pse::world::ScriptCall> scriptPending;std::vector<int> breakPending;std::vector<std::pair<unsigned,std::uint32_t>> soundPending; // (slot, sound) of other players to play at their proxy
     std::vector<int> gonePending,pickupPending; // map enemies gone at the host, map spheres taken there
+    bool mapRevealPending{}; // the host says: a map was taken, reveal the whole automap here too
+    std::vector<int> hurtPending; // enemies another player wounded at the host: the native hit flash here
     std::vector<std::pair<int,bool>> deathPending; // enemies that died at the host (wire number, extreme death): the same native death here
     int difficultyPending{-1}; // the host's difficulty (EvDifficulty), adopted when the world is ready
     std::vector<std::pair<int,int>> switchPending; // (face, event) of switches pressed at the host: their texture here
@@ -325,7 +327,7 @@ struct Session {
     // the host builds this player's body afresh (generation 1), every other player's proxy is replaced by its next snapshot.
     void newBindingState() {
         ++bindings;
-        worldKeysPending=0;scriptPending.clear();breakPending.clear();soundPending.clear();gonePending.clear();deathPending.clear();pickupPending.clear();switchPending.clear();
+        worldKeysPending=0;scriptPending.clear();breakPending.clear();soundPending.clear();gonePending.clear();deathPending.clear();hurtPending.clear();mapRevealPending=false;pickupPending.clear();switchPending.clear();
         hostHealthValid=vitalsSynced=hostLoadoutValid=false;worldPending.clear();
         bindingReset16();
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -339,6 +341,8 @@ struct Session {
         if(e.eventType==w::EvKeys) { worldKeysPending|=static_cast<std::uint16_t>(e.eventValue&0xf);return; } // applied when the world is ready
         if(e.eventType==w::EvSound && e.sourceEntityId<8 && e.sourceEntityId!=slot && e.eventValue>=0 && soundPending.size()<64) { soundPending.push_back({e.sourceEntityId,static_cast<std::uint32_t>(e.eventValue)});return; }
         if(e.eventType==w::EvEnemyGone && e.eventValue>=0 && gonePending.size()<512) { gonePending.push_back(e.eventValue);return; }
+        if(e.eventType==w::EvMapAll) { mapRevealPending=true;return; }
+        if(e.eventType==w::EvEnemyHurt && e.eventValue>=0 && e.sourceEntityId!=slot && hurtPending.size()<256) { hurtPending.push_back(e.eventValue);return; } // own hits flash at once here
         if(e.eventType==w::EvEnemyDeath && e.eventValue>=0 && deathPending.size()<256) { deathPending.push_back({e.eventValue,e.targetEntityId!=0});return; }
         if(e.eventType==w::EvPickup && e.eventValue>=0 && pickupPending.size()<512) { pickupPending.push_back(e.eventValue);return; }
         if(e.eventType==w::EvDifficulty && e.eventValue>=0 && e.eventValue<8) { difficultyPending=e.eventValue;return; }
@@ -434,6 +438,9 @@ struct Session {
         for(const auto& f:soundPending) w::playPlayerSound(pse::native_proxy::actorOf(f.first),f.second); // another player's jump, shot, pain ... at its proxy
         soundPending.clear();
         for(auto snd=w::popSound();snd!=0xffffffffu;snd=w::popSound()) sendWorld(w::ReqSound,snd,0); // this player's own sounds: the host and the others hear them
+        if(mapRevealPending) { mapRevealPending=false;w::applyMapReveal(); }
+        for(const int id:hurtPending) w::applyEnemyHurt(id);
+        hurtPending.clear();
         for(const auto& [id,extreme]:deathPending) w::applyEnemyDeath(id,extreme); // before "gone": a torn enemy dies here by itself, as at the host
         deathPending.clear();
         for(const int id:gonePending) w::applyEnemyGone(id);
@@ -456,6 +463,7 @@ struct Session {
         switchPending.clear();
         for(const int id:breakPending) w::applyBreak(id);
         breakPending.clear();
+        w::retryBreaks();
         for(int id;(id=w::popBreak())>=0;) sendWorld(w::ReqBreak,static_cast<std::uint32_t>(id),0);
         if(!scriptPending.empty()) { Byte* me=worldPuppet();if(me) { for(const auto& c:scriptPending) w::applyScript(c.num,me,&c);scriptPending.clear(); } }
         for(auto c=w::popScript();c.num>=0;c=w::popScript()) sendWorld(w::ReqScript,static_cast<std::uint32_t>(c.num)|(static_cast<std::uint32_t>(c.pos?w::packZ(c.z):0)<<16),c.pos?w::packXY(c.x,c.y):0);
@@ -956,13 +964,15 @@ void __fastcall hookTick(void* self) {
     if(leased && !g.backgroundPeriod) g.resetPending=true;
     const bool returning=g.backgroundPeriod && g.focusKnown && !g.focusLost;
     if(returning) g.resetPending=true;
-    const bool uiCapture=pse::ui::nativeCapture(g.permit.load(std::memory_order_acquire)!=0,gameplay(),pse::ui::shared().capture.load());
+    // the Esc menu no longer stops the world in co-op (world_sync setNoPause): the player stands still behind it instead of walking on held keys
+    const bool uiCapture=pse::ui::nativeCapture(g.permit.load(std::memory_order_acquire)!=0,gameplay(),pse::ui::shared().capture.load()) ||
+        (pse::world::noPauseActive() && gameplay() && pse::world::menuOpen(instance()));
     if(uiCapture!=g.uiCaptureWas) {g.resetPending=true;log("p23_ui_input_gate","\"capture\":%s,\"scoped_native_neutral\":true",uiCapture?"true":"false");}
     g.neutral=leased||returning||uiCapture||g.uiCaptureWas;g.uiCaptureWas=uiCapture;
     if(leased) { g.backgroundPeriod=true;++g.backgroundTicks; }
     if(returning) g.backgroundPeriod=false;
 #endif
-    reinterpret_cast<Unary>(g.original[profile::Tick])(self);
+    pse::world::tickGame(reinterpret_cast<void(*)(void*)>(g.original[profile::Tick]),self); // + the world under a level window (co-op)
 #ifdef PSE_FEATURE_P4
     endClientLease();g.neutral=false;
     if(leased && (g.backgroundTicks<=3 || g.backgroundTicks%120==0))
@@ -1007,7 +1017,7 @@ void __fastcall hookTick(void* self) {
 #endif
     {   // Esc menu: gameplay state, but the local Player Update is skipped. Debounced over a few ticks.
         static unsigned idleTicks=0;idleTicks=(gameplay() && g.localThisTick==0) ? idleTicks+1 : 0;
-        pse::ui::shared().paused.store(idleTicks>=3,std::memory_order_release);
+        pse::ui::shared().paused.store(idleTicks>=3 || (gameplay() && pse::world::menuOpen(instance())),std::memory_order_release); // co-op: the Esc menu no longer stops the world
     }
     pse::native_ui::tick(!g.stopped && !g.failed && gameplay() && g.session && g.session->active && g.session->readySent && g.session->baseline,g.session?g.session->epoch:0,g.session?g.session->slot:255,g.session?g.session->gen:0);
     g.inTick=false;

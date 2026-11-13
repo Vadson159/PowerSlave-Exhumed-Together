@@ -1,7 +1,7 @@
-POWERSLAVE EXHUMED TOGETHER — PUBLIC TEST 2026-11-12
+POWERSLAVE EXHUMED TOGETHER — VERSION 1.0
 
 Unofficial campaign co-op for PowerSlave Exhumed (2022, Steam), Windows x64.
-Supports 2–8 players over LAN / Radmin VPN or a direct IP over the internet. Early test build: bugs, crashes
+Supports 2–8 players over LAN / Radmin VPN or a direct IP over the internet. Bugs, crashes
 and desynchronization remain possible. Eight-player internet play is unverified.
 
 INSTALL
@@ -26,13 +26,19 @@ The host's mod asks the router to open UDP 28745 (UPnP). The host's F7 menu
 shows "Internet: <public IP>:28745" for friends. If UPnP is off or refused,
 forward UDP (not TCP) 28745 to the host PC by hand. "provider NAT" means the
 host has no public address (carrier-grade NAT): use Radmin VPN or another host.
-Friends: join.bat <address> (or F7 > Host IP[:port], IP, IP:port or host name,
-Enter). The host's firewall must allow inbound UDP 28745 on public networks too.
+Easiest: the host presses F6 in a level (its address goes to the clipboard), sends
+it to the friend, the friend copies it and presses F6 in the game, then Enter.
+Or join.bat <address>, or F7 > Host IP[:port] (Ctrl+V works), Enter. Then START or
+LOAD a game: the client connects in a level ("Connecting to ..." is shown). The
+typed address is remembered for the next start. The host's firewall must allow inbound UDP 28745 on public networks too.
 set PSE_UPNP=0 before host.bat disables the router request; the port mapping
 is removed when the game quits.
 
 CONTROLS
 F7: lobby. Backslash: player list. T: chat. E: respawn after death.
+F6: host copies its address for a friend; a friend pastes the host's address.
+In co-op the Esc menu and the inventory screen do not pause the game and the
+weapon wheel (Q) does not slow it down (that desynchronized the worlds).
 Any player's level exit moves the group onward.
 
 SAVES / STEAM

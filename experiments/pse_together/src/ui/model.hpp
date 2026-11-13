@@ -43,6 +43,9 @@ inline bool text(std::string_view s, std::size_t bytes, std::size_t scalars) {
     return visible;
 }
 inline bool name(std::string_view s) { return text(s, 31, 31); }
+// A chat line that starts with this mark is a game notice about its sender ("vadso died"): shown as "<name> <text>", without the colon.
+inline constexpr const char* NoticeMark = "\xC2\xA0";
+inline bool isNotice(std::string_view m) { return m.size() > 2 && m.substr(0, 2) == NoticeMark; }
 inline bool chat(std::string_view s) { return text(s, ChatBytes, ChatScalars); }
 inline bool participant(std::string_view s) {
     if (s.empty() || s.size() > 48) return false;

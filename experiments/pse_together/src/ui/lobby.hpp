@@ -111,6 +111,11 @@ public:
     bool say(std::string message) {
         return server_.isRunning() && chat(message) && limits_[0].accept(limits_[0].lastSequence+1,nowMs()) && emit(0,1,std::move(message));
     }
+    // A notice about a connected player (death): a chat line in that player's name, from the host, no rate limit.
+    bool announce(std::uint8_t slot, std::string message) {
+        if (!server_.isRunning() || slot >= Capacity || !model_.players()[slot]) return false;
+        return emit(slot,model_.players()[slot]->generation,std::move(message));
+    }
     void stop() { if(owned_)server_.stop(); model_.reset(0); }
     const Model& view() const { return model_; }
     // Test seam / future gameplay binder. This endpoint does not start KEX.
