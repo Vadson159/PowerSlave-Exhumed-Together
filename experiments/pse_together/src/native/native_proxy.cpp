@@ -92,6 +92,9 @@ struct State {
 #ifdef PSE_FEATURE_P8
     std::atomic<unsigned> preview{0}; // 0=authoritative DTO, otherwise slot+pose encoded (diagnostic; applies to every proxy)
     bool resourcesAttested{};
+    // Weapon wheel icon above each player's sprite (sprite package variants _w0.._w7 of the live poses). Off when the installed package has none
+    // of them (an older coop_sprites_john.kpf: plain sprites as before) or with PSE_WEAPON_ICONS=0.
+    bool weaponIcons{},iconsOff{};
 #endif
     std::vector<Sector> sectors;
 #ifdef PSE_FEATURE_P4
@@ -351,14 +354,19 @@ void animate(Instance& I) {
     if(!I.art.sameEntity(c.slot,c.mapEpoch,c.connectionGeneration,c.entityId,c.entityGeneration)) return;
     const auto preview=g.preview.load(std::memory_order_acquire);
     const auto slot=preview ? ((preview-1)/4) : c.slot;
-    const auto pose=preview ? static_cast<Pose>((preview-1)%4) : I.art.poseAt(c.sequence);
+    const auto look=preview ? Look{static_cast<Pose>((preview-1)%4),NoWeapon} : I.art.lookAt(c.sequence);
+    const auto pose=look.pose;
+    // The weapon this player holds, as an icon above the head (the same animation with one more sprite layer); never on the death pose.
+    const int weapon=g.weaponIcons && !g.iconsOff && pose!=Pose::Death ? look.weapon : NoWeapon;
     auto* actor=ptr(I.life.actor);actorIdentity(I,actor,ptr(I.life.node),true);
     const auto before=local();bool changed=false;
-    require(Binding::apply(g.base,actor,slot,pose,true,changed),"P8_RESOURCE_OR_BINDING");
+    bool bound=Binding::apply(g.base,actor,slot,pose,true,changed,weapon);
+    if(!bound && weapon!=NoWeapon) { g.weaponIcons=false;emit("p8_weapon_icons_off","\"slot\":%u,\"weapon\":%d,\"pose\":\"%s\"",I.slot,weapon,name(pose));bound=Binding::apply(g.base,actor,slot,pose,true,changed); }
+    require(bound,"P8_RESOURCE_OR_BINDING");
     I.artScale=JohnScale;
     requireShared(local()==before,"P8_LOCAL_PLAYER_CHANGED");
     if(changed || I.liveSteps%60==0) {
-        const auto text=resource(slot,pose,true);
+        const auto text=resource(slot,pose,true,weapon);
         emit("p8_animation","\"slot\":%u,\"pose\":\"%s\",\"resource\":\"%s\",\"sequence\":%u,\"changed\":%s,\"frame\":%d,\"diagnostic_preview\":%s,\"p1_exact_unchanged\":true",I.slot,name(pose),text.data(),c.sequence,changed?"true":"false",read<short>(actor,0x178),preview?"true":"false");
     }
 }
@@ -400,7 +408,14 @@ std::int32_t worldReady(std::uint64_t) {
                     requireShared(Binding::lookup(g.base,slot,pose,proxy)!=nullptr,"P8_RESOURCE_GATE");++found;
                 }
             g.resourcesAttested=found==64;
-            emit("p8_resource_gate","\"validated_resources\":%u,\"distinct_resources\":16,\"archetypes\":2,\"actions\":0,\"external_transitions\":0",found);
+            // Optional: the weapon icon variants of the live proxy poses (8 slots x 3 poses x 8 weapons). Missing ones (an older sprite
+            // package) only switch the icons off; the plain sprites above stay required.
+            unsigned icons=0;
+            for(unsigned slot=0;slot<8;++slot) for(auto pose:{Pose::Idle,Pose::Walk,Pose::Shoot}) for(int w=0;w<8;++w)
+                if(Binding::lookup(g.base,slot,pose,true,w)) ++icons;
+            g.weaponIcons=icons==8u*3u*8u;
+            emit("p8_resource_gate","\"validated_resources\":%u,\"distinct_resources\":16,\"archetypes\":2,\"actions\":0,\"external_transitions\":0,\"weapon_icon_resources\":%u,\"weapon_icons\":%s,\"icons_disabled\":%s",
+                 found,icons,g.weaponIcons?"true":"false",g.iconsOff?"true":"false");
         }
 #endif
         // Healthy = the shared state is healthy. One faulted proxy never makes the others unhealthy.
@@ -730,6 +745,9 @@ bool install(Byte* image,DWORD simulationTid,Journal journal,unsigned /*remoteSl
     if(g.installed || !image || GetCurrentThreadId()!=simulationTid) return false;
     g.base=image;g.tid=simulationTid;g.journal=journal;g.hostMode=hostMode;
     { char v[4]{};keepPoolNumber=GetEnvironmentVariableA("PSE_DEBUG_KEEP_POOL_ID",v,sizeof(v))>0 && v[0]=='1'; }
+#ifdef PSE_FEATURE_P8
+    { char v[4]{};g.iconsOff=GetEnvironmentVariableA("PSE_WEAPON_ICONS",v,sizeof(v))>0 && v[0]=='0'; }
+#endif
     for(std::size_t i=0;i<profile::Count;++i) { if(hostMode && i==profile::puppet_tick) continue; /* already detoured by the host DLL */ if(!prefix(static_cast<profile::Index>(i))) { blockAll("NATIVE_PROXY_PREFIX");return false; } }
     std::vector<std::pair<profile::Index,void*>> hooks={
         {profile::actor_tick,reinterpret_cast<void*>(actorTick)},

@@ -1,4 +1,4 @@
-# PowerSlave Exhumed Together 1.0
+# PowerSlave Exhumed Together 1.1
 
 ![PowerSlave Exhumed Together — co-op mod](docs/images/cover.png)
 
@@ -12,8 +12,6 @@ over LAN, Radmin VPN or a direct internet address.
 
 Also available on [ModDB](https://www.moddb.com/mods/powerslave-exhumed-together)
 and [Nexus Mods](https://www.nexusmods.com/powerslaveexhumed/mods/6).
-The version 1.0 ZIP is available on GitHub and ModDB. Nexus Mods is still
-scanning the new archive; downloads there are temporarily unavailable.
 
 ## Features and status
 
@@ -24,11 +22,12 @@ scanning the new archive; downloads there are temporarily unavailable.
 - F6 copies the host address or pastes it on the client; the last host is remembered.
 - Shared map pickups and enemy hit flashes; death notifications in chat.
 - Menus, inventory and weapon wheel keep the co-op world running.
+- Weapon icons above teammates and per-level kill counts on the Tab map.
+- Shared ankhs, team dolls and transmitters. Full health and ammo pickups placed on the map return after 15 seconds.
 
-**Version 1.0 (2026-11-13).** Crashes, enemy mismatches and desynchronization
-may still occur. Recent automated game checks used multiple instances on one PC;
-eight-player play over the internet has not been validated. This is an early
-co-op mod; bugs may remain in version 1.0.
+**Version 1.1 (2026-11-21).** Crashes, enemy mismatches and desynchronization
+may still occur. Recent automated game checks used multiple instances on one PC.
+Eight-player play over the internet has not been validated.
 
 ## Requirements
 

@@ -79,6 +79,10 @@ struct Context {
     ComPtr<ID3D11SamplerState> sampler;ComPtr<ID3D11BlendState> blend;
     ComPtr<ID3D11DepthStencilState> depth;ComPtr<ID3D11RasterizerState> raster;
     HDC dc{};HBITMAP bitmap{};HFONT font{};void* pixels{};
+    // Kill table (Tab map, top right): its own GDI bitmap/texture/quad; black pixels of it are transparent (keyPs).
+    ComPtr<ID3D11Texture2D> boardTexture;ComPtr<ID3D11ShaderResourceView> boardView;ComPtr<ID3D11Buffer> boardVertices;ComPtr<ID3D11PixelShader> keyPs;
+    HDC boardDc{};HBITMAP boardBitmap{};void* boardPixels{};HFONT boardFont{},boardNumber{},boardTitle{};
+    std::uint64_t boards{};
 };
 struct ContextPointer {
     std::atomic<Context*> value{};
@@ -88,6 +92,7 @@ struct ContextPointer {
 } c;
 std::atomic<bool> installed{};
 constexpr int Width=620,Height=500;
+constexpr int BoardW=300,BoardH=330,BoardRow=36; // kill table: 8 rows of 36 px under a 30 px title
 bool readable(const void* begin,std::size_t count) {
     auto current=reinterpret_cast<std::uintptr_t>(begin);
     if(current>UINTPTR_MAX-count)return false;const auto end=current+count;
@@ -327,12 +332,15 @@ struct V{float2 p:POSITION;float2 uv:TEXCOORD;};
 struct O{float4 p:SV_POSITION;float2 uv:TEXCOORD;};
 O vs_main(V v){O o;o.p=float4(v.p,0,1);o.uv=v.uv;return o;}
 float4 ps_main(O v):SV_TARGET{float3 col=image.Sample(samp,v.uv).rgb;return float4(col,0.94);}
+float4 ps_key(O v):SV_TARGET{float3 col=image.Sample(samp,v.uv).rgb;return float4(col,max(col.r,max(col.g,col.b))>0.003?0.86:0.0);}
 )";
-    ComPtr<ID3DBlob> vs,ps,err;
+    ComPtr<ID3DBlob> vs,ps,key,err;
     if(FAILED(D3DCompile(shader,sizeof(shader),nullptr,nullptr,nullptr,"vs_main","vs_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&vs,&err)) ||
-       FAILED(D3DCompile(shader,sizeof(shader),nullptr,nullptr,nullptr,"ps_main","ps_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&ps,&err)))return false;
+       FAILED(D3DCompile(shader,sizeof(shader),nullptr,nullptr,nullptr,"ps_main","ps_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&ps,&err)) ||
+       FAILED(D3DCompile(shader,sizeof(shader),nullptr,nullptr,nullptr,"ps_key","ps_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&key,&err)))return false;
     if(FAILED(c->device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&c->vs)) ||
-       FAILED(c->device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&c->ps)))return false;
+       FAILED(c->device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&c->ps)) ||
+       FAILED(c->device->CreatePixelShader(key->GetBufferPointer(),key->GetBufferSize(),nullptr,&c->keyPs)))return false;
     const D3D11_INPUT_ELEMENT_DESC elements[]={{"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},{"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,8,D3D11_INPUT_PER_VERTEX_DATA,0}};
     if(FAILED(c->device->CreateInputLayout(elements,2,vs->GetBufferPointer(),vs->GetBufferSize(),&c->layout)))return false;
     D3D11_BUFFER_DESC buffer{};buffer.ByteWidth=6*4*sizeof(float);buffer.Usage=D3D11_USAGE_DYNAMIC;buffer.BindFlags=D3D11_BIND_VERTEX_BUFFER;buffer.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
@@ -350,14 +358,58 @@ float4 ps_main(O v):SV_TARGET{float3 col=image.Sample(samp,v.uv).rgb;return floa
     if(!c->dc || !c->bitmap || !c->pixels)return false;
     SelectObject(c->dc,c->bitmap);c->font=CreateFontW(-21,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,NONANTIALIASED_QUALITY,FIXED_PITCH,L"Consolas");
     if(!c->font)return false;SelectObject(c->dc,c->font);SetBkMode(c->dc,TRANSPARENT);
-    c->log("p23_graphics_ready","\"deferred\":true,\"restore_context\":true,\"native_font_calls\":0");return true;
+    {   // kill table resources (same pipeline, own texture/quad, colour-keyed pixel shader)
+        if(FAILED(c->device->CreateBuffer(&buffer,nullptr,&c->boardVertices)))return false;
+        D3D11_TEXTURE2D_DESC board=tex;board.Width=BoardW;board.Height=BoardH;
+        if(FAILED(c->device->CreateTexture2D(&board,nullptr,&c->boardTexture)) || FAILED(c->device->CreateShaderResourceView(c->boardTexture.Get(),nullptr,&c->boardView)))return false;
+        BITMAPINFO binfo=info;binfo.bmiHeader.biWidth=BoardW;binfo.bmiHeader.biHeight=-BoardH;
+        c->boardDc=CreateCompatibleDC(nullptr);c->boardBitmap=c->boardDc?CreateDIBSection(c->boardDc,&binfo,DIB_RGB_COLORS,&c->boardPixels,nullptr,0):nullptr;
+        if(!c->boardDc || !c->boardBitmap || !c->boardPixels)return false;
+        SelectObject(c->boardDc,c->boardBitmap);SetBkMode(c->boardDc,TRANSPARENT);
+        c->boardFont=CreateFontW(-22,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,NONANTIALIASED_QUALITY,DEFAULT_PITCH,L"Arial");
+        c->boardNumber=CreateFontW(-26,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,NONANTIALIASED_QUALITY,FIXED_PITCH,L"Consolas");
+        c->boardTitle=CreateFontW(-16,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,NONANTIALIASED_QUALITY,DEFAULT_PITCH,L"Arial");
+        if(!c->boardFont || !c->boardNumber || !c->boardTitle)return false;
+    }
+    c->log("p23_graphics_ready","\"deferred\":true,\"restore_context\":true,\"native_font_calls\":0,\"kill_table\":true");return true;
+}
+// The kill table of this level while the automap (Tab) is open: every player of the session, most kills first; the name in the colour of that
+// player's arrow on the automap, the own row framed brighter. Black pixels of the bitmap are transparent (keyPs). Returns the height (0: hidden).
+int paintBoard(const ui::Model& view) {
+    if(ui::nowMs()-c->mapAt.load()>=150) return 0; // the automap draws its arrows every frame while it is open (see arrow())
+    struct Row {unsigned slot;std::wstring name;unsigned kills;};
+    std::vector<Row> rows;
+    for(const auto& p:view.players()) if(p && static_cast<std::size_t>(p->slot)<ui::Capacity) rows.push_back({p->slot,wide(p->displayName),ui::shared().kills[p->slot].load(std::memory_order_acquire)});
+    if(rows.empty()) return 0;
+    std::stable_sort(rows.begin(),rows.end(),[](const Row& a,const Row& b) {return a.kills!=b.kills?a.kills>b.kills:a.slot<b.slot;});
+    static const HBRUSH fill=CreateSolidBrush(RGB(30,22,14)),frame=CreateSolidBrush(RGB(140,104,56)),mine=CreateSolidBrush(RGB(240,196,96));
+    HDC dc=c->boardDc;
+    PatBlt(dc,0,0,BoardW,BoardH,BLACKNESS);
+    SelectObject(dc,c->boardTitle);SetTextColor(dc,RGB(255,210,100));
+    RECT title{8,4,BoardW-10,28};DrawTextW(dc,L"KILLS",-1,&title,DT_RIGHT|DT_TOP|DT_SINGLELINE|DT_NOPREFIX);
+    int y=30;
+    for(const auto& r:rows) {
+        if(y+BoardRow>BoardH) break;
+        RECT box{0,y,BoardW,y+BoardRow-4},inner{1,y+1,BoardW-1,y+BoardRow-5};
+        const HBRUSH border=r.slot==static_cast<unsigned>(view.local())?mine:frame;
+        FillRect(dc,&box,fill);FrameRect(dc,&box,border);FrameRect(dc,&inner,border);
+        const auto& col=ui::Colors[r.slot];
+        SelectObject(dc,c->boardFont);SetTextColor(dc,RGB(col[0],col[1],col[2]));
+        RECT name{box.left+12,box.top,box.right-72,box.bottom};DrawTextW(dc,r.name.c_str(),-1,&name,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX|DT_END_ELLIPSIS);
+        SelectObject(dc,c->boardNumber);SetTextColor(dc,RGB(255,236,200));
+        const auto n=std::to_wstring(r.kills);RECT num{box.right-72,box.top,box.right-12,box.bottom};DrawTextW(dc,n.c_str(),-1,&num,DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        y+=BoardRow;
+    }
+    GdiFlush();
+    return y;
 }
 void draw(IDXGISwapChain* chain) {
     const auto view=ui::shared().read();
     std::lock_guard lock(c->uiMutex);
+    const int boardHeight=paintBoard(view);
     // Draw a compact status/chat HUD even when the menu is closed.
     PatBlt(c->dc,0,0,Width,Height,BLACKNESS);
-    int panelHeight=100,stripW=Width;bool pauseHint=false;
+    int panelHeight=100,stripW=Width;bool pauseHint=false,showPanel=true;
     // Main menu (game state 1): a small note bottom right, above the player's name, tells that the mod is loaded and how to open its menu.
     const bool title=*reinterpret_cast<const int*>(c->base+0xaf33a0+0x24)==1 && !c->menu && !c->board && !c->composer;
     if(title) {
@@ -420,7 +472,10 @@ void draw(IDXGISwapChain* chain) {
         const bool recent=now<c->showUntil,toast=now<c->toastUntil;
         // A client that asked to join and is not in the session yet: say so (and what may be wrong after a while).
         const bool connecting=!c->form.host && ui::shared().requested.load() && !ui::shared().ready.load() && !ui::shared().stopping.load();
-        if(!pause && !recent && !c->composer && !toast && !connecting)return; // nothing to show: no panel at all
+        if(!pause && !recent && !c->composer && !toast && !connecting) { // nothing to show: no panel at all (the kill table may still be up)
+            if(!boardHeight)return;
+            showPanel=false;
+        } else {
         int y=10;pauseHint=pause;
         if(toast){text(16,y,wide(c->toast),RGB(130,240,180));y+=30;}
         if(connecting) {
@@ -436,6 +491,7 @@ void draw(IDXGISwapChain* chain) {
         if(c->composer) {text(16,y,wide("> "+c->draft+"_"),RGB(120,240,255));y+=52;}
         panelHeight=(std::max)(pause?100:60,y+8);
         if(pause && view.players()[view.local()<8?view.local():0]==std::nullopt)text(16,panelHeight-30,wide(c->status),RGB(255,190,130));
+        }
     }
     if(c->menu)text(16,c->form.host?420:440,wide(c->status),RGB(255,190,130));
     GdiFlush();
@@ -450,7 +506,7 @@ void draw(IDXGISwapChain* chain) {
     const float vertices[]={left,top,0,0,right,top,u1,0,left,bottom,0,v,left,bottom,0,v,right,top,u1,0,right,bottom,u1,v};
     D3D11_MAPPED_SUBRESOURCE mapped{};if(FAILED(c->deferred->Map(c->vertices.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped)))return;
     std::copy(std::begin(vertices),std::end(vertices),static_cast<float*>(mapped.pData));c->deferred->Unmap(c->vertices.Get(),0);
-    c->deferred->UpdateSubresource(c->texture.Get(),0,nullptr,c->pixels,Width*4,0);
+    if(showPanel)c->deferred->UpdateSubresource(c->texture.Get(),0,nullptr,c->pixels,Width*4,0);
     auto* target=rtv.Get();c->deferred->OMSetRenderTargets(1,&target,nullptr);
     const D3D11_VIEWPORT viewport{0,0,static_cast<float>(bd.Width),static_cast<float>(bd.Height),0,1};c->deferred->RSSetViewports(1,&viewport);
     c->deferred->RSSetState(c->raster.Get());c->deferred->OMSetDepthStencilState(c->depth.Get(),0);
@@ -459,7 +515,23 @@ void draw(IDXGISwapChain* chain) {
     c->deferred->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     c->deferred->VSSetShader(c->vs.Get(),nullptr,0);c->deferred->PSSetShader(c->ps.Get(),nullptr,0);
     auto* resource=c->textureView.Get();auto* sampler=c->sampler.Get();c->deferred->PSSetShaderResources(0,1,&resource);c->deferred->PSSetSamplers(0,1,&sampler);
-    c->deferred->Draw(6,0);ComPtr<ID3D11CommandList> commands;
+    if(showPanel)c->deferred->Draw(6,0);
+    if(boardHeight>0) {   // the kill table, top right (24 px from the edges), only its painted rows
+        const float bl=1-2.0f*(BoardW+24)/static_cast<float>(bd.Width),br=1-2.0f*24/static_cast<float>(bd.Width);
+        const float bt=1-2.0f*24/static_cast<float>(bd.Height),bb=bt-2.0f*static_cast<float>(boardHeight)/static_cast<float>(bd.Height);
+        const float bv=static_cast<float>(boardHeight)/BoardH;
+        const float quad[]={bl,bt,0,0,br,bt,1,0,bl,bb,0,bv,bl,bb,0,bv,br,bt,1,0,br,bb,1,bv};
+        D3D11_MAPPED_SUBRESOURCE bm{};
+        if(SUCCEEDED(c->deferred->Map(c->boardVertices.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&bm))) {
+            std::copy(std::begin(quad),std::end(quad),static_cast<float*>(bm.pData));c->deferred->Unmap(c->boardVertices.Get(),0);
+            c->deferred->UpdateSubresource(c->boardTexture.Get(),0,nullptr,c->boardPixels,BoardW*4,0);
+            auto* bbuf=c->boardVertices.Get();c->deferred->IASetVertexBuffers(0,1,&bbuf,&stride,&offset);
+            auto* bres=c->boardView.Get();c->deferred->PSSetShaderResources(0,1,&bres);c->deferred->PSSetShader(c->keyPs.Get(),nullptr,0);
+            c->deferred->Draw(6,0);
+            if(++c->boards<=2 || c->boards%300==0)c->log("kill_table_drawn","\"frames\":%llu,\"height\":%d",c->boards,boardHeight);
+        }
+    }
+    ComPtr<ID3D11CommandList> commands;
     if(FAILED(c->deferred->FinishCommandList(FALSE,&commands)))return;
     ComPtr<ID3D11DeviceContext> immediate;c->device->GetImmediateContext(&immediate);
     immediate->ExecuteCommandList(commands.Get(),TRUE);++c->overlays;

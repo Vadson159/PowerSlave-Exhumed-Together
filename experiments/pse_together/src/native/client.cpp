@@ -163,6 +163,9 @@ struct Session {
     std::uint16_t worldKeysPending{};std::uint32_t worldOnTicks{},lastEnemySequence{},achPending{};unsigned useHold{};std::vector<pse::world::ScriptCall> scriptPending;std::vector<int> breakPending;std::vector<std::pair<unsigned,std::uint32_t>> soundPending; // (slot, sound) of other players to play at their proxy
     std::vector<int> gonePending,pickupPending; // map enemies gone at the host, map spheres taken there
     bool mapRevealPending{}; // the host says: a map was taken, reveal the whole automap here too
+    // 2026-11-21: full health / ammo put back at the host (map actor numbers), team items to remove and own (kind/bit, live = with the pickup
+    // feedback), the host's gear for this late joiner (kind 1..4, mask)
+    std::vector<int> itemBackPending;std::vector<std::pair<pse::world::TeamItem,bool>> teamPending;std::vector<std::pair<unsigned,std::uint32_t>> equipPending;
     std::vector<int> hurtPending; // enemies another player wounded at the host: the native hit flash here
     std::vector<std::pair<int,bool>> deathPending; // enemies that died at the host (wire number, extreme death): the same native death here
     int difficultyPending{-1}; // the host's difficulty (EvDifficulty), adopted when the world is ready
@@ -328,6 +331,8 @@ struct Session {
     void newBindingState() {
         ++bindings;
         worldKeysPending=0;scriptPending.clear();breakPending.clear();soundPending.clear();gonePending.clear();deathPending.clear();hurtPending.clear();mapRevealPending=false;pickupPending.clear();switchPending.clear();
+        itemBackPending.clear();teamPending.clear(); // (equipPending stays: the host's gear is this player's, whatever world it arrives in)
+        for(auto& k:pse::ui::shared().kills) k.store(0,std::memory_order_release); // the host sends this world's kill table
         hostHealthValid=vitalsSynced=hostLoadoutValid=false;worldPending.clear();
         bindingReset16();
 #ifdef PSE_FEATURE_VISUAL_PROXY
@@ -342,6 +347,13 @@ struct Session {
         if(e.eventType==w::EvSound && e.sourceEntityId<8 && e.sourceEntityId!=slot && e.eventValue>=0 && soundPending.size()<64) { soundPending.push_back({e.sourceEntityId,static_cast<std::uint32_t>(e.eventValue)});return; }
         if(e.eventType==w::EvEnemyGone && e.eventValue>=0 && gonePending.size()<512) { gonePending.push_back(e.eventValue);return; }
         if(e.eventType==w::EvMapAll) { mapRevealPending=true;return; }
+        if(e.eventType==w::EvItemBack && e.eventValue>=0 && itemBackPending.size()<256) { itemBackPending.push_back(e.eventValue);return; }
+        if(e.eventType==w::EvTeamItem && teamPending.size()<256) {
+            w::TeamItem t;t.id=e.eventValue;t.kind=static_cast<std::uint8_t>(e.targetEntityId&0xffu);t.bit=static_cast<std::uint8_t>((e.targetEntityId>>8)&0xffu);
+            teamPending.push_back({t,((e.targetEntityId>>16)&1u)==0});return; // bit 16: a replay for a late joiner (no pickup message)
+        }
+        if(e.eventType==w::EvEquip && e.sourceEntityId==slot && equipPending.size()<16) { equipPending.push_back({e.targetEntityId,static_cast<std::uint32_t>(e.eventValue)});return; }
+        if(e.eventType==w::EvKills && e.sourceEntityId<8 && e.eventValue>=0) { pse::ui::shared().kills[e.sourceEntityId].store(static_cast<std::uint32_t>(e.eventValue),std::memory_order_release);return; }
         if(e.eventType==w::EvEnemyHurt && e.eventValue>=0 && e.sourceEntityId!=slot && hurtPending.size()<256) { hurtPending.push_back(e.eventValue);return; } // own hits flash at once here
         if(e.eventType==w::EvEnemyDeath && e.eventValue>=0 && deathPending.size()<256) { deathPending.push_back({e.eventValue,e.targetEntityId!=0});return; }
         if(e.eventType==w::EvPickup && e.eventValue>=0 && pickupPending.size()<512) { pickupPending.push_back(e.eventValue);return; }
@@ -447,7 +459,13 @@ struct Session {
         gonePending.clear();
         for(const int id:pickupPending) w::applyPickup(id);
         pickupPending.clear();
-        for(w::Touch t;w::popTouch(t);) sendWorld(w::ReqTouch,static_cast<std::uint32_t>(t.id),t.kind); // everything this player touched here (spheres, keys, weapons, scarabs): its body at the host touches it too
+        for(const int id:itemBackPending) w::applyItemBack(id); // full health / ammo back at its place (inside the tick: a spawn)
+        itemBackPending.clear();
+        for(const auto& [t,live]:teamPending) w::applyTeamItem(t,live); // an ankh / doll / transmitter someone took: gone here, this player has it
+        teamPending.clear();
+        for(const auto& [kind,mask]:equipPending) w::applyEquip(kind,mask); // joined late: the host's gear
+        equipPending.clear();
+        for(w::Touch t;w::popTouch(t);) sendWorld(w::ReqTouch,static_cast<std::uint32_t>(t.id),t.kind|(static_cast<std::uint32_t>(t.extra)<<8)); // everything this player touched here (spheres, keys, weapons, scarabs, team items): its body at the host touches it too
         for(int id,amount,kind;w::popHit(id,amount,kind);) sendWorld(w::ReqHit,static_cast<std::uint32_t>(id),static_cast<std::uint32_t>(amount)|(static_cast<std::uint32_t>(kind)<<16)); // this player's hits on the host's enemies
         for(int amount,kind;w::popSelfDamage(amount,kind);) sendWorld(w::ReqSelfDamage,static_cast<std::uint32_t>(amount),static_cast<std::uint32_t>(kind)); // drowning, lava, falls of this player
         if(difficultyPending>=0) {

@@ -17,7 +17,7 @@ struct Host {
 bool install(unsigned char* base, std::uint32_t tid, Host host);
 void stop(); // disable + exact16 restore; trampolines/storage remain pinned
 void sync(); // alive recipients only, missing bits only
-void allowRemoteTouch(bool on); // health/ammo touches of remote bodies (slot>0) pass only while on (a client's pickup request)
+void allowRemoteTouch(bool on); // health/ammo/ankh touches of remote bodies (slot>0) pass only while on (a client's pickup request)
 void* scopedPlayer(std::uint32_t tid, const void* returnAddress);
 #ifdef PSE_P14_OFFLINE
 // Compiled only into the offline executable. No DLL exports or runtime control API.

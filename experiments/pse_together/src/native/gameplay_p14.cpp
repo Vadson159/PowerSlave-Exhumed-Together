@@ -161,11 +161,16 @@ bool apply(const Roster& roster,unsigned desired) {
     return true;
 }
 void __fastcall ankh(void* pickup,void* actor) {
-    // Never execute original OnTouch: it calls Steam on the fifth Ankh (D4 absent).
-    if (!active() || s.busy) return;
+    // While P14 runs the original OnTouch is never executed (it calls Steam on the fifth Ankh: D4 absent): the grant below goes to the whole team.
+    // The host alone in the level (P14 inactive) takes it as the stock game does (2026-11-21: before, a host alone could not take an ankh at all).
+    if (s.busy) return;
+    if (!active()) { if (s.original[4]) reinterpret_cast<Touch>(s.original[4])(pickup,actor); return; }
     Busy busy;
     const auto roster=s.host.roster(); const auto m=owner(actor,roster);
     if (!m.player || !pickup || !(read<unsigned>(pickup,0x16c)&0x100)) return;
+    // A client's body takes an ankh only when its player took it in its own game and asked (world_sync applyTouch TouchTeam -> allowRemoteTouch):
+    // the body only follows that player's pose here, touching an ankh was chance.
+    if (m.slot && !s.remoteTouch) return;
     const auto def=read<void*>(pickup,0x170); if (!def) return;
     const auto node=read<void*>(pickup,0x10);
     if (!node || read<void*>(node,0x28)!=pickup ||

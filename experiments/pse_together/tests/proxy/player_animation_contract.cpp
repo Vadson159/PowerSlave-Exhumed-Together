@@ -1,6 +1,7 @@
 // Offline contract of the proxy pose policy (player_animation.hpp): which animation a player's sprite shows from its snapshots.
 #include "player_animation.hpp"
 #include <cstdio>
+#include <string>
 namespace pa=pse::player_art;
 namespace {
 unsigned checks{},failures{};
@@ -35,14 +36,32 @@ int main(){
         a.accept(snap(30,0,0));
         check(a.pose()==pa::Pose::Idle,"Idle after the attack");
     }
-    {   // Held attack while walking: Shoot outranks Walk; death outranks everything and sticks.
+    {   // Held attack while walking: Walk outranks Shoot (the legs move, not attack frames sliding over the floor); death outranks everything.
         pa::Animation a;
         for(std::uint32_t t=2;t<=20;t+=2) a.accept(snap(t,static_cast<float>(t)*3.f,0,1u|(1u<<2)));
-        check(a.pose()==pa::Pose::Shoot,"held attack while walking is Shoot");
-        a.accept(snap(22,60,0,1,0,0,0));
+        check(a.pose()==pa::Pose::Walk,"held attack while walking is Walk");
+        for(std::uint32_t t=22;t<=40;t+=2) a.accept(snap(t,60,0,1));
+        check(a.pose()==pa::Pose::Shoot,"held attack after stopping is Shoot");
+        a.accept(snap(42,60,0,1,0,0,0));
         check(a.pose()==pa::Pose::Death,"death");
-        a.accept(snap(24,60,0,1u<<2));
+        a.accept(snap(44,60,0,1u<<2));
         check(a.pose()==pa::Pose::Death,"death does not restart into motion");
+    }
+    {   // Strafing while firing (no forward button, real sideways motion): Walk.
+        pa::Animation a;
+        for(std::uint32_t t=2;t<=20;t+=2) a.accept(snap(t,0,static_cast<float>(t)*4.f,1u|(1u<<6)));
+        check(a.pose()==pa::Pose::Walk,"strafing while firing is Walk");
+    }
+    {   // The weapon in hand travels with the pose: pending (being switched to) wins over the one still in hand; death has no icon variant.
+        pa::Animation a;auto s=snap(2,0,0);s.activeWeapon=2;s.pendingWeapon=-1;a.accept(s);
+        check(a.weapon()==2,"weapon in hand");
+        s=snap(4,0,0);s.activeWeapon=2;s.pendingWeapon=5;a.accept(s);
+        check(a.weapon()==5,"weapon being switched to");
+        check(a.lookAt(2).weapon==2 && a.lookAt(4).weapon==5,"weapon follows the presented snapshot");
+        const auto withIcon=pa::resource(1,pa::Pose::Walk,true,5),dead=pa::resource(1,pa::Pose::Death,true,5),plain=pa::resource(0,pa::Pose::Idle,true);
+        check(std::string(withIcon.data())=="player/pse_john_p2_proxy_walk_w5","icon resource name");
+        check(std::string(dead.data())=="player/pse_john_p2_proxy_death","death has no icon variant");
+        check(std::string(plain.data())=="player/pse_john_proxy_idle","no weapon: plain resource");
     }
     {   // A big jump of position (teleport, long gap) is not read as walking speed.
         pa::Animation a;a.accept(snap(2,0,0));a.accept(snap(200,5000,0));
@@ -58,8 +77,8 @@ int main(){
         check(a.poseAt(41)==pa::Pose::Walk,"between two snapshots: the older one's pose");
         check(a.poseAt(1)==pa::Pose::Idle,"older than the history: oldest pose");
         check(!a.sameEntity(1,3,1,0x5501,2),"another body generation is not the same entity");
-        for(std::uint32_t t=62;t<=80;t+=2) a.accept(snap(t,180,0,1));                             // attack
-        check(a.poseAt(70)==pa::Pose::Shoot,"presented attack shows Shoot");
+        for(std::uint32_t t=62;t<=80;t+=2) a.accept(snap(t,180,0,1));                             // attack (standing: after the walk hold)
+        check(a.poseAt(66)==pa::Pose::Walk && a.poseAt(76)==pa::Pose::Shoot,"presented attack shows Shoot once the walk hold is over");
         a.accept(snap(82,180,0,0,0,0,0));                                                        // death
         check(a.poseAt(80)==pa::Pose::Shoot && a.poseAt(82)==pa::Pose::Death,"death shows when its snapshot is presented");
     }

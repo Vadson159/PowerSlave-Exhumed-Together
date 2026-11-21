@@ -71,7 +71,7 @@ void reset() {
     at<void*>(base.data(),0xaf33a0)=base.data()+0x52ad08;
     at<void*>(base.data(),0x52ad08+0x158)=base.data()+profile14::DifficultyRva;
     OfflineNative api{{reinterpret_cast<void*>(&originalAI),reinterpret_cast<void*>(&originalAI),
-                       reinterpret_cast<void*>(&originalTouch),reinterpret_cast<void*>(&originalTouch),nullptr},see,angle,give,consume,difficulty};
+                       reinterpret_cast<void*>(&originalTouch),reinterpret_cast<void*>(&originalTouch),reinterpret_cast<void*>(&originalTouch)},see,angle,give,consume,difficulty};
     offlineBind(base.data(),GetCurrentThreadId(),{enabled,members,getter,event,fault},api);
     freshPickup();
 }
@@ -117,11 +117,14 @@ int main() {
     check(originalCalls==3,"after a latched failure the stock handlers run (AI and pickups never freeze)");
     reset();invocation(0);const auto calls=originalCalls;eligible=false;invocation(1);invocation(2,actors[0].data());
     check(originalCalls==calls+2,"lost authority falls back to the stock handlers");
+    // A client's body takes an ankh only on that client's request (allowRemoteTouch around world_sync applyTouch TouchTeam).
+    reset();freshPickup(1);invocation(4,actors[3].data());
+    check(!gives && !consumed && originalCalls==0,"body ankh touch without its player's request does nothing");
     reset();for (unsigned i=0;i<5;++i) {
-        freshPickup(i);invocation(4,actors[i].data());
+        freshPickup(i);allowRemoteTouch(true);invocation(4,actors[i].data());allowRemoteTouch(false);
         check(gives==8*(i+1) && consumed==i+1,"team grant once per live player");
-        invocation(4,actors[(i+1)%8].data());
-        freshPickup(i);invocation(4,actors[(i+2)%8].data());
+        allowRemoteTouch(true);invocation(4,actors[(i+1)%8].data());
+        freshPickup(i);invocation(4,actors[(i+2)%8].data());allowRemoteTouch(false);
         check(gives==8*(i+1),"same bit never enters non-idempotent helper");
         // Two consumptions: original pickup and a separate duplicate item.
         consumed=i+1;
@@ -140,7 +143,7 @@ int main() {
     reset();at<void*>(base.data(),0xaf33a0)=nullptr;invocation(4,actors[0].data());
     check(!gives && !consumed && faults==1,"wrong virtual target blocks before helper");
     reset();freshPickup(5);invocation(4,actors[0].data());check(!gives && !consumed && faults==1,"undefined Ankh rejected");
-    reset();eligible=false;invocation(4,actors[0].data());check(!gives && !consumed,"Ankh held before host authority");
+    reset();eligible=false;invocation(4,actors[0].data());check(!gives && !consumed && originalCalls==1,"lone host (no P14 authority): the stock Ankh pickup");
     std::array<Candidate,8> candidates{}; candidates[0]={true,3,4};candidates[1]={true,-3,-4};
     check(nearest(candidates,0,0,10,[](unsigned){return true;})==0,"ties stable by slot");
     candidates[0].x=std::numeric_limits<float>::quiet_NaN();

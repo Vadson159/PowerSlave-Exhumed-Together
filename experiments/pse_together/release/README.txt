@@ -1,4 +1,4 @@
-﻿EXHUMED TOGETHER 1.0 - кооператив для PowerSlave Exhumed
+﻿EXHUMED TOGETHER 1.1 - кооператив для PowerSlave Exhumed
 
 ЧТО НУЖНО
 - Своя лицензионная PowerSlave Exhumed в Steam (мы её не передаём) и запущенный Steam.

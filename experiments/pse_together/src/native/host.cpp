@@ -494,8 +494,15 @@ void applyWorldRequests() {
         else if(r.interactionType==w::ReqTouch && r.slotId>=1 && r.slotId<=MaxRemote && R(r.slotId).exists && live(R(r.slotId).p2,R(r.slotId).storage.bytes)) {
             // One channel for everything the client's own player touched in its game (sync rework stage 2): its body here touches the same
             // actor natively (spheres through P14 to that player, weapons through P16, keys into the shared set); a scarab is that player's.
-            const w::Touch t{static_cast<int>(r.targetEntityId),static_cast<std::uint8_t>(r.targetGeneration&0xffu)};
+            const w::Touch t{static_cast<int>(r.targetEntityId),static_cast<std::uint8_t>(r.targetGeneration&0xffu),static_cast<std::uint16_t>((r.targetGeneration>>8)&0xffffu)};
             if(t.kind==w::TouchScarab) markCheckpoint16(r.slotId,t.id);
+#ifdef PSE_FEATURE_P14
+            else if(t.kind==w::TouchTeam) {   // an ankh / team doll / transmitter of that client: everyone gets it (P14 for an ankh: this remote touch is allowed)
+                pse::p14::allowRemoteTouch(true);
+                w::applyTouch(t,R(r.slotId).p2.actor);
+                pse::p14::allowRemoteTouch(false);
+            }
+#endif
 #ifdef PSE_FEATURE_P14
             else if((t.kind==w::TouchHealth || t.kind==w::TouchAmmo) && p14Eligible()) {
                 pse::p14::allowRemoteTouch(true);
@@ -510,6 +517,44 @@ void applyWorldRequests() {
             w::applyHit(static_cast<int>(r.targetEntityId),static_cast<int>(r.targetGeneration&0xffffu),static_cast<int>((r.targetGeneration>>16)&0xffu),R(r.slotId).p2.actor,r.slotId);
         else if(r.interactionType==w::ReqScript) { const auto c=w::unpackScript(static_cast<int>(r.targetEntityId&0xffff),r.targetGeneration,static_cast<std::uint16_t>(r.targetEntityId>>16));w::applyScript(c.num,g.p1.actor,&c); } // the client crossed a story trigger: the host's player plays the scene too
     }
+}
+// ---- 2026-11-21: full health / ammo that come back, team items, the host's equipment for a late joiner, kills per level ---------------------------
+std::vector<pse::world::TeamItem> teamTaken; // this world: team items taken (ankhs, dolls, transmitters), for clients that join later
+bool equipPending[8]{};                      // per slot: the client joined with a body seeded from the host's inventory: its own player gets the host's gear
+std::map<std::string,unsigned> killsBy;      // this world: kills per player (participant key; slots shuffle on rejoin)
+std::uint32_t killsSentSerial{};
+const std::string& killKey(unsigned slot) { static const std::string host="host"; return slot ? R(slot).key : host; }
+Byte* p1Puppet() { Identity id{};id.node=read<Byte*>(primary(),0xd8);id.actor=id.node?read<Byte*>(id.node,0x28):nullptr;return live(id,primary())?id.actor:nullptr; }
+void publishKills(unsigned slot) {
+    const unsigned n=killsBy.count(killKey(slot))?killsBy[killKey(slot)]:0u;
+    pse::ui::shared().kills[slot].store(n,std::memory_order_release);
+    if(g.network && g.network->running()) g.network->publishWorldEvent(pse::world::EvKills,slot,0,static_cast<std::int32_t>(n));
+}
+// A team item taken in this world (by the host's player natively, or for a client): every player has it now. The host's player gets the bit (and the
+// stock pickup feedback when it was not its own pickup), every client body too; each client removes the item and gets the bit (EvTeamItem). An ankh
+// reaches the whole team through P14 (GiveAnkh: health to the new maximum), here only its feedback for the host's player.
+void shareTeamItem(const pse::world::TeamItem& t) {
+    namespace w=pse::world;
+    Byte* p1=p1Puppet();
+    const bool p1Gets=t.kind==w::TeamAnkh ? !t.local : w::teamGrant(primary(),t.kind,t.bit);
+    if(p1Gets && !t.local && p1 && t.def && read<std::int16_t>(p1,0x17a)>0) w::pickupNotice(t.def,p1);
+    if(t.kind!=w::TeamAnkh) for(unsigned s=1;s<=MaxRemote;++s) if(R(s).exists) w::teamGrant(R(s).storage.bytes,t.kind,t.bit);
+    if(t.id>=0 && std::none_of(teamTaken.begin(),teamTaken.end(),[&](const w::TeamItem& o){return o.id==t.id;})) teamTaken.push_back(t);
+    const bool sent=g.network && g.network->running() && g.network->publishWorldEvent(w::EvTeamItem,0,static_cast<std::uint32_t>(t.kind)|(static_cast<std::uint32_t>(t.bit)<<8),t.id);
+    log("world_team_item_shared","\"id\":%d,\"kind\":%u,\"bit\":%u,\"by_host_player\":%s,\"host_player_got_it\":%s,\"sent\":%s",t.id,t.kind,t.bit,t.local?"true":"false",p1Gets?"true":"false",sent?"true":"false");
+}
+// Inside the world tick (from the host player's Update): things put back into the world must be spawned before the end-of-tick drain.
+void pickupsTick() {
+    namespace w=pse::world;
+    if(g.ticks%10==0) w::debugTouch(p1Puppet()); // smoke only: PSE_DEBUG_TOUCH_HOST + _FILE (the host's player touches a map item natively)
+    w::tickRespawns();
+    for(int id;(id=w::popItemBack())>=0;) {
+        pickupsTaken.erase(std::remove(pickupsTaken.begin(),pickupsTaken.end(),id),pickupsTaken.end()); // a client joining later must not remove it
+        const bool sent=g.network && g.network->running() && g.network->publishWorldEvent(w::EvItemBack,0,0,id);
+        log("world_item_back_sent","\"id\":%d,\"sent\":%s",id,sent?"true":"false");
+    }
+    for(w::TeamItem t;w::popTeamItem(t);) shareTeamItem(t);
+    for(unsigned slot;w::popKill(slot);) if(slot<8) { ++killsBy[killKey(slot)];publishKills(slot); }
 }
 void worldSyncHost() {
     namespace w=pse::world;
@@ -555,9 +600,20 @@ void worldSyncHost() {
         for(const int id:enemiesGone) if(std::find(breaksDone.begin(),breaksDone.end(),id)==breaksDone.end()) g.network->publishWorldEvent(w::EvEnemyGone,0,0,id);
         for(const int id:pickupsTaken) g.network->publishWorldEvent(w::EvPickup,0,0,id);
         for(const auto& [f,e]:switchesPressed) g.network->publishWorldEvent(w::EvSwitch,0,static_cast<std::uint32_t>(e),f);
+        // team items taken before: removed at the late joiner too, and its player has them (replay: no pickup message)
+        for(const auto& t:teamTaken) g.network->publishWorldEvent(w::EvTeamItem,0,static_cast<std::uint32_t>(t.kind)|(static_cast<std::uint32_t>(t.bit)<<8)|(1u<<16),t.id);
+        for(unsigned s=0;s<=MaxRemote;++s) if(!s || R(s).exists) publishKills(s); // the kill table of this level
         if(const int d=w::difficulty();d>=0) { g.network->publishWorldEvent(w::EvDifficulty,0,0,d);log("world_difficulty_sent","\"difficulty\":%d,\"join_serial\":%u",d,goneSentSerial); } // the host's rules (health bar, sphere amounts) for every player
         if(!enemiesGone.empty() || !pickupsTaken.empty() || !switchesPressed.empty() || !breaksDone.empty())
             log("world_removals_resent","\"enemies\":%zu,\"pickups\":%zu,\"switches\":%zu,\"breaks\":%zu,\"join_serial\":%u",enemiesGone.size(),pickupsTaken.size(),switchesPressed.size(),breaksDone.size(),goneSentSerial);
+    }
+    // A client that joined with a body seeded from the host's inventory (not travelling from the previous level with its own): its own player copies
+    // the host's equipment - artifacts, ankhs, team dolls, transmitters (weapons and ammo follow its body anyway, keys are shared).
+    for(unsigned s=1;s<=MaxRemote;++s) if(equipPending[s] && R(s).exists && g.network->snapshotEligible(s)) {
+        equipPending[s]=false;
+        const std::uint32_t masks[4]{read<std::uint32_t>(primary(),0x90)&0x3fu,read<std::uint16_t>(primary(),0x86)&0x1fu,read<std::uint32_t>(primary(),0xa4),read<std::uint16_t>(primary(),0x9a)&0xffu};
+        for(unsigned k=0;k<4;++k) g.network->publishWorldEvent(w::EvEquip,s,k+1,static_cast<std::int32_t>(masks[k]));
+        log("world_equip_sent","\"slot\":%u,\"artifacts\":%u,\"ankhs\":%u,\"dolls\":%u,\"quest\":%u",s,masks[0],masks[1],masks[2],masks[3]);
     }
     for(auto c=w::popScript();c.num>=0;c=w::popScript()) g.network->publishWorldEvent(w::EvScript,c.pos?w::packXY(c.x,c.y):0,c.pos?w::packZ(c.z):0,c.num); // the host (or P2) crossed one: the client's player plays it too
     if(worldOnTicks==320) w::debugScript(g.p1.actor);
@@ -951,7 +1007,7 @@ void __fastcall hookUpdate(void* p) {
     ++g.localUpdates;
     if (g.localThisTick != 1) { block("duplicate_local_update"); return; }
 #ifdef PSE_FEATURE_SNAPSHOT
-    if (gameplay() && !g.failed && !g.worldExit) applyWorldRequests(); // inside the world tick, before the end-of-tick drain
+    if (gameplay() && !g.failed && !g.worldExit) { applyWorldRequests(); pickupsTick(); } // inside the world tick, before the end-of-tick drain
 #endif
 #ifdef PSE_ROLE_HOST
     if (g.neutralPrimary) {
@@ -1269,6 +1325,8 @@ void rearmWorld() {
     g.snapshotEligibleLogged=false;g.lastMapFault=map56::Fault::None;
     mapAnnounced=false;worldBound=false;
     enemiesGone.clear();pickupsTaken.clear();switchesPressed.clear();breaksDone.clear();goneSentSerial=0;pse::world::resetWorld();
+    teamTaken.clear();killsBy.clear();for(auto& k:pse::ui::shared().kills) k.store(0,std::memory_order_release); // kills are counted per level
+    for(auto& e:equipPending) e=false;
     for(unsigned i=0;i<8;++i){proxyEntity[i]=0;proxyRebuild[i]=false;}
     // respawn / death bookkeeping of the old world
     team16=rp16::Team{};hostInput16=rp16::DeadInput{};bound16=false;checkpoints16={};
@@ -1312,6 +1370,13 @@ void construct(unsigned slot) {
             *(primary()+0xcc+wp)=1;*reinterpret_cast<std::uint16_t*>(primary()+0xbc+2*wp)=static_cast<std::uint16_t>(am);
             log("debug_p1_grant","\"weapon\":%d,\"ammo\":%d",wp,am);
         }
+        // smoke only: PSE_DEBUG_P1_GEAR="artifacts,dolls,quest" (masks) - the host's gear before a client joins (the late joiner copies it)
+        unsigned ar=0,dl=0,qu=0;
+        if(GetEnvironmentVariableA("PSE_DEBUG_P1_GEAR",v,sizeof(v)) && sscanf_s(v,"%u,%u,%u",&ar,&dl,&qu)==3 && !g.entityGeneration[0]) {
+            *reinterpret_cast<std::uint32_t*>(primary()+0x90)|=ar&0x3fu;*reinterpret_cast<std::uint32_t*>(primary()+0xa4)|=dl;
+            *reinterpret_cast<std::uint16_t*>(primary()+0x9a)|=static_cast<std::uint16_t>(qu&0xffu);
+            log("debug_p1_gear","\"artifacts\":%u,\"dolls\":%u,\"quest\":%u",ar,dl,qu);
+        }
     }
     const auto before = localState();
     std::fill(std::begin(R().storage.before), std::end(R().storage.before), Byte{0xa5});
@@ -1328,7 +1393,7 @@ void construct(unsigned slot) {
     // loaded a save): P2 gets a copy of the host's live inventory, full health, so a late joiner is not left with the starting kit.
     P2Persist start;
     if (const auto it=travelBy.find(R().key); it!=travelBy.end() && it->second.valid) start=it->second;
-    else { start=captureP2(primary(),200); log("p2_seeded_from_host","\"slot\":%u,\"weapon\":%d",slot,start.weapon); }
+    else { start=captureP2(primary(),200); equipPending[slot]=true; log("p2_seeded_from_host","\"slot\":%u,\"weapon\":%d",slot,start.weapon); }
     restoreP2(start);
     const bool getterWasOn = g.enabled[profile::Getter]; // a P14 scope may have left it on (see p14Getter): then it stays on
     if (!setHook(profile::Getter, true)) return;

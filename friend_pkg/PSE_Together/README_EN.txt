@@ -1,4 +1,4 @@
-POWERSLAVE EXHUMED TOGETHER — VERSION 1.0
+POWERSLAVE EXHUMED TOGETHER — VERSION 1.1
 
 Unofficial campaign co-op for PowerSlave Exhumed (2022, Steam), Windows x64.
 Supports 2–8 players over LAN / Radmin VPN or a direct IP over the internet. Bugs, crashes

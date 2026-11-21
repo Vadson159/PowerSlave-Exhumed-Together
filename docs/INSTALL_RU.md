@@ -1,4 +1,4 @@
-# PowerSlave Exhumed Together 1.0 — установка
+# PowerSlave Exhumed Together 1.1 — установка
 
 Неофициальный тестовый кооператив для PowerSlave Exhumed (2022, KEX):
 2–8 игроков, LAN, Radmin VPN или прямое подключение по интернету. Это ранняя версия: возможны вылеты,

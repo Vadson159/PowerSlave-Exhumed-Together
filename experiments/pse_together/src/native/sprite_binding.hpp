@@ -19,9 +19,9 @@ struct Binding {
     template<class T> static T read(const void* p,unsigned offset) {
         return *reinterpret_cast<const T*>(static_cast<const unsigned char*>(p)+offset);
     }
-    static void* lookup(unsigned char* image,unsigned slot,Pose pose,bool proxy) {
+    static void* lookup(unsigned char* image,unsigned slot,Pose pose,bool proxy,int weapon=NoWeapon) {
         if(slot>=8 || !prefixes(image)) return nullptr;
-        const auto text=resource(slot,pose,proxy);
+        const auto text=resource(slot,pose,proxy,weapon);
         using Lookup=void*(__fastcall*)(void*,const char*);
         auto* anim=reinterpret_cast<Lookup>(image+LookupRva)(nullptr,text.data());
         if(!anim) return nullptr;
@@ -43,9 +43,9 @@ struct Binding {
     }
     // Caller attests simulation thread, live owned actor, stable world and no
     // teardown barrier. Resources are stack-local weak views, never cached.
-    static bool apply(unsigned char* image,void* actor,unsigned slot,Pose pose,bool proxy,bool& changed) {
+    static bool apply(unsigned char* image,void* actor,unsigned slot,Pose pose,bool proxy,bool& changed,int weapon=NoWeapon) {
         changed=false;
-        auto* anim=lookup(image,slot,pose,proxy);
+        auto* anim=lookup(image,slot,pose,proxy,weapon);
         if(!actor || !anim) return false;
         if(read<void*>(actor,0x108)!=anim) {
             using Bind=void(__fastcall*)(void*,void*);

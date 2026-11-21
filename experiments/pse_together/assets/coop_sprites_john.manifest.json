@@ -1,7 +1,7 @@
 {
-  "schema": "pse-p8-john-hats-v1",
+  "schema": "pse-p8-john-hats-v2",
   "package": "experiments/pse_together/assets/coop_sprites_john.kpf",
-  "sha256": "13f33124260461bd54f4ae39bc42ede3c9df32610d2159ec2d9a0f3b5300bb67",
+  "sha256": "1cac7fd66541e37d7d36c729be2b8f14b02a568ebee458c3efaceeed761b9374",
   "character": "pse_john",
   "scale": 1.5,
   "proxy_origin_drop": 59,
@@ -52,13 +52,70 @@
     ],
     "rectangles": 40,
     "frames": 14,
-    "pixels_unchanged": true
+    "pixels_unchanged": true,
+    "weapon_icon_animations": 192,
+    "weapon_icons": {
+      "size": [
+        269,
+        32
+      ],
+      "rects": [
+        [
+          2,
+          2,
+          42,
+          12
+        ],
+        [
+          48,
+          2,
+          27,
+          24
+        ],
+        [
+          79,
+          2,
+          35,
+          19
+        ],
+        [
+          118,
+          2,
+          28,
+          24
+        ],
+        [
+          150,
+          2,
+          30,
+          22
+        ],
+        [
+          184,
+          2,
+          30,
+          22
+        ],
+        [
+          218,
+          2,
+          23,
+          28
+        ],
+        [
+          245,
+          2,
+          22,
+          28
+        ]
+      ]
+    }
   },
   "members": [
     {
       "path": "PSE_TOGETHER_SPRITES_CREDITS.txt",
-      "sha256": "c421124c8dfbcdf1fe4e7f0828fd0484175e8e9edc64579a8c348956f87516fa",
-      "size": 403
+      "sha256": "08e40c775dab0a136c6f696a01d76012f73eff99abb1c10a65e061aac9fb036a",
+      "size": 602
     },
     {
       "path": "sprites/player/pse_john.png",
@@ -86,6 +143,11 @@
       "size": 17010
     },
     {
+      "path": "sprites/player/pse_john_p2_proxy_weapons_anim.txt",
+      "sha256": "d58d8465af53c065d1720f6b98cae875d3c10376e71ef479e3a516dedb49250d",
+      "size": 93581
+    },
+    {
       "path": "sprites/player/pse_john_p2_sprite.txt",
       "sha256": "50cd314bf450caf5f2717e2f1ba29f3b9ea302a332afb549032c207babba9370",
       "size": 1580
@@ -104,6 +166,11 @@
       "path": "sprites/player/pse_john_p3_proxy_anim.txt",
       "sha256": "fcb1ae5a19815362851fa2c0e22c6ddb395c12b9d2b966358f0d2bb2210af0c5",
       "size": 17010
+    },
+    {
+      "path": "sprites/player/pse_john_p3_proxy_weapons_anim.txt",
+      "sha256": "cedc712065d3fea412c82ef59211398d3b966b424d82a9508042f24499cc3778",
+      "size": 93581
     },
     {
       "path": "sprites/player/pse_john_p3_sprite.txt",
@@ -126,6 +193,11 @@
       "size": 17010
     },
     {
+      "path": "sprites/player/pse_john_p4_proxy_weapons_anim.txt",
+      "sha256": "d7d467728bf4d4594cf2095f75e088d9ed240de2ce8cf25ae3e77eaebc518b4b",
+      "size": 93581
+    },
+    {
       "path": "sprites/player/pse_john_p4_sprite.txt",
       "sha256": "36138178a95b7fc4a0e99dba2a6b220c37ce3384a8c6404f7d9f42abafc68499",
       "size": 1580
@@ -144,6 +216,11 @@
       "path": "sprites/player/pse_john_p5_proxy_anim.txt",
       "sha256": "d06fcd17dc7030cddcf2ef56f80fa000b0af120c98f8800590ac2428ed428279",
       "size": 17010
+    },
+    {
+      "path": "sprites/player/pse_john_p5_proxy_weapons_anim.txt",
+      "sha256": "ff60c5b2bcd479325a21145f1ea2d9487b79728c927f34abaf2bcadb806d9784",
+      "size": 93581
     },
     {
       "path": "sprites/player/pse_john_p5_sprite.txt",
@@ -166,6 +243,11 @@
       "size": 17010
     },
     {
+      "path": "sprites/player/pse_john_p6_proxy_weapons_anim.txt",
+      "sha256": "f0f4b3c505829feffe7df096519f7d1d448931b9c651debb95b052129f62096e",
+      "size": 93581
+    },
+    {
       "path": "sprites/player/pse_john_p6_sprite.txt",
       "sha256": "d90f188af60723ffa64581c9ee358a33ebf987da160bd29a480e29ceb8c9f9c5",
       "size": 1580
@@ -184,6 +266,11 @@
       "path": "sprites/player/pse_john_p7_proxy_anim.txt",
       "sha256": "24b9d8633a12c5b2b260a06807a28927c0da43fca541cfbae817623e565e9d34",
       "size": 17010
+    },
+    {
+      "path": "sprites/player/pse_john_p7_proxy_weapons_anim.txt",
+      "sha256": "de96273540492e366243b99a837fd61f847db0799888ac31b9ba25d6b85575f3",
+      "size": 93581
     },
     {
       "path": "sprites/player/pse_john_p7_sprite.txt",
@@ -206,6 +293,11 @@
       "size": 17010
     },
     {
+      "path": "sprites/player/pse_john_p8_proxy_weapons_anim.txt",
+      "sha256": "f00405216ac34551ce8f6889f35a3316ddc52c9dc896882dc16b92c1a0026e64",
+      "size": 93581
+    },
+    {
       "path": "sprites/player/pse_john_p8_sprite.txt",
       "sha256": "82fe0019e1f07d088910506b9260f1e19d3528ebd45c522177c630f4fb236460",
       "size": 1580
@@ -216,9 +308,24 @@
       "size": 16662
     },
     {
+      "path": "sprites/player/pse_john_proxy_weapons_anim.txt",
+      "sha256": "4077c2197769a543823955cec1908aa8e254cc28da5fdd9249b58707d8806857",
+      "size": 92162
+    },
+    {
       "path": "sprites/player/pse_john_sprite.txt",
       "sha256": "01482e380b04ff5d23c9e8f55eb65c6335e96d0447e7024d26ba9d71fc1e8152",
       "size": 1577
+    },
+    {
+      "path": "sprites/player/pse_weapons.png",
+      "sha256": "90500910e5780726efbd470c16a6e73a68aad7d130200a59e5b9a3824edfc380",
+      "size": 10381
+    },
+    {
+      "path": "sprites/player/pse_weapons_sprite.txt",
+      "sha256": "4271f4a54cf0b43bf4da2462d223e159f222aa93a44646a37b8fb55064060d9a",
+      "size": 415
     }
   ],
   "source": [
@@ -261,6 +368,14 @@
     {
       "path": "docs/presentation/player_sprites/john_sprite.txt",
       "sha256": "7b0ddfeb09cc175a2c6948a881c48dbc96e9b89e18b33466cfc0afeeff67db33"
+    },
+    {
+      "path": "docs/presentation/player_sprites/weapon_icons.png",
+      "sha256": "90500910e5780726efbd470c16a6e73a68aad7d130200a59e5b9a3824edfc380"
+    },
+    {
+      "path": "docs/presentation/player_sprites/weapon_icons_sprite.txt",
+      "sha256": "4271f4a54cf0b43bf4da2462d223e159f222aa93a44646a37b8fb55064060d9a"
     }
   ],
   "runtime_verified": false

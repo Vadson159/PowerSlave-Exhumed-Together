@@ -105,15 +105,40 @@ void debugSelfDamage(unsigned char* own); // тест (клиент): PSE_DEBUG_
 // 0x1b (ReqCheckpoint) — снят на этапе 5 переделки: скарабей своего игрока идёт через ReqTouch (TouchScarab).
 // Переделка, этап 2: касания своего игрока у клиента — ОДИН канал. Клиент сообщает, чего коснулся его игрок (вид + номер актора на
 // проводе: номер карты или SphereMirrorTag|номер порождённого у хоста), хост повторяет то же касание нативным OnTouch телом этого игрока.
-constexpr std::uint8_t ReqTouch = 0x1c;      // client -> host: target=номер актора, generation=вид касания
-enum TouchKind : std::uint8_t { TouchHealth = 0, TouchAmmo = 1, TouchKey = 2, TouchWeapon = 3, TouchScarab = 4, TouchMap = 5, TouchKinds = 6 };
+constexpr std::uint8_t ReqTouch = 0x1c;      // client -> host: target=номер актора, generation=вид касания | extra<<8
+enum TouchKind : std::uint8_t { TouchHealth = 0, TouchAmmo = 1, TouchKey = 2, TouchWeapon = 3, TouchScarab = 4, TouchMap = 5, TouchTeam = 6, TouchKinds = 7 };
+// Team items (2026-11-21): an ankh, a team doll or a transmitter taken by any player is given to EVERY player and disappears for everyone, as
+// the one player of the stock game has it. The host decides: its own player takes it natively, a client reports its own pickup (ReqTouch
+// TouchTeam, extra = kind | bit<<8; an ankh is only asked for, the host's P14 gives it to the whole team); the host gives the bit to every
+// player and tells the clients (EvTeamItem: they remove the item and set the bit). Artifacts stay each player's own pickup.
+enum TeamKind : std::uint8_t { TeamNone = 0, TeamAnkh = 1, TeamDoll = 2, TeamQuest = 3 };
+struct TeamItem { int id{-1}; std::uint8_t kind{}, bit{}; const void* def{}; bool local{}; }; // def/local: this machine only, never on the wire
+constexpr std::uint16_t EvTeamItem = 17;   // host -> client: eventValue=номер актора карты (-1: нет), target=kind | bit<<8 | replay<<16
+bool popTeamItem(TeamItem& out);           // host: a team item taken here (by its player natively, or for a client) since the last call
+bool teamOwned(const unsigned char* player, std::uint8_t kind, std::uint8_t bit);
+bool teamGrant(unsigned char* player, std::uint8_t kind, std::uint8_t bit); // doll/transmitter: set the bit (true = it was missing); ankh: false (P14 / client path)
+void pickupNotice(const void* def, unsigned char* puppet); // the stock pickup feedback (sound, HUD message, flash) of def for this player, nothing removed
+void applyTeamItem(const TeamItem& t, bool live); // client: remove the map item here, give its bit to the own player (+ the pickup feedback when live)
+// A late joiner copies the host's equipment: the host's artifacts, ankhs, team dolls and transmitters for that client's own player.
+constexpr std::uint16_t EvEquip = 19;      // host -> client: source=slot of the receiver, target=kind (1 artifacts, 2 ankh mask, 3 dolls, 4 quest), eventValue=mask
+bool applyEquip(unsigned kind, std::uint32_t mask); // client: OR the host's mask into the own player (an ankh mask also sets the count); true = changed
+// Full health / full ammo placed on the map (Item_Health_Full 52, Item_Ammo_Full 51): taken by anyone, back at their place after 15 s (as the
+// level loaded them: the engine's SpawnMapActor), for every player.
+constexpr std::uint16_t EvItemBack = 16;   // host -> client: eventValue=номер актора карты
+void tickRespawns();                       // host, every world tick INSIDE the tick (spawns): puts back what is due
+int popItemBack();                         // host: map actor put back since the last call; -1 — нет
+bool applyItemBack(int id);                // client (inside the world tick): the same map actor back here, unless it is here
+// Kills of each player in the level (the Tab map shows them top right): an AI enemy that died of a player's hit (its own, its projectile, or a
+// client's ReqHit) counts for that player's slot.
+constexpr std::uint16_t EvKills = 18;      // host -> client: source=slot, eventValue=kills of that player in this level
+bool popKill(unsigned& slot);              // host: a kill since the last call
 // The map (Item_Map, kexSlavePickupMap: a vase drops it now and then, A_RandomVaseItem) reveals the whole automap. Taken by anyone (the host,
 // or a client through ReqTouch TouchMap: its body here takes the host's one) it reveals the map of every player: EvMapAll, each client
 // calls the same native reveal (automap 0xa43308 vt+0x10(true, 0), as OnTouch 0x1d91cb).
 constexpr std::uint16_t EvMapAll = 15;   // host -> client: the whole automap is revealed
 bool popMapReveal();                     // хост: карту взяли с прошлого вызова
 bool applyMapReveal();                   // клиент: открыть всю свою автокарту
-struct Touch { int id{-1}; std::uint8_t kind{}; };
+struct Touch { int id{-1}; std::uint8_t kind{}; std::uint16_t extra{}; };
 bool popTouch(Touch& out);                   // клиент: касание своего игрока, ещё не отправленное; false — нет
 int applyTouch(const Touch& t, unsigned char* body); // хост: тело игрока касается актора нативно (не скарабей); 0 — нет, 1 — да, 2 — порождённый шар
 void debugTouch(unsigned char* own);

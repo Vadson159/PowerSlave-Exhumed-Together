@@ -134,6 +134,15 @@ struct State {
     void* useSwitch{}; void* remoteTrigger{}; bool switchReplay{};
     std::array<std::pair<int, int>, 32> switchQueue{}; std::size_t switchHead{}, switchCount{};
     std::vector<int> floatSectors, padSectors; bool platformsScanned{};
+    // Full health / full ammo of the map (host): map actor number, its type and the respawn-clock tick when it comes back (tickRespawns).
+    struct Respawn { int id{}; std::int16_t type{}; std::uint64_t due{}; };
+    std::vector<Respawn> respawns; std::uint64_t respawnClock{}; unsigned respawnLogged{};
+    std::array<int, 32> backQueue{}; std::size_t backHead{}, backCount{};
+    // Team items (ankh, team doll, transmitter): taken here, to be given to everyone (host) / original OnTouch of the hooked classes (index = class).
+    std::array<TeamItem, 32> teamQueue{}; std::size_t teamHead{}, teamCount{}; unsigned teamLogged{};
+    void* teamTouch[4]{};
+    // Kills (host): slot of the player whose hit killed an enemy.
+    std::array<std::uint8_t, 64> killQueue{}; std::size_t killHead{}, killCount{}; unsigned killLogged{};
 } s;
 
 template <class T> T read(const void* p, std::size_t off = 0) { return *reinterpret_cast<const T*>(static_cast<const Byte*>(p) + off); }
@@ -392,7 +401,72 @@ void queueHurt(int id, int hp) {
     s.hurtQueue[(s.hurtHead + s.hurtCount++) % s.hurtQueue.size()] = {id, s.hitOrigin};
     if (++s.hurtLogged <= 30) note("world_enemy_hurt", "\"id\":%d,\"origin\":%u,\"hp\":%d", id, s.hitOrigin, hp);
 }
+// ---- 2026-11-21: team items, full health/ammo that come back, kills ---------------------------------------------------------------------------
+// The local player's Player block (P1 of this machine) and its Puppet, read and checked each time (also before the host's own identity is bound).
+constexpr std::uint32_t LocalPlayerRva = 0xaf33e0;
+Byte* localPuppet() {
+    __try {
+        auto* player = s.base + LocalPlayerRva; auto* node = read<Byte*>(player, 0xd8); auto* a = node ? read<Byte*>(node, 0x28) : nullptr;
+        return a && read<Byte*>(a, 0x10) == node && read<Byte*>(a, 0x1b8) == player && read<Byte*>(a) == s.base + PuppetVtable ? a : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+// Pickups whose bit a Player keeps (def +0x144 = bit number): vtable, OnTouch (vtable +0x40), the Player field, its width, the number of bits and the
+// OnTouch prologue. Ankh, team doll and transmitter are team items; the artifact (last) stays each player's own pickup - the host only keeps the
+// bodies of other players off it (see hookTeamTouch).
+struct TeamClass { std::uint32_t vtable, touchRva; std::uint8_t kind; std::uint16_t field; std::uint8_t width, bits; std::array<Byte, 16> prefix; };
+constexpr std::array<TeamClass, 4> TeamClasses{{
+    {0x52c7d0, 0x1d8870, TeamAnkh, 0x86, 2, 5, {0x48, 0x89, 0x5c, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00}},
+    {0x52c570, 0x1d8f30, TeamDoll, 0xa4, 4, 31, {0x40, 0x55, 0x41, 0x56, 0x48, 0x83, 0xec, 0x28, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00, 0x00, 0x00}},
+    {0x52c608, 0x1d8dc0, TeamQuest, 0x9a, 2, 8, {0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00}},
+    {0x52c900, 0x1d8ac0, TeamNone, 0x90, 4, 6, {0x48, 0x89, 0x74, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00}}}};
+constexpr unsigned AnkhClass = 0, ArtifactClass = 3;
+int teamClassOf(const void* a) {
+    __try {
+        const auto* vt = read<const Byte*>(a);
+        for (unsigned i = 0; i < TeamClasses.size(); ++i) if (vt == s.base + TeamClasses[i].vtable) return static_cast<int>(i);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return -1;
+}
+int teamClassOfKind(unsigned kind) {
+    for (unsigned i = 0; i < TeamClasses.size(); ++i) if (kind != static_cast<unsigned>(TeamNone) && static_cast<unsigned>(TeamClasses[i].kind) == kind) return static_cast<int>(i);
+    return -1;
+}
+// Full health (type 52) and full ammo (51) placed on the map come back 15 s after they were taken; orbs a vase or an enemy drops (spawned during
+// play, number -1) do not.
+bool respawnType(int type) { return type == 51 || type == 52; }
+constexpr std::uint64_t RespawnTicks = 15 * 60; // world ticks (60 Hz)
+void queueTeam(const TeamItem& t) {
+    if (s.teamCount < s.teamQueue.size()) s.teamQueue[(s.teamHead + s.teamCount++) % s.teamQueue.size()] = t;
+}
+void scheduleRespawn(int id, std::int16_t type) {
+    for (const auto& r : s.respawns) if (r.id == id) return;
+    s.respawns.push_back({id, type, s.respawnClock + RespawnTicks});
+}
+// Host: whose kill is it. A client's hit (ReqHit, applied as the body's damage: clientHit/hitOrigin) is that client's; the host's own player,
+// its projectile or explosion (owner node +0x148, target node +0x28) is slot 0's. Another enemy, a trap, an explosion without an owner: nobody.
+int killerSlot(void* instigator) {
+    if (s.clientHit) return s.hitOrigin >= 1 && s.hitOrigin < 8 ? static_cast<int>(s.hitOrigin) : -1;
+    Byte* own = localPuppet();
+    if (!instigator || !own) return -1;
+    if (instigator == own) return 0;
+    if (isPuppet(instigator)) return -1; // another player's body: its own hits come as ReqHit
+    __try { if (read<Byte*>(instigator) == s.base + AiVtable) return -1; } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    return ownerOf(instigator) == own || actorByNode(instigator, TargetNodeOffset) == own ? 0 : -1;
+}
+void damageBody(void* actor, void* instigator, int kind, short amount);
+// Every damage of the engine passes here. On the host an enemy killed by a player's hit is counted for that player (also while the host is
+// alone in the level); then the co-op rules below (damageBody) decide what the damage does.
 void __fastcall hookDamage(void* actor, void* instigator, int kind, short amount) {
+    int killer = -1;
+    const bool counted = thread() && s.installed && !s.client && actor && read<Byte*>(actor) == s.base + AiVtable && read<std::int16_t>(actor, 0x17a) > 0;
+    if (counted) killer = killerSlot(instigator);
+    damageBody(actor, instigator, kind, amount);
+    if (counted && killer >= 0 && read<std::int16_t>(actor, 0x17a) <= 0 && s.killCount < s.killQueue.size()) {
+        s.killQueue[(s.killHead + s.killCount++) % s.killQueue.size()] = static_cast<std::uint8_t>(killer);
+        if (++s.killLogged <= 60) note("world_kill", "\"id\":%d,\"slot\":%d,\"kind\":%d,\"amount\":%d", read<int>(actor, 0x180), killer, kind, static_cast<int>(amount));
+    }
+}
+void damageBody(void* actor, void* instigator, int kind, short amount) {
     // Враги у клиента — отражения хоста. Своё попадание игрок клиента по ним у себя не наносит: локальный урон убивал врага у клиента
     // (Damage 0x1a1370 при здоровье <= 0 сам ставит анимацию смерти, снимает «простреливаемый» 0x20 и зовёт OnDeath), а у хоста тело этого
     // игрока стреляет с задержкой и часто мимо — враг оставался живым у хоста. Попадание уходит хосту (ReqHit), здесь — только вспышка удара.
@@ -515,14 +589,14 @@ namespace {
 constexpr std::array<Byte, 16> HealthTouchPrefix{0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00};
 constexpr std::array<Byte, 16> AmmoTouchPrefix{0x40, 0x56, 0x41, 0x56, 0x48, 0x83, 0xec, 0x28, 0x48, 0x83, 0xb9, 0x70, 0x01, 0x00, 0x00, 0x00};
 // Касание своего игрока у клиента -> одна очередь ReqTouch (повтор того же актора того же вида не чаще раза в 30 тиков).
-void pushTouch(TouchKind kind, int id) {
+void pushTouch(TouchKind kind, int id, std::uint16_t extra = 0) {
     if (id < 0) return;
     const std::uint64_t key = (static_cast<std::uint64_t>(kind) << 32) | static_cast<std::uint32_t>(id);
     auto& last = s.touchAsked[key];
     if (last && s.ticks - last < 30) return;
     last = s.ticks ? s.ticks : 1;
-    if (s.touchCount < s.touchQueue.size()) s.touchQueue[(s.touchHead + s.touchCount++) % s.touchQueue.size()] = Touch{id, kind};
-    if (++s.touchLogged <= 60) note("world_touch_asked", "\"kind\":%u,\"id\":%d", static_cast<unsigned>(kind), id);
+    if (s.touchCount < s.touchQueue.size()) s.touchQueue[(s.touchHead + s.touchCount++) % s.touchQueue.size()] = Touch{id, kind, extra};
+    if (++s.touchLogged <= 60) note("world_touch_asked", "\"kind\":%u,\"id\":%d,\"extra\":%u", static_cast<unsigned>(kind), id, static_cast<unsigned>(extra));
 }
 template <unsigned Kind> void __fastcall hookSphereTouch(void* pickup, void* toucher) {
     auto* original = reinterpret_cast<TouchFn>(Kind == 0 ? s.healthTouch : s.ammoTouch);
@@ -542,12 +616,31 @@ template <unsigned Kind> void __fastcall hookSphereTouch(void* pickup, void* tou
 }
 void __fastcall hookConsume(void* pickup, void* toucher) {
     const int id = thread() && s.installed && pickup && sphere(pickup) ? read<int>(pickup, 0x180) : -1; // also with no client yet: a later joiner learns it
+    // What the pickup is, read before consume removes it: a map actor (number), full health/ammo that comes back, a team item (kind + bit).
+    int mapId = -1, cls = -1; std::int16_t type = -1; std::uint8_t bit = 0; const Byte* def = nullptr; bool local = false;
+    if (thread() && s.installed && pickup) {
+        const int n = read<int>(pickup, 0x180);
+        mapId = n >= 0 && n < 100000 ? n : -1;
+        def = read<const Byte*>(pickup, 0x170);
+        cls = teamClassOf(pickup);
+        if (def) { type = static_cast<std::int16_t>(read<int>(def)); bit = static_cast<std::uint8_t>(read<int>(def, 0x144) & 0xff); }
+        local = toucher && toucher == localPuppet();
+    }
     if (thread() && s.remoteTest && s.remoteTest(toucher)) {
         const int before = s.hudKind; s.hudKind = 2;
         reinterpret_cast<void(__fastcall*)(void*, void*)>(s.consume)(pickup, toucher);
         s.hudKind = before;
     } else reinterpret_cast<void(__fastcall*)(void*, void*)>(s.consume)(pickup, toucher);
     if (id >= 0 && id < 100000 && s.pickupCount < s.pickupQueue.size()) s.pickupQueue[(s.pickupHead + s.pickupCount++) % s.pickupQueue.size()] = id;
+    const bool gone = pickup && read<Byte>(pickup, 0x40);
+    if (mapId >= 0 && gone && respawnType(type)) {
+        scheduleRespawn(mapId, type);
+        if (++s.respawnLogged <= 60) note("world_respawn_scheduled", "\"id\":%d,\"type\":%d,\"due_ticks\":%llu", mapId, static_cast<int>(type), RespawnTicks);
+    }
+    if (cls >= 0 && TeamClasses[cls].kind != TeamNone && gone && bit < TeamClasses[cls].bits) {
+        queueTeam({mapId, TeamClasses[cls].kind, bit, def, local});
+        if (++s.teamLogged <= 60) note("world_team_item_taken", "\"id\":%d,\"kind\":%u,\"bit\":%u,\"by_host_player\":%s", mapId, static_cast<unsigned>(TeamClasses[cls].kind), static_cast<unsigned>(bit), local ? "true" : "false");
+    }
 }
 // ---- Звуки игрока (EvSound / ReqSound). Номер звука на проводе — индекс в этой таблице: все звуки оружия из sprites/weapons/*_anim.txt
 // (A_PlayLocalSound / A_PlayLoopingLocalSound) и звуки тела игрока из EXE (прыжок, боль, смерть, вода, удар током). Порядок не менять: он общий
@@ -831,6 +924,39 @@ void __fastcall hookWeaponTouch(void* weapon, void* toucher) {
     if (thread() && s.installed && s.client && s.active && weapon && toucher && toucher == s.ownActor) pushTouch(TouchWeapon, read<int>(weapon, 0x180));
     original(weapon, toucher);
 }
+// OnTouch of the classes in TeamClasses (K = index). The stock OnTouch of an artifact, a doll or a transmitter opens the inventory screen of THIS
+// machine (0xa43f30 vtable +0x20/+0x28: +0x1b0 = 1, the local player's input cleared) whoever touched it.
+// Host: the body of another player never takes one of them here (its player takes them in its own game: an artifact is its own, a doll or a
+//   transmitter it reports); the ankh entry is P14's (gameplay_p14.cpp), not hooked here.
+// Client, its own player: an ankh is only asked for (the host's P14 gives it to the whole team, health with it, and EvTeamItem brings it back
+//   here: no local health ahead of the host); a doll or a transmitter is the stock pickup here (screen, message), then reported to the host so
+//   that every other player gets it. Artifacts are not hooked on a client (each player's own pickup).
+template <unsigned K> void __fastcall hookTeamTouch(void* item, void* toucher) {
+    auto* original = reinterpret_cast<TouchFn>(s.teamTouch[K]);
+    if (!original) return;
+    if (thread() && s.installed && item && toucher) {
+        if (!s.client) {
+            if (s.remoteTest && s.remoteTest(toucher)) {
+                static unsigned logged = 0; if (++logged <= 20) note("world_team_touch_body_skipped", "\"class\":%u,\"id\":%d", K, read<int>(item, 0x180));
+                return;
+            }
+        } else if (s.active && toucher == s.ownActor && TeamClasses[K].kind != TeamNone) {
+            const int id = read<int>(item, 0x180);
+            const auto* def = read<const Byte*>(item, 0x170);
+            const int bit = def ? read<int>(def, 0x144) : -1;
+            if (id >= 0 && id < 100000 && bit >= 0 && bit < TeamClasses[K].bits && !read<Byte>(item, 0x40) && read<std::int16_t>(toucher, 0x17a) > 0) {
+                const auto extra = static_cast<std::uint16_t>(TeamClasses[K].kind | (bit << 8));
+                if constexpr (TeamClasses[K].kind == TeamAnkh) { pushTouch(TouchTeam, id, extra); return; }
+                else {
+                    original(item, toucher);
+                    if (read<Byte>(item, 0x40)) pushTouch(TouchTeam, id, extra);
+                    return;
+                }
+            }
+        }
+    }
+    original(item, toucher);
+}
 // Ловушки карты (kexFireballSpawner: огненные шары, лазеры, валуны). Игрок в секторе-триггере с меткой T включает ловушки с меткой T и выключает
 // ловушки с меткой T-1 (0x1bed90, каждый тик, пока он там стоит); включение взводит таймер ловушки, и она стреляет сразу (OnActivate 0x1e7400).
 // В одиночной игре игрок один и стоит в одном секторе. У хоста игроков несколько: один стоит в секторе, включающем ловушку, другой — в секторе,
@@ -960,6 +1086,19 @@ bool install(Byte* base, std::uint32_t simTid, Logger log, bool host) {
     else if (MH_CreateHook(base + MapTouchRva, reinterpret_cast<void*>(&hookMapTouch), &s.mapTouch) != MH_OK || MH_EnableHook(base + MapTouchRva) != MH_OK) {
         note("world_hook_failed", "\"site\":\"MapTouch\""); s.mapTouch = nullptr;
     } else note("map_touch_hook_ready", "\"rva\":%u", MapTouchRva);
+    {   // Team items and artifacts (hookTeamTouch): host - doll, transmitter, artifact (the ankh entry is P14's); client - ankh, doll, transmitter.
+        using HookFn = void(__fastcall*)(void*, void*);
+        const HookFn hooks[4]{&hookTeamTouch<0>, &hookTeamTouch<1>, &hookTeamTouch<2>, &hookTeamTouch<3>};
+        for (unsigned k = 0; k < TeamClasses.size(); ++k) {
+            if (host ? k == AnkhClass : k == ArtifactClass) continue;
+            const auto& c = TeamClasses[k];
+            if (!std::equal(c.prefix.begin(), c.prefix.end(), base + c.touchRva)) { note("world_profile_mismatch", "\"site\":\"team_touch\",\"class\":%u", k); continue; }
+            if (MH_CreateHook(base + c.touchRva, reinterpret_cast<void*>(hooks[k]), &s.teamTouch[k]) != MH_OK || MH_EnableHook(base + c.touchRva) != MH_OK) {
+                note("world_hook_failed", "\"site\":\"TeamTouch\",\"class\":%u", k); s.teamTouch[k] = nullptr; continue;
+            }
+            note("team_touch_hook_ready", "\"class\":%u,\"rva\":%u", k, c.touchRva);
+        }
+    }
     if (!host) { // враги хоста: ИИ клиента заменён репликой, пока приходят снимки
         if (!std::equal(AiTickPrefix.begin(), AiTickPrefix.end(), base + AiTickRva) || !std::equal(AiDamagePrefix.begin(), AiDamagePrefix.end(), base + AiDamageRva) ||
             !std::equal(ChangeAnimPrefix.begin(), ChangeAnimPrefix.end(), base + ChangeAnimRva)) {
@@ -1003,8 +1142,23 @@ std::uint32_t popSound() {
     if (++s.soundsSent <= 20) note("world_sound_sent", "\"sound\":%u,\"path\":\"%s\"", v, v & SoundStop ? "stop" : PlayerSounds[v & 0xff]);
     return v;
 }
+// The death cries of a player (Puppet death 0x1dbd00: pdrown / pdeath01 / pdeath03; lava 0x1decc0: psizzle + pdeath02; gibs: pxdeath).
+bool deathSound(std::uint32_t sound) {
+    if (sound & (SoundLoop | SoundStop) || (sound & 0xff) >= PlayerSounds.size()) return false;
+    const char* p = PlayerSounds[sound & 0xff];
+    return std::strncmp(p, "sounds/pdeath", 13) == 0 || std::strcmp(p, "sounds/pxdeath.wav") == 0 || std::strcmp(p, "sounds/pdrown.wav") == 0 ||
+           std::strcmp(p, "sounds/psizzle.wav") == 0;
+}
 void playPlayerSound(Byte* actor, std::uint32_t sound) {
-    if (!thread() || !s.installed || !actor || !s.playSound || (sound & 0xff) >= PlayerSounds.size()) return;
+    if (!thread() || !s.installed || !s.playSound || (sound & 0xff) >= PlayerSounds.size()) return;
+    // Another player's death is heard by everyone, wherever they are. PlaySound (0x1d3b30) plays nothing on an object farther than
+    // g_object_sound_distance_max (cvar 0xaf44d0, 2500) from the listener and places the rest in the world; on the listener's own Puppet it plays
+    // at the listener, like one's own death. So the death cry goes to this player's own Puppet (also when that player's proxy is not there).
+    if (deathSound(sound)) if (Byte* own = ownSoundActor()) {
+        static unsigned logged = 0; if (++logged <= 20) note("world_death_sound_global", "\"sound\":%u,\"path\":\"%s\",\"proxy\":%s", sound, PlayerSounds[sound & 0xff], actor ? "true" : "false");
+        actor = own;
+    }
+    if (!actor) return;
     ForeignScope foreign; s.soundReplay = true;
     // Через собственные хуки (адрес функции): флаг soundReplay не даёт повтору уйти обратно в сеть.
     if (sound & SoundStop) reinterpret_cast<void(__fastcall*)(void*)>(s.base + StopLoopRva)(actor);
@@ -1424,7 +1578,8 @@ void debugKillEnemy() {
         if (read<Byte*>(a) != s.base + AiVtable || read<int>(a, 0x180) != id) return false;
         // Тот же вызов, что и в P7: generic Damage(actor, source, type, amount); виртуальная реакция ИИ (смерть) идёт из него.
         static const short amount = [] { char v[8]{}; return static_cast<short>(GetEnvironmentVariableA("PSE_DEBUG_KILL_AMOUNT", v, sizeof(v)) ? std::clamp(std::atoi(v), 1, 30000) : 100); }();
-        reinterpret_cast<void(__fastcall*)(void*, void*, int, short)>(s.base + 0x1a1370)(a, nullptr, 0, amount); // PSE_DEBUG_KILL_AMOUNT: less = only wounded
+        static const bool byHost = [] { char v[4]{}; return GetEnvironmentVariableA("PSE_DEBUG_KILL_BY_HOST", v, sizeof(v)) > 0 && v[0] == '1'; }(); // the host's player is the killer (kill table)
+        reinterpret_cast<void(__fastcall*)(void*, void*, int, short)>(s.base + 0x1a1370)(a, byHost ? localPuppet() : nullptr, 0, amount); // PSE_DEBUG_KILL_AMOUNT: less = only wounded
         note("world_debug_kill", "\"id\":%d,\"hp\":%d,\"ai\":%d", id, read<std::int16_t>(a, 0x17a), read<int>(a, 0x1b8));
         return true;
     });
@@ -2035,20 +2190,27 @@ int takePickup(int id, Byte* body) {
     return taken ? (dynamic ? 2 : 1) : 0;
 }
 void debugTouch(Byte* own) {
+    // client: PSE_DEBUG_TOUCH_CLIENT + PSE_DEBUG_TOUCH_FILE (in a session); host: PSE_DEBUG_TOUCH_HOST + PSE_DEBUG_TOUCH_HOST_FILE (also alone)
     static bool fired = false; char spec[128]{}, file[MAX_PATH]{};
-    if (fired || !thread() || !s.installed || !s.client || !s.active || !own) return;
-    if (!GetEnvironmentVariableA("PSE_DEBUG_TOUCH_CLIENT", spec, sizeof(spec)) || !GetEnvironmentVariableA("PSE_DEBUG_TOUCH_FILE", file, sizeof(file)) ||
+    if (fired || !thread() || !s.installed || (s.client && !s.active) || !own) return;
+    if (!GetEnvironmentVariableA(s.client ? "PSE_DEBUG_TOUCH_CLIENT" : "PSE_DEBUG_TOUCH_HOST", spec, sizeof(spec)) ||
+        !GetEnvironmentVariableA(s.client ? "PSE_DEBUG_TOUCH_FILE" : "PSE_DEBUG_TOUCH_HOST_FILE", file, sizeof(file)) ||
         GetFileAttributesA(file) == INVALID_FILE_ATTRIBUTES) return;
     fired = true;
     for (char* p = spec; p && *p;) {
         int kind = -1, id = -1;
         if (sscanf_s(p, "%d,%d", &kind, &id) == 2 && kind >= 0 && kind < TouchKinds) {
-            static constexpr std::uint32_t vt[TouchKinds]{HealthPickupVtable, AmmoPickupVtable, KeyVtable, WeaponVtable, CheckpointVtable, MapVtable};
-            static constexpr std::uint32_t rva[TouchKinds]{HealthTouchRva, AmmoTouchRva, KeyTouchRva, WeaponTouchRva, CheckpointTouchRva, MapTouchRva};
-            Byte* target = nullptr;
-            forEachActor([&](Byte* a, int) { if (read<Byte*>(a) != s.base + vt[kind] || read<int>(a, 0x180) != id) return false; target = a; return true; });
+            static constexpr std::uint32_t vt[TouchKinds]{HealthPickupVtable, AmmoPickupVtable, KeyVtable, WeaponVtable, CheckpointVtable, MapVtable, 0};
+            static constexpr std::uint32_t rva[TouchKinds]{HealthTouchRva, AmmoTouchRva, KeyTouchRva, WeaponTouchRva, CheckpointTouchRva, MapTouchRva, 0};
+            Byte* target = nullptr; std::uint32_t entry = kind < TouchTeam ? rva[kind] : 0;
+            forEachActor([&](Byte* a, int) {
+                if (read<int>(a, 0x180) != id) return false;
+                if (kind == TouchTeam) { const int cls = teamClassOf(a); if (cls < 0) return false; entry = TeamClasses[cls].touchRva; } // ankh, doll, transmitter or artifact
+                else if (read<Byte*>(a) != s.base + vt[kind]) return false;
+                target = a; return true;
+            });
             note("world_debug_touch", "\"kind\":%d,\"id\":%d,\"found\":%s", kind, id, target ? "true" : "false");
-            if (target) reinterpret_cast<TouchFn>(s.base + rva[kind])(target, own); // the hooked native entry: exactly what the engine's touch scan calls
+            if (target && entry) reinterpret_cast<TouchFn>(s.base + entry)(target, own); // the hooked native entry: exactly what the engine's touch scan calls
         }
         p = std::strchr(p, ';'); if (p) ++p;
     }
@@ -2093,6 +2255,40 @@ int applyTouch(const Touch& t, Byte* body) {
         if (++s.touchAppliedLogged <= 60) note("world_touch_applied", "\"kind\":%u,\"id\":%d,\"result\":\"%s\"", static_cast<unsigned>(t.kind), t.id, target ? "touched" : "gone");
         if (!target) s.mapRevealPending = true; // gone here already (taken by someone else): the asker has it anyway, everyone gets the map
         return target ? 1 : 0;
+    }
+    if (t.kind == TouchTeam) {   // an ankh / team doll / transmitter the client's player took (or, an ankh, wants) in its own game
+        const unsigned kind = t.extra & 0xffu, bit = static_cast<unsigned>(t.extra >> 8);
+        const int cls = teamClassOfKind(kind);
+        if (cls < 0 || bit >= static_cast<unsigned>(TeamClasses[cls].bits)) return 0;
+        Byte* target = nullptr;
+        forEachActor([&](Byte* a, int) {
+            if (read<int>(a, 0x180) != t.id || read<Byte>(a, 0x40) || teamClassOf(a) != cls) return false;
+            target = a; return true;
+        });
+        const char* result = "gone";
+        if (target && kind == static_cast<unsigned>(TeamAnkh)) {
+            // Through P14's hooked OnTouch (the caller allows this remote touch): the whole team gets the ankh (health too), consume -> hookConsume
+            // queues it -> host.cpp tells every client (EvTeamItem).
+            const int before = s.hudKind; s.hudKind = 2;
+            reinterpret_cast<TouchFn>(s.base + TeamClasses[cls].touchRva)(target, body);
+            s.hudKind = before;
+            result = read<Byte>(target, 0x40) ? "taken" : "refused";
+        } else if (target) {
+            // A doll / transmitter already taken in the client's game: its body gets the bit, the item leaves the host's world without its OnTouch
+            // (that would open the host's inventory screen), everyone else gets it (host.cpp: popTeamItem).
+            if (auto* owner = read<Byte*>(body, 0x1b8)) teamGrant(owner, static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(bit));
+            const auto* def = read<const Byte*>(target, 0x170);
+            removeActor(target);
+            queueTeam({t.id, static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(bit), def, false});
+            result = "taken";
+        } else if (teamOwned(s.base + LocalPlayerRva, static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(bit))) {
+            // Not in the host's world (taken already, or hidden when the level loaded because the host's player had it): the team has it; the
+            // same event again gives it to the asker and removes its copy.
+            queueTeam({t.id, static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(bit), nullptr, false});
+            result = "owned";
+        }
+        if (++s.touchAppliedLogged <= 60) note("world_touch_applied", "\"kind\":%u,\"id\":%d,\"team_kind\":%u,\"bit\":%u,\"result\":\"%s\"", static_cast<unsigned>(t.kind), t.id, kind, bit, result);
+        return std::strcmp(result, "gone") == 0 || std::strcmp(result, "refused") == 0 ? 0 : 1;
     }
     if (t.kind != TouchKey && t.kind != TouchWeapon) return 0;
     const bool key = t.kind == TouchKey;
@@ -2481,6 +2677,7 @@ void resetWorld() {
     s.doors.clear(); s.reopen.clear();
     s.pickupAsked.clear(); s.touchAsked.clear(); s.touchHead = s.touchCount = 0; s.hitHead = s.hitCount = 0; s.selfHead = s.selfCount = 0;
     s.lastCheckpoint = -1; s.cpHead = s.cpCount = 0;
+    s.respawns.clear(); s.backHead = s.backCount = 0; s.teamHead = s.teamCount = 0; s.killHead = s.killCount = 0; // the map actor numbers were this level's
 }
 void debugFireball(Byte* target) {
     static bool read_env = false; static float dist = 300, speed = 500; static bool on = false; static std::uint64_t last = 0, ticks = 0; static int ownerId = -1;
@@ -2567,5 +2764,169 @@ void census(const char* why) {
         return false;
     });
     note("world_census_end", "\"why\":\"%s\",\"actors\":%u", why, n);
+}
+
+// ---- 2026-11-21: full health / full ammo come back, team items, the host's equipment for a late joiner, kills ----------------------------------
+namespace {
+// The engine's own map spawn: actor factory (0x5a10a0) vtable +0x20 = 0x1d41f0 (the level loader's call for every map actor record of 0xa459e0:
+// type, sector, x, y, z, tag, params (difficulty bits), angle): definition, position, angle, sector link, map number +0x180 = record index,
+// OnSpawn. Runs only inside the world tick (what it spawns waits for the end-of-tick drain, like everything spawned during play).
+constexpr std::uint32_t SpawnMapActorRva = 0x1d41f0;
+constexpr std::array<Byte, 16> SpawnMapActorPrefix{0x4c, 0x8b, 0xdc, 0x49, 0x89, 0x5b, 0x20, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x60};
+bool mapActorPresent(int id) {
+    bool present = false;
+    forEachActor([&](Byte* a, int) { if (read<int>(a, 0x180) != id || read<Byte>(a, 0x40)) return false; present = true; return true; });
+    return present;
+}
+Byte* spawnMapActor(int id, std::int16_t type, const char*& why) {
+    why = "ok";
+    auto* factory = s.base + FactoryRva; auto** vt = read<Byte**>(factory);
+    if (!vt || vt[4] != s.base + SpawnMapActorRva || !std::equal(SpawnMapActorPrefix.begin(), SpawnMapActorPrefix.end(), s.base + SpawnMapActorRva)) { why = "profile"; return nullptr; }
+    auto* table = read<Byte*>(s.base, MapActorsRva); const auto count = read<std::uint64_t>(s.base, MapActorCountRva);
+    if (!table || id < 0 || static_cast<std::uint64_t>(id) >= count || count > 100000) { why = "range"; return nullptr; }
+    const Byte* entry = table + static_cast<std::size_t>(id) * MapActorStride;
+    if (read<std::int16_t>(entry) != type || read<std::int16_t>(entry, 2) < 0) { why = "record"; return nullptr; }
+    if (mapActorPresent(id)) { why = "present"; return nullptr; }
+    auto* a = reinterpret_cast<Byte*(__fastcall*)(void*, const void*)>(s.base + SpawnMapActorRva)(factory, entry);
+    if (!a) { why = "refused"; return nullptr; } // e.g. not on this difficulty
+    if (read<int>(a, 0x180) != id) why = "number";
+    return a;
+}
+// Bits of a Player kept by the stock pickups (TeamClasses): read/write by the field width.
+std::uint32_t bitsOf(const Byte* player, const TeamClass& c) { return c.width == 2 ? read<std::uint16_t>(player, c.field) : read<std::uint32_t>(player, c.field); }
+void setBits(Byte* player, const TeamClass& c, std::uint32_t v) {
+    if (c.width == 2) *reinterpret_cast<std::uint16_t*>(player + c.field) = static_cast<std::uint16_t>(v); else *reinterpret_cast<std::uint32_t*>(player + c.field) = v;
+}
+// An ankh for the client's own player without the health: mask +0x86 and count +0x84 as GiveAnkh 0x1e0910 sets them; the health (to the new
+// maximum) comes from the host, where P14 gave the ankh to this player's body. Never a count the mask does not match.
+bool grantAnkhBits(Byte* player, unsigned bit) {
+    const auto mask = read<std::uint16_t>(player, 0x86); const auto count = read<std::int16_t>(player, 0x84);
+    if (bit > 4 || (mask & (1u << bit))) return false;
+    if ((mask & ~0x1fu) || count != static_cast<std::int16_t>(__popcnt(mask))) { note("world_team_ankh_skipped", "\"mask\":%u,\"count\":%d", mask, static_cast<int>(count)); return false; }
+    *reinterpret_cast<std::uint16_t*>(player + 0x86) = static_cast<std::uint16_t>(mask | (1u << bit));
+    *reinterpret_cast<std::int16_t*>(player + 0x84) = static_cast<std::int16_t>(count + 1);
+    return true;
+}
+// After the team dolls changed: 28 of them unlock what the stock doll pickup unlocks then (0x1d9042: abilities +0x94 |= 2).
+void dollBonus(Byte* player) { if (__popcnt(read<std::uint32_t>(player, 0xa4)) >= 28) *reinterpret_cast<std::uint32_t*>(player + 0x94) |= 2u; }
+// The map items this machine's player owns now leave its world, as the item's own OnSpawn hides them when a level loads with them owned
+// (0x1d8ca0 / 0x1d8980 / 0x1d90c0 / 0x1d8eb0). The artifact's level event (OnSpawn: 0x1be0b0(bit + 1000)) is not repeated here.
+unsigned removeOwnedItems() {
+    Byte* player = s.base + LocalPlayerRva; unsigned removed = 0;
+    forEachActor([&](Byte* a, int) {
+        const int cls = teamClassOf(a);
+        if (cls < 0 || read<Byte>(a, 0x40) || read<int>(a, 0x180) < 0) return false;
+        const auto* def = read<const Byte*>(a, 0x170);
+        const int bit = def ? read<int>(def, 0x144) : -1;
+        if (bit >= 0 && bit < TeamClasses[cls].bits && (bitsOf(player, TeamClasses[cls]) & (1u << bit))) { removeActor(a); ++removed; }
+        return false;
+    });
+    return removed;
+}
+}
+void tickRespawns() {
+    if (!thread() || !s.installed || s.client) return;
+    ++s.respawnClock;
+    for (std::size_t i = 0; i < s.respawns.size();) {
+        if (s.respawns[i].due > s.respawnClock) { ++i; continue; }
+        const auto r = s.respawns[i]; s.respawns.erase(s.respawns.begin() + static_cast<std::ptrdiff_t>(i));
+        const char* why = "";
+        Byte* a = spawnMapActor(r.id, r.type, why);
+        if (a && s.backCount < s.backQueue.size()) s.backQueue[(s.backHead + s.backCount++) % s.backQueue.size()] = r.id;
+        if (++s.respawnLogged <= 60) note("world_item_respawned", "\"id\":%d,\"type\":%d,\"result\":\"%s\"", r.id, static_cast<int>(r.type), why);
+    }
+}
+int popItemBack() {
+    if (!s.backCount) return -1;
+    const int id = s.backQueue[s.backHead]; s.backHead = (s.backHead + 1) % s.backQueue.size(); --s.backCount;
+    return id;
+}
+bool applyItemBack(int id) {
+    if (!thread() || !s.installed || !s.client || !s.active || id < 0) return false;
+    auto* table = read<Byte*>(s.base, MapActorsRva);
+    if (!table || static_cast<std::uint64_t>(id) >= read<std::uint64_t>(s.base, MapActorCountRva)) return false;
+    const auto type = read<std::int16_t>(table + static_cast<std::size_t>(id) * MapActorStride);
+    if (!respawnType(type)) return false;
+    const char* why = "";
+    Byte* a = spawnMapActor(id, type, why);
+    s.pickupAsked.erase(id);
+    static unsigned logged = 0; if (++logged <= 60) note("world_item_back_applied", "\"id\":%d,\"type\":%d,\"result\":\"%s\"", id, static_cast<int>(type), why);
+    return a != nullptr;
+}
+bool popTeamItem(TeamItem& out) {
+    if (!s.teamCount) return false;
+    out = s.teamQueue[s.teamHead]; s.teamHead = (s.teamHead + 1) % s.teamQueue.size(); --s.teamCount;
+    return true;
+}
+bool teamOwned(const unsigned char* player, std::uint8_t kind, std::uint8_t bit) {
+    const int cls = teamClassOfKind(kind);
+    return player && cls >= 0 && bit < TeamClasses[cls].bits && (bitsOf(player, TeamClasses[cls]) & (1u << bit)) != 0;
+}
+bool teamGrant(unsigned char* player, std::uint8_t kind, std::uint8_t bit) {
+    const int cls = teamClassOfKind(kind);
+    if (!thread() || !player || cls < 0 || kind == TeamAnkh || bit >= TeamClasses[cls].bits) return false;
+    const auto& c = TeamClasses[cls];
+    const auto v = bitsOf(player, c);
+    if (v & (1u << bit)) return false;
+    setBits(player, c, v | (1u << bit));
+    if (kind == TeamDoll) dollBonus(player);
+    return true;
+}
+void pickupNotice(const void* defp, Byte* puppet) {
+    const auto* def = static_cast<const Byte*>(defp);
+    if (!thread() || !s.installed || !def || !puppet) return;
+    // The feedback part of consume (0x1d8360), checked against its body (the entry is hooked on the host): message def+0x110 / +0x118 through HUD
+    // vtable +0x18 (0x1d839d..0x1d83d1), the pickup flash HUD +0x28 (0x1d8448..); the sound def+0xf8 when def+0x100 is set.
+    constexpr std::array<Byte, 0x34> Message{0x48, 0x8b, 0x97, 0x70, 0x01, 0x00, 0x00, 0x48, 0x83, 0xba, 0x18, 0x01, 0x00, 0x00, 0x00, 0x76, 0x23, 0x48, 0x8b, 0x05,
+        0x6b, 0xba, 0x86, 0x00, 0x48, 0x8b, 0x92, 0x10, 0x01, 0x00, 0x00, 0x48, 0x8b, 0x58, 0x18, 0xe8, 0xdb, 0x0e, 0xee, 0xff, 0x48, 0x8b, 0xd0, 0x48, 0x8d, 0x0d, 0x51,
+        0xba, 0x86, 0x00, 0xff, 0xd3};
+    constexpr std::array<Byte, 0x11> Flash{0x48, 0x8b, 0x05, 0xd1, 0xb9, 0x86, 0x00, 0x48, 0x8d, 0x0d, 0xca, 0xb9, 0x86, 0x00, 0xff, 0x50, 0x28};
+    if (!std::equal(Message.begin(), Message.end(), s.base + 0x1d839d) || !std::equal(Flash.begin(), Flash.end(), s.base + 0x1d8448)) { note("world_pickup_notice_skipped", "\"reason\":\"profile\""); return; }
+    auto* hud = s.base + HudObjectRva; auto** vt = read<Byte**>(hud);
+    if (vt && (reinterpret_cast<Byte*>(vt) < s.base + 0x482000 || reinterpret_cast<Byte*>(vt) >= s.base + 0x59f000)) vt = nullptr; // HUD not built
+    if (read<std::uint64_t>(def, 0x100) && read<const char*>(def, 0xf8) && s.playSound) {
+        s.soundReplay = true; // not one of this player's own sounds for the others
+        reinterpret_cast<PlaySoundFn>(s.base + PlaySoundRva)(puppet, read<const char*>(def, 0xf8), false);
+        s.soundReplay = false;
+    }
+    if (vt && read<std::uint64_t>(def, 0x118) && read<const char*>(def, 0x110)) {
+        const auto* text = reinterpret_cast<const char*(__fastcall*)(void*, const char*)>(s.base + 0xb92a0)(nullptr, read<const char*>(def, 0x110));
+        reinterpret_cast<void(__fastcall*)(void*, const char*)>(vt[3])(hud, text);
+    }
+    if (vt) reinterpret_cast<void(__fastcall*)(void*)>(vt[5])(hud);
+}
+void applyTeamItem(const TeamItem& t, bool live) {
+    if (!thread() || !s.installed || !s.client || !s.active) return;
+    const int cls = teamClassOfKind(t.kind);
+    if (cls < 0 || t.bit >= TeamClasses[cls].bits) return;
+    Byte* target = nullptr;
+    if (t.id >= 0) forEachActor([&](Byte* a, int) { if (read<int>(a, 0x180) != t.id || read<Byte>(a, 0x40) || teamClassOf(a) != cls) return false; target = a; return true; });
+    Byte* player = s.base + LocalPlayerRva;
+    const bool granted = t.kind == TeamAnkh ? grantAnkhBits(player, t.bit) : teamGrant(player, t.kind, t.bit);
+    const auto* def = target ? read<const Byte*>(target, 0x170) : nullptr;
+    const bool notice = live && granted && def && s.ownActor && read<std::int16_t>(s.ownActor, 0x17a) > 0;
+    if (notice) pickupNotice(def, s.ownActor);
+    if (target) removeActor(target);
+    if (++s.teamLogged <= 60) note("world_team_item_applied", "\"id\":%d,\"kind\":%u,\"bit\":%u,\"live\":%s,\"found\":%s,\"granted\":%s,\"notice\":%s", t.id, static_cast<unsigned>(t.kind),
+        static_cast<unsigned>(t.bit), live ? "true" : "false", target ? "true" : "false", granted ? "true" : "false", notice ? "true" : "false");
+}
+bool applyEquip(unsigned kind, std::uint32_t mask) {
+    if (!thread() || !s.installed || !s.client || !s.active) return false;
+    Byte* player = s.base + LocalPlayerRva; bool changed = false;
+    switch (kind) {
+    case 1: { const auto& c = TeamClasses[ArtifactClass]; const auto v = bitsOf(player, c); const auto want = v | (mask & 0x3fu); if (want != v) { setBits(player, c, want); changed = true; } break; }
+    case 2: for (unsigned b = 0; b < 5; ++b) if ((mask & (1u << b)) && grantAnkhBits(player, b)) changed = true; break;
+    case 3: for (unsigned b = 0; b < 31; ++b) if ((mask & (1u << b)) && teamGrant(player, TeamDoll, static_cast<std::uint8_t>(b))) changed = true; break;
+    case 4: for (unsigned b = 0; b < 8; ++b) if ((mask & (1u << b)) && teamGrant(player, TeamQuest, static_cast<std::uint8_t>(b))) changed = true; break;
+    default: return false;
+    }
+    const unsigned removed = changed ? removeOwnedItems() : 0;
+    note("world_equip_applied", "\"kind\":%u,\"mask\":%u,\"changed\":%s,\"items_removed\":%u", kind, mask, changed ? "true" : "false", removed);
+    return changed;
+}
+bool popKill(unsigned& slot) {
+    if (!s.killCount) return false;
+    slot = s.killQueue[s.killHead]; s.killHead = (s.killHead + 1) % s.killQueue.size(); --s.killCount;
+    return true;
 }
 }

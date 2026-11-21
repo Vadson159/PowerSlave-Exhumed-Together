@@ -17,6 +17,10 @@ pairs = [(build / 'dll' / 'pse_together.dll', game / 'pse_together.dll'), (build
          (build / 'p27' / 'pe-together.dll', game / 'pe-together.dll'), (build / 'p27' / 'pe-play.exe', root / 'pe-play.exe')]
 for src, dst in pairs:
     shutil.copyfile(src, dst)
+# the player sprite package (proxy sprites, weapon icon variants) of this checkout
+kpf = Path(__file__).resolve().parents[1] / 'assets' / 'coop_sprites_john.kpf'
+(game / 'mods').mkdir(exist_ok=True)
+shutil.copyfile(kpf, game / 'mods' / 'coop_sprites_john.kpf')
 digest = hashlib.sha256((game / 'pse_together.dll').read_bytes()).hexdigest()
 (game / 'pe-together.ini').write_text('[payload]\nsha256=' + digest + '\n', encoding='utf-16')
 print('deployed', digest[:16], 'to', root)

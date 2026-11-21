@@ -13,12 +13,24 @@ inline const char* name(Pose p) {
                 case Pose::Shoot:return "shoot";case Pose::Death:return "death"; }
     return "invalid";
 }
-inline std::array<char,64> resource(unsigned slot,Pose pose,bool proxy) {
+constexpr int NoWeapon=-1;
+// weapon 0..7 (proxy only, not the death pose): the same animation with the weapon wheel icon of that weapon above the head
+// (build_john_sprites.py: player/pse_john[_pN]_proxy_{idle,walk,shoot}_w0..7).
+inline std::array<char,64> resource(unsigned slot,Pose pose,bool proxy,int weapon=NoWeapon) {
     std::array<char,64> out{};
+    char suffix[8]{};
+    if(proxy && pose!=Pose::Death && weapon>=0 && weapon<8) std::snprintf(suffix,sizeof(suffix),"_w%d",weapon);
     // One skin per slot: the host (slot 0) is plain John, slot S wears the coloured hat sheet pS+1 (build_john_sprites.py).
-    if(slot==0) std::snprintf(out.data(),out.size(),"player/pse_john_%s%s",proxy?"proxy_":"",name(pose));
-    else if(slot<8) std::snprintf(out.data(),out.size(),"player/pse_john_p%u_%s%s",slot+1,proxy?"proxy_":"",name(pose));
+    if(slot==0) std::snprintf(out.data(),out.size(),"player/pse_john_%s%s%s",proxy?"proxy_":"",name(pose),suffix);
+    else if(slot<8) std::snprintf(out.data(),out.size(),"player/pse_john_p%u_%s%s%s",slot+1,proxy?"proxy_":"",name(pose),suffix);
     return out;
+}
+// What a proxy shows for one snapshot: the pose and the weapon in the player's hands (NoWeapon: unknown).
+struct Look { Pose pose{Pose::Idle}; int weapon{NoWeapon}; bool operator==(const Look&) const = default; };
+// The weapon to show for a snapshot: the one being switched to (pending), else the one in hand.
+inline int weaponOf(const BridgePlayerSnapshot& s) {
+    if(s.pendingWeapon>=0 && s.pendingWeapon<8) return s.pendingWeapon;
+    return s.activeWeapon<8 ? static_cast<int>(s.activeWeapon) : NoWeapon;
 }
 class Animation {
 public:
@@ -40,11 +52,13 @@ public:
         // snapshot (a click shows one frame of the attack, walking that stutters to idle) plays as random frames.
         if(moving) m_walkUntil=s.serverTick+HoldTicks;
         if(s.buttons&1u) m_shootUntil=s.serverTick+HoldTicks;
-        // Health and life state outrank attack and motion. Death never loops or
-        // restarts on repeated snapshots; a new entity requires explicit reset.
+        // Health and life state outrank motion and attack. Death never loops or restarts on repeated snapshots; a new entity requires explicit
+        // reset. A player who moves while shooting walks: the legs show the motion (it used to be the attack frames sliding over the floor);
+        // standing still, the attack shows.
         if(s.health<=0 || s.lifeState!=LIFE_ALIVE) m_dead=true;
-        m_pose=m_dead ? Pose::Death : s.serverTick<m_shootUntil ? Pose::Shoot : s.serverTick<m_walkUntil ? Pose::Walk : Pose::Idle;
-        m_history[m_next]={s.sequence,m_pose};m_next=(m_next+1)%History;if(m_count<History) ++m_count;
+        m_look.pose=m_dead ? Pose::Death : s.serverTick<m_walkUntil ? Pose::Walk : s.serverTick<m_shootUntil ? Pose::Shoot : Pose::Idle;
+        m_look.weapon=weaponOf(s);
+        m_history[m_next]={s.sequence,m_look};m_next=(m_next+1)%History;if(m_count<History) ++m_count;
         return true;
     }
     // The proxy shows its snapshots through a presentation buffer ~160 ms (about 10 snapshots) behind the newest one: the command on screen
@@ -54,33 +68,35 @@ public:
         return m_valid && m_latest.slotId==slot && m_latest.mapEpoch==epoch && m_latest.connectionGeneration==connection &&
                m_latest.entityId==entity && m_latest.entityGeneration==generation;
     }
-    // Pose of the newest accepted snapshot not newer than the presented one; older than the whole history: the oldest pose kept.
-    Pose poseAt(std::uint32_t sequence) const {
-        if(!m_count) return m_pose;
-        bool found=false;std::uint32_t bestSeq=0,oldestSeq=0;Pose best=m_pose,oldest=m_pose;
+    // Look (pose + weapon) of the newest accepted snapshot not newer than the presented one; older than the whole history: the oldest kept.
+    Look lookAt(std::uint32_t sequence) const {
+        if(!m_count) return m_look;
+        bool found=false;std::uint32_t bestSeq=0,oldestSeq=0;Look best=m_look,oldest=m_look;
         for(std::size_t i=0;i<m_count;++i) {
             const auto& h=m_history[i];
-            if(i==0 || h.sequence<oldestSeq) { oldestSeq=h.sequence;oldest=h.pose; }
-            if(h.sequence<=sequence && (!found || h.sequence>bestSeq)) { found=true;bestSeq=h.sequence;best=h.pose; }
+            if(i==0 || h.sequence<oldestSeq) { oldestSeq=h.sequence;oldest=h.look; }
+            if(h.sequence<=sequence && (!found || h.sequence>bestSeq)) { found=true;bestSeq=h.sequence;best=h.look; }
         }
         return found ? best : oldest;
     }
+    Pose poseAt(std::uint32_t sequence) const { return lookAt(sequence).pose; }
     bool matches(std::uint32_t slot,std::uint32_t sequence,std::uint32_t epoch,
                  std::uint32_t connection,std::uint32_t entity,std::uint32_t generation) const {
         return m_valid && m_latest.slotId==slot && m_latest.sequence==sequence && m_latest.mapEpoch==epoch &&
                m_latest.connectionGeneration==connection && m_latest.entityId==entity && m_latest.entityGeneration==generation;
     }
     bool valid() const { return m_valid; }
-    Pose pose() const { return m_pose; }
+    Pose pose() const { return m_look.pose; }
+    int weapon() const { return m_look.weapon; }
     void reset() { *this=Animation{}; }
 private:
     // Native Player+0 bits: 2 forward, 3 back, 6/7 strafe left/right (attack is bit 0). 12 ticks = the shoot animation (2 frames x 5) plus a margin.
     static constexpr std::uint32_t MoveButtons=(1u<<2)|(1u<<3)|(1u<<6)|(1u<<7);
     static constexpr std::uint32_t HoldTicks=12;
     static constexpr std::size_t History=64; // ~1 s of snapshots: far more than the 160 ms presentation delay
-    struct Entry { std::uint32_t sequence{}; Pose pose{Pose::Idle}; };
+    struct Entry { std::uint32_t sequence{}; Look look{}; };
     BridgePlayerSnapshot m_latest{};
-    Pose m_pose{Pose::Idle};bool m_valid{},m_dead{};
+    Look m_look{};bool m_valid{},m_dead{};
     std::uint32_t m_walkUntil{},m_shootUntil{};
     std::array<Entry,History> m_history{};std::size_t m_next{},m_count{};
 };

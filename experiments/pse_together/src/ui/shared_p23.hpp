@@ -17,6 +17,8 @@ struct Shared {
     std::deque<std::string> chatOut;
     std::atomic<bool> interfaceEnabled{},permitted{}, requested{}, capture{}, ready{}, stopping{};
     std::atomic<bool> paused{}; // the game's Esc menu is open: gameplay state, but the local Player is not updated (set by the Sim tick)
+    // Enemies killed by each player slot in this level (host: counted by world_sync; client: EvKills). The Tab map shows them top right.
+    std::array<std::atomic<std::uint32_t>, Capacity> kills{};
     bool host{};
     void publish(const Model& m) {
         std::optional<Chat> message;
